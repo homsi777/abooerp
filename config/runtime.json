@@ -1,0 +1,13 @@
+{
+  "apiBaseUrl": "http://127.0.0.1:4010/api/v1",
+  "environment": "development",
+  "runtimeMode": "development",
+  "backendResolutionMode": "localhost",
+  "manualLanHost": "",
+  "backendPort": 4010,
+  "schemaVersion": "033",
+  "deviceName": "حلب-الجميلية",
+  "featureFlags": {
+    "desktopMode": true
+  }
+}

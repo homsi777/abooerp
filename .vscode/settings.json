@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^cmd /c \"C:\\\\Program Files\\\\PostgreSQL\\\\16\\\\bin\\\\psql\\.exe\" -h 127\\.0\\.0\\.1 -U postgres -d almiya_hsahin -p 5432 -c \"SELECT NOW\\(\\);\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

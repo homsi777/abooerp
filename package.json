@@ -1,0 +1,157 @@
+{
+  "name": "shahn",
+  "description": "شركة عبو المحمود لنقل والخدمات الوجستية",
+  "author": "شركة عبو المحمود لنقل والخدمات الوجستية",
+  "private": true,
+  "version": "1.0.1",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "start": "npm run electron:dev",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server:dev": "tsx watch server/src/index.ts",
+    "server:start": "tsx server/src/index.ts",
+    "server:build": "tsc -p server/tsconfig.json",
+    "server:prod:start": "node server/dist/index.js",
+    "server:prod:migrate": "node server/dist/db/migrate.js",
+    "server:prod:seed": "node server/dist/db/seed.js",
+    "server:db:ensure": "node server/scripts/ensureDatabase.cjs",
+    "server:migrate": "tsx server/src/db/migrate.ts",
+    "server:seed": "tsx server/src/db/seed.ts",
+    "server:clean-transactional": "node server/scripts/cleanTransactionalData.cjs",
+    "server:wipe-bare": "node server/scripts/wipeAllBareAdmin.cjs",
+    "server:prepare": "npm run server:db:ensure && npm run server:migrate",
+    "dev:free-ports": "node server/scripts/freeDevPorts.cjs",
+    "server:bootstrap": "npm run server:db:ensure && npm run server:migrate && npm run server:seed",
+    "server:check": "tsc -p server/tsconfig.json --noEmit",
+    "server:smoke:phase21": "tsx server/src/scripts/phase21Smoke.ts",
+    "server:smoke:phase22-scope": "tsx server/src/scripts/phase22ScopeSmoke.ts",
+    "server:smoke:phase23-auth-scope": "tsx server/src/scripts/phase23AuthScopeSmoke.ts",
+    "server:smoke:phase24-rbac": "tsx server/src/scripts/phase24RbacSmoke.ts",
+    "server:smoke:phase25-permissions": "tsx server/src/scripts/phase25PermissionSmoke.ts",
+    "server:smoke:phase26-strict-rbac": "tsx server/src/scripts/phase26StrictRbacSmoke.ts",
+    "server:smoke:phase31-finance": "tsx server/src/scripts/phase31FinanceSmoke.ts",
+    "server:smoke:phase32-confirmation-posting": "tsx server/src/scripts/phase32VoucherConfirmationSmoke.ts",
+    "server:smoke:phase33-cancellation-reversal": "tsx server/src/scripts/phase33CancellationReversalSmoke.ts",
+    "server:smoke:phase34-party-statements": "tsx server/src/scripts/phase34PartyStatementSmoke.ts",
+    "server:smoke:phase35-ledger-aggregation": "tsx server/src/scripts/phase35LedgerAggregationSmoke.ts",
+    "server:smoke:phase36-statement-package": "tsx server/src/scripts/phase36StatementPackageSmoke.ts",
+    "server:smoke:phase37-period-comparison": "tsx server/src/scripts/phase37PeriodComparisonSmoke.ts",
+    "server:smoke:phase38-analytics-snapshot": "tsx server/src/scripts/phase38AnalyticsSnapshotSmoke.ts",
+    "server:smoke:phase39-dashboard-package": "tsx server/src/scripts/phase39DashboardPackageSmoke.ts",
+    "server:smoke:phase310-dashboard-cache": "tsx server/src/scripts/phase310DashboardCacheSmoke.ts",
+    "server:smoke:phase311-cache-metrics": "tsx server/src/scripts/phase311CacheMetricsSmoke.ts",
+    "server:smoke:phase312-cache-control": "tsx server/src/scripts/phase312CacheControlSmoke.ts",
+    "server:smoke:phase313-reset-protection-audit": "tsx server/src/scripts/phase313ResetProtectionAuditSmoke.ts",
+    "server:smoke:phaseC6-printers": "tsx server/src/scripts/phaseC6PrinterSmoke.ts",
+    "server:smoke:phaseC7-backup": "tsx server/src/scripts/phaseC7BackupSmoke.ts",
+    "server:smoke:phaseC8-terminology-shipping": "tsx server/src/scripts/phaseC8TerminologyShippingSmoke.ts",
+    "server:smoke:phaseC9-runtime-readiness": "tsx server/src/scripts/phaseC9RuntimeReadinessSmoke.ts",
+    "server:smoke:lan-core": "tsx server/src/scripts/phaseLanCoreSmoke.ts",
+    "electron:compile": "tsc -p electron/tsconfig.json && node -e \"require('fs').copyFileSync('electron/preload.cjs','dist-electron/preload.cjs')\"",
+    "electron:start": "electron .",
+    "electron:dev": "npm run electron:compile && node server/scripts/devStartup.cjs && concurrently --kill-others -n SERVER,VITE,ELECTRON -c cyan,magenta,green \"npm run server:dev\" \"npm run dev\" \"wait-on -t 90000 tcp:127.0.0.1:5188 tcp:127.0.0.1:4010 && npm run electron:start\"",
+    "server:bundle": "node scripts/bundleServer.mjs",
+    "validate:package": "node scripts/validatePackage.mjs",
+    "verify:release": "node scripts/verifyReleaseBundle.mjs",
+    "clean:packaging": "node scripts/cleanPackaging.mjs",
+    "debug:packaged": "node scripts/debugPackaged.mjs",
+    "electron:build": "npm run build && npm run electron:compile && npm run server:bundle && npm run validate:package && electron-builder --win --dir --publish never",
+    "electron:package": "npm run build && npm run electron:compile && npm run server:bundle && npm run validate:package && electron-builder --win nsis --publish never",
+    "electron:package:next": "npm run build && npm run electron:compile && npm run server:bundle && npm run validate:package && electron-builder --win nsis --publish never --config.directories.output=dist-release-next",
+    "electron:package:fresh": "npm run clean:packaging && npm run electron:package:next && set RELEASE_DIR=dist-release-next&& npm run verify:release",
+    "electron:smoke:runtime": "npm run electron:compile && electron . --smoke-runtime"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^25.6.0",
+    "@types/pg": "^8.20.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "autoprefixer": "^10.5.0",
+    "concurrently": "^9.2.1",
+    "electron": "^41.2.2",
+    "electron-builder": "^26.8.1",
+    "esbuild": "^0.28.0",
+    "kill-port": "^2.0.1",
+    "postcss": "^8.5.10",
+    "tailwindcss": "^4.2.2",
+    "tsx": "^4.21.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.0.4",
+    "wait-on": "^9.0.5"
+  },
+  "dependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-data-grid": "^4.0.12",
+    "@types/react-dom": "^19.2.3",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^1.8.0",
+    "pg": "^8.20.0",
+    "react": "^19.2.5",
+    "react-data-grid": "^7.0.0-beta.59",
+    "react-dom": "^19.2.5",
+    "react-router-dom": "^7.14.1",
+    "zod": "^4.3.6"
+  },
+  "build": {
+    "appId": "com.abualmahmoud.logistics",
+    "productName": "شركة عبو المحمود لنقل والخدمات الوجستية",
+    "asar": true,
+    "directories": {
+      "output": "dist-release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json",
+      "config/runtime.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist-server/server.cjs",
+        "to": "server.cjs"
+      },
+      {
+        "from": "dist-server/server-wrapper.cjs",
+        "to": "server-wrapper.cjs"
+      },
+      {
+        "from": "server/src/db/migrations",
+        "to": "migrations",
+        "filter": ["**/*.sql"]
+      },
+      {
+        "from": "server/.env",
+        "to": "app-config.env"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "شركة عبو المحمود لنقل والخدمات الوجستية",
+      "deleteAppDataOnUninstall": true
+    }
+  }
+}

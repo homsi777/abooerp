@@ -1,0 +1,4 @@
+[    1160ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5188/node_modules/.vite/deps/react-dom_client.js?v=be0c69be:14336
+[    1611ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) %o @ http://127.0.0.1:5188/dashboard#/login:0
+[    3690ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:4010/api/v1/auth/branches:0
+[    6837ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:4010/api/v1/auth/branches:0

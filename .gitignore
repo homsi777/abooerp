@@ -1,0 +1,16 @@
+server-dist/
+server-bundle/
+resources/
+*.zip
+*.rar
+*.7z
+*.exe
+*.msi
+*.dmg
+*.AppImage
+*.db
+*.sqlite
+*.tsbuildinfo
+.env
+.env.*
+node_modules

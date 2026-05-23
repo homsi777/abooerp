@@ -1,0 +1,2 @@
+[     296ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5188/node_modules/.vite/deps/react-dom_client.js?v=be0c69be:14336
+[     762ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) %o @ http://127.0.0.1:5188/dashboard#/login:0

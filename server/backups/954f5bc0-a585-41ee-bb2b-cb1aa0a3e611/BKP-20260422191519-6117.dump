@@ -1,0 +1,7 @@
+{
+  "backupCode": "BKP-20260422191519-6117",
+  "generatedAt": "2026-04-22T19:15:19.729Z",
+  "companyId": "954f5bc0-a585-41ee-bb2b-cb1aa0a3e611",
+  "mode": "stub",
+  "reason": "pg_dump.exe not available in PATH."
+}
