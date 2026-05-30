@@ -474,6 +474,14 @@ export class FinanceService {
     return this.repository.listCashboxMovementsForCashbox(cashboxId, scope);
   }
 
+  getCashboxStatement(
+    cashboxId: string,
+    scope?: DataScope,
+    filters?: { dateFrom?: string; dateTo?: string; transactionType?: 'inflow' | 'outflow' },
+  ) {
+    return this.repository.getCashboxStatement(cashboxId, scope, filters);
+  }
+
   listPartyFinancialMovements(scope?: DataScope) {
     return this.repository.listPartyFinancialMovements(scope);
   }
@@ -680,7 +688,8 @@ export class FinanceService {
       agentId: input.agentId ?? scope?.agentId,
     };
     if (payload.status === 'confirmed') {
-      if (!payload.customerId && !payload.senderReceiverId && !payload.agentId) {
+      const internalPayment = ['expense', 'salary_record', 'cashbox_transfer', 'manual_party'].includes(String(payload.relatedEntityType ?? ''));
+      if (!internalPayment && !payload.customerId && !payload.senderReceiverId && !payload.agentId) {
         throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
       }
       await this.validateConfirmedCashbox(payload.cashboxId, payload.originalCurrency, fxContext?.companyId, scope);
@@ -708,7 +717,8 @@ export class FinanceService {
       const nextCustomerId = payload.customerId ?? existing.customer_id;
       const nextSenderReceiverId = payload.senderReceiverId ?? existing.sender_receiver_id;
       const nextAgentId = payload.agentId ?? existing.agent_id;
-      if (!nextCustomerId && !nextSenderReceiverId && !nextAgentId) {
+      const internalPayment = ['expense', 'salary_record', 'cashbox_transfer', 'manual_party'].includes(String(payload.relatedEntityType ?? existing.related_entity_type ?? ''));
+      if (!internalPayment && !nextCustomerId && !nextSenderReceiverId && !nextAgentId) {
         throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
       }
       await this.validateConfirmedCashbox(
@@ -787,7 +797,12 @@ export class FinanceService {
       agentId: input.agentId ?? scope?.agentId,
     };
     if (payload.status === 'confirmed') {
-      if (!payload.customerId && !payload.senderReceiverId && !payload.agentId) {
+      const isInternalPayment =
+        payload.relatedEntityType === 'expense' ||
+        payload.relatedEntityType === 'salary_record' ||
+        payload.relatedEntityType === 'cashbox_transfer' ||
+        payload.relatedEntityType === 'manual_party';
+      if (!isInternalPayment && !payload.customerId && !payload.senderReceiverId && !payload.agentId) {
         throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
       }
       await this.validateConfirmedCashbox(payload.cashboxId, payload.originalCurrency, fxContext?.companyId, scope);
@@ -815,7 +830,13 @@ export class FinanceService {
       const nextCustomerId = payload.customerId ?? existing.customer_id;
       const nextSenderReceiverId = payload.senderReceiverId ?? existing.sender_receiver_id;
       const nextAgentId = payload.agentId ?? existing.agent_id;
-      if (!nextCustomerId && !nextSenderReceiverId && !nextAgentId) {
+      const nextRelatedEntityType = payload.relatedEntityType ?? existing.related_entity_type;
+      const isInternalPayment =
+        nextRelatedEntityType === 'expense' ||
+        nextRelatedEntityType === 'salary_record' ||
+        nextRelatedEntityType === 'cashbox_transfer' ||
+        nextRelatedEntityType === 'manual_party';
+      if (!isInternalPayment && !nextCustomerId && !nextSenderReceiverId && !nextAgentId) {
         throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
       }
       await this.validateConfirmedCashbox(

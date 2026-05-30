@@ -519,7 +519,7 @@ export default function FinanceCashBoxes() {
                   <td>
                     <div className="flex flex-wrap gap-1">
                       <button type="button" className="toolbar-btn text-xs py-1" onClick={() => navigate(`/finance/cashboxes/${r.id}/movements`)}>
-                        حركات
+                        كشف
                       </button>
                       <button
                         type="button"

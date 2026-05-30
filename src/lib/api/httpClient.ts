@@ -1,6 +1,10 @@
 import { rememberOwnCorrelationFromFetchResponse } from '../realtime/ownWriteCorrelation';
+import { isElectronRuntime } from '../runtime/runtimeMode';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4010/api/v1';
+const EXPLICIT_API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim();
+const ELECTRON_API_BASE_URL = 'http://localhost:4010/api/v1';
+const WEB_API_BASE_URL = '/api/v1';
+const API_BASE_URL = EXPLICIT_API_BASE_URL || (isElectronRuntime() ? ELECTRON_API_BASE_URL : WEB_API_BASE_URL);
 
 // ── LAN connection storage (localStorage persists across sessions) ────────────
 export const LAN_STORAGE = {
@@ -25,6 +29,7 @@ export function clearLanConnection(): void {
   localStorage.removeItem(LAN_STORAGE.API_BASE_URL);
   localStorage.removeItem(LAN_STORAGE.SERVER_IP);
   localStorage.removeItem(LAN_STORAGE.CONNECTION_MODE);
+  localStorage.removeItem('lan.serverPort');
 }
 
 export function getLanState(): { mode: string; serverIp: string; apiBaseUrl: string } {
@@ -57,6 +62,7 @@ function createIdempotencyKey(): string {
 }
 
 async function readRuntimeHeaders(): Promise<Record<string, string>> {
+  if (!isElectronRuntime()) return {};
   const runtime = (window as any)?.runtime;
   if (!runtime?.getConfig || !runtime?.getMachineId) return {};
   try {
@@ -73,7 +79,9 @@ async function readRuntimeHeaders(): Promise<Record<string, string>> {
 }
 
 async function resolveApiBaseUrl(): Promise<string> {
+  if (EXPLICIT_API_BASE_URL) return EXPLICIT_API_BASE_URL;
   const runtime = (window as any)?.runtime;
+  if (!isElectronRuntime()) return WEB_API_BASE_URL;
   // 1. Electron packaged: إن كان الجهاز مضبوطاً كعقدة LAN، عنوان السيرفر في runtime.json هو المصدر الموثوق (حتى لو تُرك localStorage فارغاً).
   if (runtime?.getConfig) {
     try {
@@ -89,12 +97,12 @@ async function resolveApiBaseUrl(): Promise<string> {
   const lanUrl = localStorage.getItem(LAN_STORAGE.API_BASE_URL);
   if (lanUrl) return lanUrl;
   // 3. بقية إعدادات Electron أو الافتراضي
-  if (!runtime?.getConfig) return API_BASE_URL;
+  if (!runtime?.getConfig) return ELECTRON_API_BASE_URL;
   try {
     const cfg = await runtime.getConfig();
-    return String(cfg?.apiBaseUrl || API_BASE_URL);
+    return String(cfg?.apiBaseUrl || ELECTRON_API_BASE_URL);
   } catch {
-    return API_BASE_URL;
+    return ELECTRON_API_BASE_URL;
   }
 }
 

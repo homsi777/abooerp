@@ -53,6 +53,8 @@
     "electron:compile": "tsc -p electron/tsconfig.json && node -e \"require('fs').copyFileSync('electron/preload.cjs','dist-electron/preload.cjs')\"",
     "electron:start": "electron .",
     "electron:dev": "npm run electron:compile && node server/scripts/devStartup.cjs && concurrently --kill-others -n SERVER,VITE,ELECTRON -c cyan,magenta,green \"npm run server:dev\" \"npm run dev\" \"wait-on -t 90000 tcp:127.0.0.1:5188 tcp:127.0.0.1:4010 && npm run electron:start\"",
+    "web:dev": "node server/scripts/devStartup.cjs && concurrently --kill-others -n SERVER,VITE,BROWSER -c cyan,magenta,yellow \"npm run server:dev\" \"npm run dev\" \"wait-on -t 90000 tcp:127.0.0.1:5188 tcp:127.0.0.1:4010 && node scripts/openDevBrowser.mjs --hold\"",
+    "dev:both": "npm run electron:compile && node server/scripts/devStartup.cjs && concurrently --kill-others -n SERVER,VITE,BROWSER,ELECTRON -c cyan,magenta,yellow,green \"npm run server:dev\" \"npm run dev\" \"wait-on -t 90000 tcp:127.0.0.1:5188 tcp:127.0.0.1:4010 && node scripts/openDevBrowser.mjs --hold\" \"wait-on -t 90000 tcp:127.0.0.1:5188 tcp:127.0.0.1:4010 && npm run electron:start\"",
     "server:bundle": "node scripts/bundleServer.mjs",
     "validate:package": "node scripts/validatePackage.mjs",
     "verify:release": "node scripts/verifyReleaseBundle.mjs",

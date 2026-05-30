@@ -48,6 +48,13 @@ export interface UpdateAgentInput {
   commission_percentage?: number;
 }
 
+export interface CreateAgentReconciliationInput {
+  balanceAmount?: number;
+  currencyCode?: string;
+  notes?: string;
+  createdByUserId?: string | null;
+}
+
 export class AgentRepository {
   async listAgents(companyId: string, branchId?: string, includeInactive = false): Promise<AgentRecord[]> {
     const result = await pool.query<AgentRecord>(
@@ -193,5 +200,360 @@ export class AgentRepository {
       [companyId, branchId ?? null, normalized],
     );
     return result.rows;
+  }
+
+  private async getLastAgentReconciliation(companyId: string, agentId: string) {
+    const result = await pool.query(
+      `
+      select
+        ar.id,
+        ar.reconciled_at::text as reconciled_at,
+        ar.balance_amount,
+        ar.currency_code,
+        ar.notes,
+        ar.created_at::text as created_at,
+        u.full_name as created_by_name
+      from agent_account_reconciliations ar
+      left join users u on u.id = ar.created_by_user_id
+      where ar.company_id = $1
+        and ar.agent_id = $2
+      order by ar.reconciled_at desc, ar.created_at desc
+      limit 1
+      `,
+      [companyId, agentId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async createAgentReconciliation(companyId: string, agentId: string, input: CreateAgentReconciliationInput) {
+    const agent = await this.getAgentById(agentId, companyId);
+    if (!agent) return null;
+
+    const result = await pool.query(
+      `
+      insert into agent_account_reconciliations(
+        company_id,
+        agent_id,
+        balance_amount,
+        currency_code,
+        notes,
+        created_by_user_id
+      )
+      values ($1, $2, $3, $4, $5, $6)
+      returning id, reconciled_at::text, balance_amount, currency_code, notes, created_at::text
+      `,
+      [
+        companyId,
+        agentId,
+        Number(input.balanceAmount ?? 0),
+        input.currencyCode || 'USD',
+        input.notes?.trim() || null,
+        input.createdByUserId ?? null,
+      ],
+    );
+    return result.rows[0];
+  }
+
+  async getAgentFinancialStatement(companyId: string, agentId: string) {
+    const agent = await this.getAgentById(agentId, companyId);
+    if (!agent) return null;
+    const lastReconciliation = await this.getLastAgentReconciliation(companyId, agentId);
+    const lastReconciledAt = lastReconciliation?.reconciled_at ?? null;
+
+    const shipments = await pool.query(
+      `
+      select
+        s.id,
+        s.shipment_no,
+        s.created_at,
+        s.status,
+        s.destination_city,
+        s.original_amount,
+        s.original_currency,
+        s.freight_charge,
+        coalesce(s.agent_commission_base_amount, s.freight_charge, 0) as agent_commission_base_amount,
+        coalesce(s.agent_commission_percentage_snapshot, $3::numeric, 0) as agent_commission_percentage_snapshot,
+        coalesce(s.agent_commission_amount_snapshot, round((coalesce(s.freight_charge, 0) * coalesce($3::numeric, 0)) / 100, 2), 0) as agent_commission_amount_snapshot,
+        sender.full_name as sender_name,
+        receiver.full_name as receiver_name
+      from shipments s
+      left join senders_receivers sender on sender.id = s.sender_id
+      left join senders_receivers receiver on receiver.id = s.receiver_id
+      where s.company_id = $1
+        and s.agent_id = $2
+        and s.deleted_at is null
+      order by s.created_at desc
+      limit 500
+      `,
+      [companyId, agentId, Number(agent.commission_percentage ?? 0)],
+    );
+
+    const transfers = await pool.query(
+      `
+      select
+        t.id,
+        t.transfer_date,
+        t.created_at,
+        t.status,
+        t.sender_name,
+        t.receiver_name,
+        t.amount,
+        t.currency,
+        t.agent_commission,
+        t.agent_commission_currency,
+        t.transfer_service_fee,
+        t.transfer_service_fee_currency,
+        s.shipment_no
+      from transfers t
+      left join shipments s on s.id = t.shipment_id
+      where t.company_id = $1
+        and t.agent_id = $2
+      order by coalesce(t.transfer_date, t.created_at) desc
+      limit 500
+      `,
+      [companyId, agentId],
+    );
+
+    const vouchers = await pool.query(
+      `
+      select * from (
+        select 'receipt' as voucher_kind, rv.id, rv.voucher_no, rv.created_at, rv.status, rv.notes,
+          rv.original_amount, rv.original_currency, rv.cashbox_id, cb.name as cashbox_name
+        from receipt_vouchers rv
+        left join cashboxes cb on cb.id = rv.cashbox_id
+        where rv.company_id = $1 and rv.agent_id = $2
+        union all
+        select 'payment' as voucher_kind, pv.id, pv.voucher_no, pv.created_at, pv.status, pv.notes,
+          pv.original_amount, pv.original_currency, pv.cashbox_id, cb.name as cashbox_name
+        from payment_vouchers pv
+        left join cashboxes cb on cb.id = pv.cashbox_id
+        where pv.company_id = $1 and pv.agent_id = $2
+      ) rows
+      order by created_at desc
+      limit 500
+      `,
+      [companyId, agentId],
+    );
+
+    const summaryResult = await pool.query(
+      `
+      with shipment_totals as (
+        select
+          count(*)::int as shipments_count,
+          coalesce(sum(coalesce(agent_commission_amount_snapshot, round((coalesce(freight_charge, 0) * coalesce($4::numeric, 0)) / 100, 2), 0)), 0)::numeric as shipment_commission,
+          count(*) filter (where $3::timestamptz is not null and created_at > $3::timestamptz)::int as shipments_since_count,
+          coalesce(sum(coalesce(agent_commission_amount_snapshot, round((coalesce(freight_charge, 0) * coalesce($4::numeric, 0)) / 100, 2), 0)) filter (where $3::timestamptz is not null and created_at > $3::timestamptz), 0)::numeric as shipment_commission_since
+        from shipments
+        where company_id = $1 and agent_id = $2 and deleted_at is null
+      ),
+      transfer_totals as (
+        select
+          count(*)::int as transfers_count,
+          coalesce(sum(coalesce(agent_commission, 0)), 0)::numeric as transfer_commission,
+          count(*) filter (where $3::timestamptz is not null and coalesce(transfer_date, created_at) > $3::timestamptz)::int as transfers_since_count,
+          coalesce(sum(coalesce(agent_commission, 0)) filter (where $3::timestamptz is not null and coalesce(transfer_date, created_at) > $3::timestamptz), 0)::numeric as transfer_commission_since
+        from transfers
+        where company_id = $1 and agent_id = $2
+      ),
+      receipt_totals as (
+        select
+          count(*)::int as receipts_count,
+          coalesce(sum(original_amount) filter (where status = 'confirmed'), 0)::numeric as receipts,
+          count(*) filter (where $3::timestamptz is not null and created_at > $3::timestamptz)::int as receipts_since_count,
+          coalesce(sum(original_amount) filter (where status = 'confirmed' and $3::timestamptz is not null and created_at > $3::timestamptz), 0)::numeric as receipts_since
+        from receipt_vouchers
+        where company_id = $1 and agent_id = $2
+      ),
+      payment_totals as (
+        select
+          count(*)::int as payments_count,
+          coalesce(sum(original_amount) filter (where status = 'confirmed'), 0)::numeric as payments,
+          count(*) filter (where $3::timestamptz is not null and created_at > $3::timestamptz)::int as payments_since_count,
+          coalesce(sum(original_amount) filter (where status = 'confirmed' and $3::timestamptz is not null and created_at > $3::timestamptz), 0)::numeric as payments_since
+        from payment_vouchers
+        where company_id = $1 and agent_id = $2
+      )
+      select *
+      from shipment_totals, transfer_totals, receipt_totals, payment_totals
+      `,
+      [companyId, agentId, lastReconciledAt, Number(agent.commission_percentage ?? 0)],
+    );
+    const totals = summaryResult.rows[0] ?? {};
+
+    const totalShipmentCommission = Number(totals.shipment_commission || 0);
+    const totalTransferCommission = Number(totals.transfer_commission || 0);
+    const totalReceipts = Number(totals.receipts || 0);
+    const totalPayments = Number(totals.payments || 0);
+    const sinceShipmentCommission = lastReconciledAt ? Number(totals.shipment_commission_since || 0) : totalShipmentCommission;
+    const sinceTransferCommission = lastReconciledAt ? Number(totals.transfer_commission_since || 0) : totalTransferCommission;
+    const sinceReceipts = lastReconciledAt ? Number(totals.receipts_since || 0) : totalReceipts;
+    const sincePayments = lastReconciledAt ? Number(totals.payments_since || 0) : totalPayments;
+    const totalAgentCommission = totalShipmentCommission + totalTransferCommission;
+    const sinceAgentCommission = sinceShipmentCommission + sinceTransferCommission;
+
+    return {
+      agent,
+      generatedAt: new Date().toISOString(),
+      lastReconciliation,
+      summary: {
+        shipmentsCount: Number(totals.shipments_count || 0),
+        transfersCount: Number(totals.transfers_count || 0),
+        vouchersCount: Number(totals.receipts_count || 0) + Number(totals.payments_count || 0),
+        totalShipmentCommission,
+        totalTransferCommission,
+        totalAgentCommission,
+        totalReceipts,
+        totalPayments,
+        netVoucherBalance: totalReceipts - totalPayments,
+        paidToAgent: totalPayments,
+        netAgentDue: totalAgentCommission - totalPayments,
+        sinceLastReconciliation: {
+          shipmentsCount: lastReconciledAt ? Number(totals.shipments_since_count || 0) : Number(totals.shipments_count || 0),
+          transfersCount: lastReconciledAt ? Number(totals.transfers_since_count || 0) : Number(totals.transfers_count || 0),
+          receiptsCount: lastReconciledAt ? Number(totals.receipts_since_count || 0) : Number(totals.receipts_count || 0),
+          paymentsCount: lastReconciledAt ? Number(totals.payments_since_count || 0) : Number(totals.payments_count || 0),
+          totalShipmentCommission: sinceShipmentCommission,
+          totalTransferCommission: sinceTransferCommission,
+          totalAgentCommission: sinceAgentCommission,
+          totalReceipts: sinceReceipts,
+          totalPayments: sincePayments,
+          paidToAgent: sincePayments,
+          netAgentDue: sinceAgentCommission - sincePayments,
+        },
+      },
+      shipments: shipments.rows,
+      transfers: transfers.rows,
+      vouchers: vouchers.rows,
+    };
+  }
+
+  async getAgentAccountStatement(companyId: string, agentId: string) {
+    const agent = await this.getAgentById(agentId, companyId);
+    if (!agent) return null;
+    const lastReconciliation = await this.getLastAgentReconciliation(companyId, agentId);
+    const lastReconciledAt = lastReconciliation?.reconciled_at ?? null;
+
+    const result = await pool.query(
+      `
+      select *
+      from (
+        select
+          s.created_at as at,
+          'shipment_commission' as source_type,
+          s.id::text as source_id,
+          s.shipment_no as reference_no,
+          concat('عمولة شحن - ', coalesce(s.destination_city, '-')) as description,
+          0::numeric as debit,
+          coalesce(s.agent_commission_amount_snapshot, round((coalesce(s.freight_charge, 0) * coalesce($3::numeric, 0)) / 100, 2), 0)::numeric as credit,
+          s.original_currency as currency_code,
+          s.status,
+          coalesce(sender.full_name, '-') as party_name
+        from shipments s
+        left join senders_receivers sender on sender.id = s.sender_id
+        where s.company_id = $1 and s.agent_id = $2 and s.deleted_at is null
+
+        union all
+
+        select
+          coalesce(t.transfer_date, t.created_at) as at,
+          'transfer' as source_type,
+          t.id::text as source_id,
+          coalesce(s.shipment_no, t.id::text) as reference_no,
+          concat('حوالة - ', t.sender_name, ' إلى ', t.receiver_name) as description,
+          0::numeric as debit,
+          coalesce(t.agent_commission, 0)::numeric as credit,
+          t.agent_commission_currency as currency_code,
+          t.status,
+          concat(t.sender_name, ' / ', t.receiver_name) as party_name
+        from transfers t
+        left join shipments s on s.id = t.shipment_id
+        where t.company_id = $1 and t.agent_id = $2
+
+        union all
+
+        select
+          rv.created_at as at,
+          'receipt_voucher' as source_type,
+          rv.id::text as source_id,
+          rv.voucher_no as reference_no,
+          coalesce(rv.notes, 'سند قبض للوكيل') as description,
+          0::numeric as debit,
+          coalesce(rv.original_amount, 0)::numeric as credit,
+          rv.original_currency as currency_code,
+          rv.status,
+          'سند قبض' as party_name
+        from receipt_vouchers rv
+        where rv.company_id = $1 and rv.agent_id = $2
+
+        union all
+
+        select
+          pv.created_at as at,
+          'payment_voucher' as source_type,
+          pv.id::text as source_id,
+          pv.voucher_no as reference_no,
+          coalesce(pv.notes, 'سند دفع للوكيل') as description,
+          coalesce(pv.original_amount, 0)::numeric as debit,
+          0::numeric as credit,
+          pv.original_currency as currency_code,
+          pv.status,
+          'سند دفع' as party_name
+        from payment_vouchers pv
+        where pv.company_id = $1 and pv.agent_id = $2
+
+        union all
+
+        select
+          ct.created_at as at,
+          'cashbox_transaction' as source_type,
+          ct.id::text as source_id,
+          coalesce(rv.voucher_no, pv.voucher_no, ct.id::text) as reference_no,
+          coalesce(ct.notes, 'حركة صندوق وكيل') as description,
+          case when ct.transaction_type = 'inflow' then ct.original_amount else 0 end as debit,
+          case when ct.transaction_type = 'outflow' then ct.original_amount else 0 end as credit,
+          ct.original_currency as currency_code,
+          coalesce(rv.status, pv.status, 'posted') as status,
+          coalesce(cb.name, 'صندوق وكيل') as party_name
+        from cashbox_transactions ct
+        left join cashboxes cb on cb.id = ct.cashbox_id
+        left join receipt_vouchers rv on ct.source_voucher_type = 'receipt' and rv.id = ct.source_voucher_id
+        left join payment_vouchers pv on ct.source_voucher_type = 'payment' and pv.id = ct.source_voucher_id
+        where ct.company_id = $1 and (ct.agent_id = $2 or cb.agent_id = $2)
+          and ct.source_voucher_id is null
+      ) x
+      order by at desc
+      limit 1000
+      `,
+      [companyId, agentId, Number(agent.commission_percentage ?? 0)],
+    );
+
+    const totalDebit = result.rows.reduce((sum, row) => sum + Number(row.debit || 0), 0);
+    const totalCredit = result.rows.reduce((sum, row) => sum + Number(row.credit || 0), 0);
+    const sinceRows = lastReconciledAt
+      ? result.rows.filter((row) => new Date(row.at).getTime() > new Date(lastReconciledAt).getTime())
+      : result.rows;
+    const sinceDebit = sinceRows.reduce((sum, row) => sum + Number(row.debit || 0), 0);
+    const sinceCredit = sinceRows.reduce((sum, row) => sum + Number(row.credit || 0), 0);
+
+    return {
+      agent,
+      generatedAt: new Date().toISOString(),
+      lastReconciliation,
+      summary: {
+        rowsCount: result.rows.length,
+        totalDebit,
+        totalCredit,
+        balance: totalDebit - totalCredit,
+        netAgentDue: totalCredit - totalDebit,
+        sinceLastReconciliation: {
+          rowsCount: sinceRows.length,
+          totalDebit: sinceDebit,
+          totalCredit: sinceCredit,
+          balance: sinceDebit - sinceCredit,
+          netAgentDue: sinceCredit - sinceDebit,
+        },
+      },
+      rows: result.rows,
+    };
   }
 }

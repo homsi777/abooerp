@@ -37,6 +37,12 @@ const updateSchema = z.object({
   commission_percentage: z.coerce.number().min(0).max(100).optional(),
 });
 
+const reconciliationSchema = z.object({
+  balanceAmount: z.coerce.number().optional(),
+  currencyCode: z.string().min(1).max(10).optional(),
+  notes: z.string().optional(),
+});
+
 function requireCompanyId(req: any): string {
   const companyId = req.requestUserContext?.companyId as string | undefined;
   if (!companyId) {
@@ -89,6 +95,65 @@ export function createAgentRouter(repository: AgentRepository, financeService: F
       const includeInactive = parseBoolFlag(req.query.includeInactive);
       const data = await repository.listAgents(companyId, branchId, includeInactive);
       res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/:id/financial-statement',
+    requireAnyPermissions(['settings.agents.read', 'finance.read', 'finance.view']),
+    asyncHandler(async (req, res) => {
+      const companyId = requireCompanyId(req);
+      const data = await repository.getAgentFinancialStatement(companyId, String(req.params.id));
+      if (!data) {
+        res.status(404).json({ success: false, error: 'Agent not found.' });
+        return;
+      }
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/:id/account-statement',
+    requireAnyPermissions(['settings.agents.read', 'finance.read', 'finance.view']),
+    asyncHandler(async (req, res) => {
+      const companyId = requireCompanyId(req);
+      const data = await repository.getAgentAccountStatement(companyId, String(req.params.id));
+      if (!data) {
+        res.status(404).json({ success: false, error: 'Agent not found.' });
+        return;
+      }
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.post(
+    '/:id/reconciliations',
+    requireAnyPermissions(['finance.write', 'finance.vouchers.write', 'settings.agents.write']),
+    asyncHandler(async (req, res) => {
+      const companyId = requireCompanyId(req);
+      const payload = reconciliationSchema.parse(req.body);
+      const userId = (req as any).requestUserContext?.userId as string | undefined;
+      const data = await repository.createAgentReconciliation(companyId, String(req.params.id), {
+        balanceAmount: payload.balanceAmount,
+        currencyCode: payload.currencyCode,
+        notes: payload.notes,
+        createdByUserId: userId ?? null,
+      });
+      if (!data) {
+        res.status(404).json({ success: false, error: 'Agent not found.' });
+        return;
+      }
+      auditService.logAsync({
+        req,
+        action: 'AGENT_ACCOUNT_RECONCILED',
+        entityType: 'agent',
+        entityId: String(req.params.id),
+        metadata: {
+          balanceAmount: data.balance_amount,
+          currencyCode: data.currency_code,
+        },
+      });
+      res.status(201).json({ success: true, data });
     }),
   );
 

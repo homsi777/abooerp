@@ -24,6 +24,17 @@ function isReadyToSubmit(key: string): boolean {
   return key === TRIAL_KEY || REAL_KEY_RE.test(key);
 }
 
+function activationErrorMessage(err: unknown): string {
+  const message = err instanceof Error ? err.message : String((err as any)?.message ?? '');
+  if (message.includes('INVALID_LICENSE_CODE')) {
+    return 'كود التفعيل غير صالح أو غير معروف';
+  }
+  if (message.includes('Failed to fetch') || message.includes('NetworkError') || message.includes('Load failed')) {
+    return 'تعذّر الاتصال بالسيرفر — تأكد من تشغيل الخادم والمحاولة مجدداً';
+  }
+  return message || 'تعذّر تفعيل النظام';
+}
+
 // ── Persistent local storage ──────────────────────────────────────────────────
 const STORAGE_KEY = 'app.license';
 
@@ -110,7 +121,7 @@ export default function ActivationModal({ onClose, onActivated }: Props) {
       if (code === 'INVALID_LICENSE_CODE') {
         setResult({ ok: false, msg: 'كود التفعيل غير صالح أو غير معروف' });
       } else {
-        setResult({ ok: false, msg: 'تعذّر الاتصال بالسيرفر — تأكد من تشغيل الخادم والمحاولة مجدداً' });
+        setResult({ ok: false, msg: activationErrorMessage(err) });
       }
     } finally {
       setActivating(false);

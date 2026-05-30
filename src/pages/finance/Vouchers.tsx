@@ -18,6 +18,7 @@ interface Voucher {
   relatedParty: string;
   customerId?: string | null;
   agentId?: string | null;
+  relatedEntityType?: string | null;
   amount: number;
   currency: CurrencyCode;
   amountUsd: number;
@@ -57,6 +58,7 @@ function mapReceipt(r: ReceiptVoucher, rates: ReturnType<typeof getExchangeRates
     relatedParty: r.customerName || 'غير محدد',
     customerId: r.customerBackendId ?? null,
     agentId: r.agentBackendId ?? null,
+    relatedEntityType: r.relatedEntityType ?? null,
     amount: r.amount,
     currency,
     amountUsd: r.amountUsd ?? convertToUsd(r.amount, currency, rates),
@@ -79,6 +81,7 @@ function mapPayment(p: PaymentVoucher, rates: ReturnType<typeof getExchangeRates
     relatedParty: p.vendorName || 'غير محدد',
     customerId: p.customerBackendId ?? null,
     agentId: p.agentBackendId ?? null,
+    relatedEntityType: p.relatedEntityType ?? null,
     amount: p.amount,
     currency,
     amountUsd: p.amountUsd ?? convertToUsd(p.amount, currency, rates),
@@ -114,6 +117,7 @@ export default function FinanceVouchers() {
     amount: 0,
     currency: 'USD' as CurrencyCode,
     cashboxId: '' as string,
+    transferCashboxId: '' as string,
     description: '',
     refNo: '',
     status: 'draft' as 'draft' | 'confirmed' | 'cancelled',
@@ -123,6 +127,15 @@ export default function FinanceVouchers() {
     () => cashboxes.filter((c) => c.is_active && c.currency_code === formData.currency),
     [cashboxes, formData.currency],
   );
+
+  const targetCashboxesForCurrency = useMemo(
+    () => cashboxesForCurrency.filter((c) => c.id !== formData.cashboxId),
+    [cashboxesForCurrency, formData.cashboxId],
+  );
+  const isManualPartyDraft =
+    !formData.customerId &&
+    !formData.agentId &&
+    formData.relatedParty.trim().length > 0;
 
   const agentNameById = useMemo(() => {
     const m = new Map<string, string>();
@@ -136,6 +149,10 @@ export default function FinanceVouchers() {
   }, [cashboxes]);
 
   const displayRelatedParty = (voucher: Voucher) => {
+    if (voucher.relatedEntityType === 'expense') return 'مصروف داخلي';
+    if (voucher.relatedEntityType === 'cashbox_transfer') return 'مناقلة بين الصناديق';
+    if (voucher.relatedEntityType === 'salary_record') return 'راتب موظف';
+    if (voucher.relatedEntityType === 'manual_party') return voucher.relatedParty || 'جهة يدوية';
     if (voucher.customerId) return voucher.relatedParty;
     if (voucher.agentId) {
       const label = agentNameById.get(voucher.agentId);
@@ -290,6 +307,7 @@ export default function FinanceVouchers() {
       amount: 0,
       currency: 'USD',
       cashboxId: '',
+      transferCashboxId: '',
       description: '',
       refNo: '',
       status: 'draft',
@@ -310,6 +328,7 @@ export default function FinanceVouchers() {
       amount: voucher.amount,
       currency: voucher.currency,
       cashboxId: voucher.cashboxId ?? '',
+      transferCashboxId: '',
       description: voucher.description,
       refNo: voucher.refNo,
       status: (voucher.status as 'draft' | 'confirmed' | 'cancelled') || 'draft',
@@ -319,13 +338,29 @@ export default function FinanceVouchers() {
 
   const handleSave = async () => {
     try {
-      if (!formData.customerId && !formData.agentId) {
-        showToast('يجب اختيار الجهة المعنية (عميل أو وكيل) من القائمة.', 'error');
+      const manualPartyName = formData.relatedParty.trim();
+      const isManualParty = !formData.transferCashboxId && !formData.customerId && !formData.agentId && manualPartyName.length > 0;
+      if (!formData.transferCashboxId && !formData.customerId && !formData.agentId && !isManualParty) {
+        showToast('يجب اختيار الجهة المعنية أو كتابة اسم الجهة يدوياً.', 'error');
         return;
       }
       if (formData.status === 'confirmed' && !formData.cashboxId) {
         showToast('يجب اختيار صندوق لتأكيد السند.', 'error');
         return;
+      }
+      if (formData.transferCashboxId) {
+        if (formData.transferCashboxId === formData.cashboxId) {
+          showToast('لا يمكن تحويل المبلغ إلى نفس صندوق المصدر.', 'error');
+          return;
+        }
+        if (formData.status !== 'confirmed') {
+          showToast('مناقلة الصناديق يجب أن تكون بسند مؤكد.', 'error');
+          return;
+        }
+        if (editingVoucher) {
+          showToast('لا يمكن تعديل سند موجود إلى مناقلة صندوق. أنشئ مناقلة جديدة.', 'error');
+          return;
+        }
       }
 
       const voucherNo =
@@ -339,12 +374,40 @@ export default function FinanceVouchers() {
         exchangeRateToUsd: getRateToUsd(formData.currency, rates),
         customerId: formData.customerId || undefined,
         agentId: formData.agentId || undefined,
-        notes: String(formData.description || '').trim(),
+        relatedEntityType: isManualParty ? 'manual_party' : undefined,
+        notes: isManualParty
+          ? [`جهة: ${manualPartyName}`, String(formData.description || '').trim()].filter(Boolean).join(' - ')
+          : String(formData.description || '').trim(),
         status: formData.status,
         cashboxId: formData.cashboxId || undefined,
       };
 
-      if (formData.voucherType === 'سند قبض') {
+      if (formData.transferCashboxId) {
+        const sourceCashbox = cashboxes.find((c) => c.id === formData.cashboxId);
+        const targetCashbox = cashboxes.find((c) => c.id === formData.transferCashboxId);
+        const transferNo = formData.voucherNo || `TR-${Date.now()}`;
+        const notes =
+          String(formData.description || '').trim() ||
+          `مناقلة صندوق من ${sourceCashbox?.name ?? 'صندوق مصدر'} إلى ${targetCashbox?.name ?? 'صندوق نهائي'}`;
+        await phase3FinanceGateway.paymentVouchers.create({
+          ...payload,
+          voucherNo: `${transferNo}-OUT`,
+          relatedEntityType: 'cashbox_transfer',
+          customerId: undefined,
+          agentId: undefined,
+          notes,
+          cashboxId: formData.cashboxId,
+        });
+        await phase3FinanceGateway.receiptVouchers.create({
+          ...payload,
+          voucherNo: `${transferNo}-IN`,
+          relatedEntityType: 'cashbox_transfer',
+          customerId: undefined,
+          agentId: undefined,
+          notes,
+          cashboxId: formData.transferCashboxId,
+        });
+      } else if (formData.voucherType === 'سند قبض') {
         if (editingVoucher) {
           const backendId = phase3FinanceGateway.receiptVouchers.getBackendIdFromSynthetic(editingVoucher.id);
           if (!backendId) throw new Error('Missing backend mapping for receipt voucher update');
@@ -437,7 +500,7 @@ export default function FinanceVouchers() {
               <label className="form-label">الجهة المعنية</label>
               <SmartPartyInput
                 value={formData.relatedParty}
-                onChange={(value) => setFormData((prev) => ({ ...prev, relatedParty: value, customerId: null, agentId: null }))}
+                onChange={(value) => setFormData((prev) => ({ ...prev, relatedParty: value, customerId: null, agentId: null, transferCashboxId: '' }))}
                 onSelect={(p) => {
                   if (p.source_table === 'customers') {
                     setFormData((prev) => ({ ...prev, relatedParty: p.name, customerId: p.id, agentId: null }));
@@ -483,7 +546,7 @@ export default function FinanceVouchers() {
               <select
                 className="form-select w-full"
                 value={formData.currency}
-                onChange={(e) => setFormData({ ...formData, currency: e.target.value as CurrencyCode, cashboxId: '' })}
+                onChange={(e) => setFormData({ ...formData, currency: e.target.value as CurrencyCode, cashboxId: '', transferCashboxId: '' })}
               >
                 <option value="USD">USD</option>
                 <option value="SYP">SYP</option>
@@ -495,7 +558,7 @@ export default function FinanceVouchers() {
               <select
                 className="form-select w-full"
                 value={formData.cashboxId}
-                onChange={(e) => setFormData({ ...formData, cashboxId: e.target.value })}
+                onChange={(e) => setFormData({ ...formData, cashboxId: e.target.value, transferCashboxId: formData.transferCashboxId === e.target.value ? '' : formData.transferCashboxId })}
               >
                 <option value="">— اختر صندوقاً —</option>
                 {cashboxesForCurrency.map((c) => (
@@ -507,6 +570,27 @@ export default function FinanceVouchers() {
               {cashboxesForCurrency.length === 0 && (
                 <p className="text-xs text-amber-700 mt-1">لا يوجد صندوق بهذه العملة ضمن النطاق المسموح.</p>
               )}
+            </div>
+            <div className="form-group">
+              <label className="form-label">صندوق تحويل</label>
+              <select
+                className="form-select w-full"
+                value={formData.transferCashboxId}
+                onChange={(e) => setFormData({ ...formData, transferCashboxId: e.target.value })}
+                disabled={!formData.cashboxId || isManualPartyDraft}
+              >
+                <option value="">— بدون مناقلة —</option>
+                {targetCashboxesForCurrency.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.code} — {c.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-600 mt-1">
+                {isManualPartyDraft
+                  ? 'عند كتابة جهة يدوية يكفي اختيار الصندوق النهائي للسند.'
+                  : 'عند الاختيار سيتم إخراج المبلغ من الصندوق وتحويله للصندوق النهائي.'}
+              </p>
             </div>
             <div className="form-group">
               <label className="form-label">رقم المرجع</label>
