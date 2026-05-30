@@ -178,6 +178,7 @@ export interface ReceiptVoucher {
   createdBy: string;
   cashboxId?: string;
   cashboxName?: string;
+  relatedEntityType?: string | null;
 }
 
 export interface PaymentVoucher {
@@ -199,6 +200,7 @@ export interface PaymentVoucher {
   createdBy: string;
   cashboxId?: string;
   cashboxName?: string;
+  relatedEntityType?: string | null;
 }
 
 export interface JournalEntry {

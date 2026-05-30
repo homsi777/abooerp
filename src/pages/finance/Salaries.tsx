@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { httpClient } from '../../lib/api/httpClient';
+import { phase3FinanceGateway, type BackendCashboxRecord } from '../../lib/api/phase3FinanceGateway';
 import { useToast } from '../../components/Toast';
 import { useRegisterEscape } from '../../context/EscapeRegistryContext';
 import { downloadCsv } from '../../lib/export/csvDownload';
@@ -31,12 +32,33 @@ interface SalaryRecord {
   basic_amount: string;
   bonuses: string;
   deductions: string;
+  manual_deductions?: string;
+  advance_deductions?: string;
   net_amount: string;
+  paid_amount?: string;
+  salary_payment_voucher_id?: string | null;
+  salary_cashbox_id?: string | null;
   currency: string;
   payment_status: 'pending' | 'paid' | 'cancelled';
   paid_at: string | null;
   notes: string | null;
   employee_salary_type?: 'monthly' | 'weekly';
+}
+
+interface SalaryAdvanceDeduction {
+  id: string;
+  salary_record_id: string;
+  employee_advance_id: string;
+  advance_date: string;
+  original_amount: string;
+  repaid_amount: string;
+  remaining_balance: string;
+  advance_status: string;
+  deducted_amount: string;
+  currency: string;
+  deducted_salary_amount: string;
+  salary_currency: string;
+  created_at: string;
 }
 
 interface Advance {
@@ -212,6 +234,7 @@ export default function FinanceSalaries() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [salaries, setSalaries] = useState<SalaryRecord[]>([]);
   const [advances, setAdvances] = useState<Advance[]>([]);
+  const [cashboxes, setCashboxes] = useState<BackendCashboxRecord[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
 
   // loading
@@ -232,6 +255,11 @@ export default function FinanceSalaries() {
   const [empModal, setEmpModal] = useState<null | 'create' | Employee>(null);
   const [salModal, setSalModal] = useState<null | 'create' | SalaryRecord>(null);
   const [advModal, setAdvModal] = useState<null | 'create' | Advance>(null);
+  const [salaryPayModal, setSalaryPayModal] = useState<SalaryRecord | null>(null);
+  const [salaryPayCashboxId, setSalaryPayCashboxId] = useState('');
+  const [payingSalary, setPayingSalary] = useState(false);
+  const [salaryDetails, setSalaryDetails] = useState<null | { salary: SalaryRecord; deductions: SalaryAdvanceDeduction[] }>(null);
+  const [salaryDetailsLoading, setSalaryDetailsLoading] = useState(false);
 
   const [dossierEmployeeId, setDossierEmployeeId] = useState<string | null>(null);
   const [dossierLoading, setDossierLoading] = useState(false);
@@ -302,9 +330,19 @@ export default function FinanceSalaries() {
     }
   }, [showToast, advEmpFilter, advStatusFilter]);
 
+  const loadCashboxes = useCallback(async () => {
+    try {
+      const rows = await phase3FinanceGateway.cashbox.listMaster({ isActive: 'true' });
+      setCashboxes(rows);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'تعذر تحميل الصناديق', 'error');
+    }
+  }, [showToast]);
+
   useEffect(() => { void loadEmployees(); }, [loadEmployees]);
   useEffect(() => { void loadSalaries(); }, [loadSalaries]);
   useEffect(() => { void loadAdvances(); }, [loadAdvances]);
+  useEffect(() => { void loadCashboxes(); }, [loadCashboxes]);
 
   useEffect(() => {
     if (salModal !== 'create' || !salForm.employeeId) {
@@ -518,13 +556,44 @@ export default function FinanceSalaries() {
     }
   };
 
-  const markSalaryPaid = async (id: string) => {
+  const openSalaryPay = (salary: SalaryRecord) => {
+    const sameCurrency = cashboxes.find((c) => c.is_active && c.currency_code === salary.currency);
+    setSalaryPayModal(salary);
+    setSalaryPayCashboxId(sameCurrency?.id ?? '');
+  };
+
+  const paySalary = async () => {
+    if (!salaryPayModal) return;
+    if (!salaryPayCashboxId) {
+      showToast('يجب اختيار صندوق لدفع صافي الراتب', 'error');
+      return;
+    }
+    setPayingSalary(true);
     try {
-      await httpClient.put(`/salary-records/${id}`, { paymentStatus: 'paid' });
-      showToast('تم تسليم الراتب وتسجيله كمدفوع', 'success');
+      await httpClient.post(`/salary-records/${salaryPayModal.id}/pay`, { cashboxId: salaryPayCashboxId });
+      showToast('تم دفع صافي الراتب وربطه بسند دفع وحركة صندوق', 'success');
+      setSalaryPayModal(null);
+      setSalaryPayCashboxId('');
       void loadSalaries();
+      void loadAdvances();
     } catch (e) {
-      showToast(e instanceof Error ? e.message : 'خطأ', 'error');
+      showToast(e instanceof Error ? e.message : 'تعذر دفع الراتب', 'error');
+    } finally {
+      setPayingSalary(false);
+    }
+  };
+
+  const openSalaryDetails = async (salary: SalaryRecord) => {
+    setSalaryDetails({ salary, deductions: [] });
+    setSalaryDetailsLoading(true);
+    try {
+      const deductions = await httpClient.get<SalaryAdvanceDeduction[]>(`/salary-records/${salary.id}/advance-deductions`);
+      setSalaryDetails({ salary, deductions });
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'تعذر تحميل تفاصيل خصم السلف', 'error');
+      setSalaryDetails(null);
+    } finally {
+      setSalaryDetailsLoading(false);
     }
   };
 
@@ -978,13 +1047,13 @@ export default function FinanceSalaries() {
         <div className="space-y-3">
           {/* Filters */}
           <div className="card flex flex-wrap gap-3">
-            <select className="form-input" value={salYear} onChange={e => setSalYear(Number(e.target.value))}>
+            <select className="form-input" title="سنة كشف الرواتب" aria-label="سنة كشف الرواتب" value={salYear} onChange={e => setSalYear(Number(e.target.value))}>
               {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
             </select>
-            <select className="form-input" value={salMonth} onChange={e => setSalMonth(Number(e.target.value))}>
+            <select className="form-input" title="شهر كشف الرواتب" aria-label="شهر كشف الرواتب" value={salMonth} onChange={e => setSalMonth(Number(e.target.value))}>
               {MONTHS_AR.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
             </select>
-            <select className="form-input" value={salEmpFilter} onChange={e => setSalEmpFilter(e.target.value)}>
+            <select className="form-input" title="فلترة الرواتب حسب الموظف" aria-label="فلترة الرواتب حسب الموظف" value={salEmpFilter} onChange={e => setSalEmpFilter(e.target.value)}>
               <option value="">كل الموظفين</option>
               {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
             </select>
@@ -1000,10 +1069,11 @@ export default function FinanceSalaries() {
                     <th>الموظف</th>
                     <th>دورة الراتب</th>
                     <th>الشهر</th>
-                    <th>الأساسي</th>
-                    <th>المكافآت</th>
-                    <th>الاستقطاعات</th>
-                    <th>الصافي</th>
+                    <th>الإجمالي</th>
+                    <th>سلف مخصومة</th>
+                    <th>الصافي المستحق</th>
+                    <th>المدفوع</th>
+                    <th>المتبقي</th>
                     <th>العملة</th>
                     <th>الحالة</th>
                     <th>إجراءات</th>
@@ -1019,10 +1089,11 @@ export default function FinanceSalaries() {
                         </span>
                       </td>
                       <td>{MONTHS_AR[s.period_month - 1]} {s.period_year}</td>
-                      <td className="text-left">{fmt(s.basic_amount)}</td>
-                      <td className="text-left text-green-700">{fmt(s.bonuses)}</td>
-                      <td className="text-left text-red-600">{fmt(s.deductions)}</td>
+                      <td className="text-left">{fmt(Number(s.basic_amount) + Number(s.bonuses))}</td>
+                      <td className="text-left text-amber-700">{fmt(s.advance_deductions ?? 0)}</td>
                       <td className="text-left font-bold">{fmt(s.net_amount)}</td>
+                      <td className="text-left text-green-700">{fmt(s.paid_amount ?? 0)}</td>
+                      <td className="text-left text-red-600">{fmt(Math.max(0, Number(s.net_amount) - Number(s.paid_amount ?? 0)))}</td>
                       <td>{s.currency}</td>
                       <td>
                         <span className={`status-badge ${SALARY_STATUS_CSS[s.payment_status]}`}>
@@ -1032,8 +1103,9 @@ export default function FinanceSalaries() {
                       <td>
                         <div className="flex gap-1 flex-wrap">
                           <button type="button" className="toolbar-btn text-xs py-0.5 px-2 text-indigo-800 hover:bg-indigo-50" title="راتب وسلف ومكافآت" onClick={() => void openEmployeeDossier(s.employee_id)}>ملف</button>
+                          <button type="button" className="toolbar-btn text-xs py-0.5 px-2 text-blue-700 hover:bg-blue-50" onClick={() => void openSalaryDetails(s)}>تفاصيل</button>
                           {s.payment_status === 'pending' && (
-                            <button type="button" className="toolbar-btn text-xs py-0.5 px-2 text-green-700 hover:bg-green-50" onClick={() => markSalaryPaid(s.id)}>تسليم راتب</button>
+                            <button type="button" className="toolbar-btn text-xs py-0.5 px-2 text-green-700 hover:bg-green-50" onClick={() => openSalaryPay(s)}>تسليم راتب</button>
                           )}
                           <button type="button" className="toolbar-btn text-xs py-0.5 px-2" onClick={() => openEditSal(s)}>تعديل</button>
                           <button type="button" className="toolbar-btn text-xs py-0.5 px-2 text-red-600 hover:bg-red-50" onClick={() => deleteSalary(s.id)}>حذف</button>
@@ -1058,11 +1130,11 @@ export default function FinanceSalaries() {
       {activeTab === 'advances' && (
         <div className="space-y-3">
           <div className="card flex flex-wrap gap-3">
-            <select className="form-input" value={advEmpFilter} onChange={e => setAdvEmpFilter(e.target.value)}>
+            <select className="form-input" title="فلترة السلف حسب الموظف" aria-label="فلترة السلف حسب الموظف" value={advEmpFilter} onChange={e => setAdvEmpFilter(e.target.value)}>
               <option value="">كل الموظفين</option>
               {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
             </select>
-            <select className="form-input" value={advStatusFilter} onChange={e => setAdvStatusFilter(e.target.value)}>
+            <select className="form-input" title="فلترة السلف حسب الحالة" aria-label="فلترة السلف حسب الحالة" value={advStatusFilter} onChange={e => setAdvStatusFilter(e.target.value)}>
               <option value="">كل الحالات</option>
               {Object.entries(ADVANCE_STATUS_AR).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
@@ -1293,27 +1365,27 @@ export default function FinanceSalaries() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium mb-1">الرمز *</label>
-                <input className="form-input w-full" value={empForm.code} onChange={e => setEmpForm(f => ({ ...f, code: e.target.value }))} />
+                <input className="form-input w-full" title="رمز الموظف" aria-label="رمز الموظف" value={empForm.code} onChange={e => setEmpForm(f => ({ ...f, code: e.target.value }))} />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">الاسم *</label>
-                <input className="form-input w-full" value={empForm.name} onChange={e => setEmpForm(f => ({ ...f, name: e.target.value }))} />
+                <input className="form-input w-full" title="اسم الموظف" aria-label="اسم الموظف" value={empForm.name} onChange={e => setEmpForm(f => ({ ...f, name: e.target.value }))} />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">الوظيفة</label>
-                <input className="form-input w-full" value={empForm.position} onChange={e => setEmpForm(f => ({ ...f, position: e.target.value }))} />
+                <input className="form-input w-full" title="وظيفة الموظف" aria-label="وظيفة الموظف" value={empForm.position} onChange={e => setEmpForm(f => ({ ...f, position: e.target.value }))} />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">الهاتف</label>
-                <input className="form-input w-full" value={empForm.phone} onChange={e => setEmpForm(f => ({ ...f, phone: e.target.value }))} />
+                <input className="form-input w-full" title="هاتف الموظف" aria-label="هاتف الموظف" value={empForm.phone} onChange={e => setEmpForm(f => ({ ...f, phone: e.target.value }))} />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">الراتب الأساسي</label>
-                <input type="number" min="0" step="0.01" className="form-input w-full" value={empForm.basicSalary} onChange={e => setEmpForm(f => ({ ...f, basicSalary: parseFloat(e.target.value) || 0 }))} />
+                <input type="number" min="0" step="0.01" className="form-input w-full" title="الراتب الأساسي" aria-label="الراتب الأساسي" value={empForm.basicSalary} onChange={e => setEmpForm(f => ({ ...f, basicSalary: parseFloat(e.target.value) || 0 }))} />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">العملة</label>
-                <select className="form-input w-full" value={empForm.currency} onChange={e => setEmpForm(f => ({ ...f, currency: e.target.value }))}>
+                <select className="form-input w-full" title="عملة راتب الموظف" aria-label="عملة راتب الموظف" value={empForm.currency} onChange={e => setEmpForm(f => ({ ...f, currency: e.target.value }))}>
                   {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
                 <p className="text-xs text-slate-600 mt-1">عملة المشروع المرجعية: USD. يمكن تسجيل سلفة بليرة أو غيرها؛ يُعرض ما يعادلها بالدولار تلقائياً عند إدخال السلفة.</p>
@@ -1334,7 +1406,7 @@ export default function FinanceSalaries() {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">تاريخ التعيين</label>
-                <input type="date" className="form-input w-full" value={empForm.hireDate} onChange={e => setEmpForm(f => ({ ...f, hireDate: e.target.value }))} />
+                <input type="date" className="form-input w-full" title="تاريخ التعيين" aria-label="تاريخ التعيين" value={empForm.hireDate} onChange={e => setEmpForm(f => ({ ...f, hireDate: e.target.value }))} />
               </div>
               <div className="flex items-center gap-2 mt-5">
                 <input type="checkbox" id="empActive" checked={empForm.isActive} onChange={e => setEmpForm(f => ({ ...f, isActive: e.target.checked }))} />
@@ -1342,7 +1414,7 @@ export default function FinanceSalaries() {
               </div>
               <div className="col-span-2">
                 <label className="block text-sm font-medium mb-1">ملاحظات / بيان</label>
-                <textarea className="form-input w-full" rows={2} value={empForm.notes} onChange={e => setEmpForm(f => ({ ...f, notes: e.target.value }))} placeholder="اختياري" />
+                <textarea className="form-input w-full" rows={2} title="ملاحظات الموظف" aria-label="ملاحظات الموظف" value={empForm.notes} onChange={e => setEmpForm(f => ({ ...f, notes: e.target.value }))} placeholder="اختياري" />
               </div>
             </div>
             <div className="flex gap-2 pt-2 justify-end">
@@ -1356,12 +1428,115 @@ export default function FinanceSalaries() {
       )}
 
       {/* ── SALARY MODAL ──────────────────────────────────────────────────── */}
+      {salaryPayModal && (
+        <Modal title={`دفع راتب - ${salaryPayModal.employee_name}`} onClose={() => setSalaryPayModal(null)}>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="stat-card">
+                <div className="stat-value">{fmt(Number(salaryPayModal.basic_amount) + Number(salaryPayModal.bonuses))} {salaryPayModal.currency}</div>
+                <div className="stat-label">إجمالي الراتب</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value text-amber-700">{fmt(salaryPayModal.advance_deductions ?? 0)} {salaryPayModal.currency}</div>
+                <div className="stat-label">سلف مخصومة</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value text-red-700">{fmt(salaryPayModal.manual_deductions ?? 0)} {salaryPayModal.currency}</div>
+                <div className="stat-label">استقطاعات أخرى</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value text-green-700">{fmt(salaryPayModal.net_amount)} {salaryPayModal.currency}</div>
+                <div className="stat-label">صافي الدفع</div>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">الصندوق *</label>
+              <select className="form-input w-full" title="صندوق دفع الراتب" aria-label="صندوق دفع الراتب" value={salaryPayCashboxId} onChange={(e) => setSalaryPayCashboxId(e.target.value)}>
+                <option value="">اختر الصندوق</option>
+                {cashboxes
+                  .filter((c) => c.is_active && c.currency_code === salaryPayModal.currency)
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.code}) - {fmt(c.current_balance)} {c.currency_code}
+                    </option>
+                  ))}
+              </select>
+              {cashboxes.filter((c) => c.is_active && c.currency_code === salaryPayModal.currency).length === 0 && (
+                <p className="text-xs text-red-600 mt-1">لا يوجد صندوق نشط بنفس عملة الراتب.</p>
+              )}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button type="button" className="toolbar-btn" onClick={() => setSalaryPayModal(null)}>إلغاء</button>
+              <button type="button" className="toolbar-btn primary" onClick={() => void paySalary()} disabled={payingSalary || !salaryPayCashboxId}>
+                {payingSalary ? 'جار الدفع...' : 'تأكيد الدفع'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {salaryDetails && (
+        <Modal title={`تفاصيل الراتب - ${salaryDetails.salary.employee_name}`} onClose={() => setSalaryDetails(null)} wide>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="stat-card">
+                <div className="stat-value">{fmt(Number(salaryDetails.salary.basic_amount) + Number(salaryDetails.salary.bonuses))}</div>
+                <div className="stat-label">إجمالي الراتب</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value text-amber-700">{fmt(salaryDetails.salary.advance_deductions ?? 0)}</div>
+                <div className="stat-label">إجمالي السلف المخصومة</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value text-green-700">{fmt(salaryDetails.salary.net_amount)}</div>
+                <div className="stat-label">الصافي</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">{salaryDetails.salary.currency}</div>
+                <div className="stat-label">العملة</div>
+              </div>
+            </div>
+            {salaryDetailsLoading ? (
+              <p className="text-center text-gray-500 py-4">جاري التحميل...</p>
+            ) : (
+              <table className="data-grid text-sm w-full">
+                <thead>
+                  <tr>
+                    <th>السلفة</th>
+                    <th>التاريخ</th>
+                    <th>أصل السلفة</th>
+                    <th>المخصوم بهذا الراتب</th>
+                    <th>المتبقي</th>
+                    <th>الحالة</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {salaryDetails.deductions.map((d) => (
+                    <tr key={d.id}>
+                      <td className="font-mono">{d.employee_advance_id.slice(0, 8)}...</td>
+                      <td>{d.advance_date}</td>
+                      <td className="text-left">{fmt(d.original_amount)} {d.currency}</td>
+                      <td className="text-left text-amber-700">{fmt(d.deducted_salary_amount)} {d.salary_currency}</td>
+                      <td className="text-left">{fmt(d.remaining_balance)} {d.currency}</td>
+                      <td>{ADVANCE_STATUS_AR[d.advance_status] ?? d.advance_status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {!salaryDetailsLoading && salaryDetails.deductions.length === 0 && (
+              <p className="text-sm text-gray-500">لا توجد سلف مخصومة على هذا الراتب بعد.</p>
+            )}
+          </div>
+        </Modal>
+      )}
+
       {salModal !== null && (
         <Modal title={salModal === 'create' ? 'إضافة راتب' : 'تعديل الراتب'} onClose={() => setSalModal(null)}>
           <div className="space-y-3">
             <div>
               <label className="block text-sm font-medium mb-1">الموظف *</label>
-              <select className="form-input w-full" value={salForm.employeeId} onChange={e => {
+              <select className="form-input w-full" title="موظف الراتب" aria-label="موظف الراتب" value={salForm.employeeId} onChange={e => {
                 const emp = employees.find(x => x.id === e.target.value);
                 setSalForm(f => ({
                   ...f,
@@ -1387,27 +1562,27 @@ export default function FinanceSalaries() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium mb-1">السنة</label>
-                <select className="form-input w-full" value={salForm.periodYear} onChange={e => setSalForm(f => ({ ...f, periodYear: Number(e.target.value) }))} disabled={salModal !== 'create'}>
+                <select className="form-input w-full" title="سنة الراتب" aria-label="سنة الراتب" value={salForm.periodYear} onChange={e => setSalForm(f => ({ ...f, periodYear: Number(e.target.value) }))} disabled={salModal !== 'create'}>
                   {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">الشهر</label>
-                <select className="form-input w-full" value={salForm.periodMonth} onChange={e => setSalForm(f => ({ ...f, periodMonth: Number(e.target.value) }))} disabled={salModal !== 'create'}>
+                <select className="form-input w-full" title="شهر الراتب" aria-label="شهر الراتب" value={salForm.periodMonth} onChange={e => setSalForm(f => ({ ...f, periodMonth: Number(e.target.value) }))} disabled={salModal !== 'create'}>
                   {MONTHS_AR.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">الراتب الأساسي</label>
-                <input type="number" min="0" step="0.01" className="form-input w-full" value={salForm.basicAmount} onChange={e => setSalForm(f => ({ ...f, basicAmount: parseFloat(e.target.value) || 0 }))} />
+                <input type="number" min="0" step="0.01" className="form-input w-full" title="الراتب الأساسي" aria-label="الراتب الأساسي" value={salForm.basicAmount} onChange={e => setSalForm(f => ({ ...f, basicAmount: parseFloat(e.target.value) || 0 }))} />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">المكافآت</label>
-                <input type="number" min="0" step="0.01" className="form-input w-full" value={salForm.bonuses} onChange={e => setSalForm(f => ({ ...f, bonuses: parseFloat(e.target.value) || 0 }))} />
+                <input type="number" min="0" step="0.01" className="form-input w-full" title="مكافآت الراتب" aria-label="مكافآت الراتب" value={salForm.bonuses} onChange={e => setSalForm(f => ({ ...f, bonuses: parseFloat(e.target.value) || 0 }))} />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">استقطاعات أخرى</label>
-                <input type="number" min="0" step="0.01" className="form-input w-full" value={salForm.deductions} onChange={e => setSalForm(f => ({ ...f, deductions: parseFloat(e.target.value) || 0 }))} />
+                <input type="number" min="0" step="0.01" className="form-input w-full" title="استقطاعات أخرى" aria-label="استقطاعات أخرى" value={salForm.deductions} onChange={e => setSalForm(f => ({ ...f, deductions: parseFloat(e.target.value) || 0 }))} />
                 {salModal === 'create' && salaryOpenAdvancesHint > 0 && (
                   <p className="text-xs text-amber-800 bg-amber-50 rounded px-2 py-1 mt-1">
                     سلف مفتوحة تُضاف للخصومات (محوّلة لعملة هذا السجل <strong>{salForm.currency}</strong>):{' '}
@@ -1418,13 +1593,13 @@ export default function FinanceSalaries() {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">العملة</label>
-                <select className="form-input w-full" value={salForm.currency} onChange={e => setSalForm(f => ({ ...f, currency: e.target.value }))}>
+                <select className="form-input w-full" title="عملة الراتب" aria-label="عملة الراتب" value={salForm.currency} onChange={e => setSalForm(f => ({ ...f, currency: e.target.value }))}>
                   {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">الحالة</label>
-                <select className="form-input w-full" value={salForm.paymentStatus} onChange={e => setSalForm(f => ({ ...f, paymentStatus: e.target.value as any }))}>
+                <select className="form-input w-full" title="حالة دفع الراتب" aria-label="حالة دفع الراتب" value={salForm.paymentStatus} onChange={e => setSalForm(f => ({ ...f, paymentStatus: e.target.value as any }))}>
                   {Object.entries(SALARY_STATUS_AR).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select>
               </div>
@@ -1445,7 +1620,7 @@ export default function FinanceSalaries() {
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">ملاحظات</label>
-              <textarea className="form-input w-full" rows={2} value={salForm.notes} onChange={e => setSalForm(f => ({ ...f, notes: e.target.value }))} />
+              <textarea className="form-input w-full" rows={2} title="ملاحظات الراتب" aria-label="ملاحظات الراتب" value={salForm.notes} onChange={e => setSalForm(f => ({ ...f, notes: e.target.value }))} />
             </div>
             <div className="flex gap-2 pt-2 justify-end">
               <button type="button" className="toolbar-btn" onClick={() => setSalModal(null)}>إلغاء</button>
@@ -1464,7 +1639,7 @@ export default function FinanceSalaries() {
             {advModal === 'create' && (
               <div>
                 <label className="block text-sm font-medium mb-1">الموظف *</label>
-                <select className="form-input w-full" value={advForm.employeeId} onChange={e => {
+                <select className="form-input w-full" title="موظف السلفة" aria-label="موظف السلفة" value={advForm.employeeId} onChange={e => {
                   const emp = employees.find(x => x.id === e.target.value);
                   setAdvForm(f => ({ ...f, employeeId: e.target.value, currency: emp?.currency ?? f.currency }));
                 }}>
@@ -1477,17 +1652,17 @@ export default function FinanceSalaries() {
                 <>
                   <div>
                     <label className="block text-sm font-medium mb-1">المبلغ *</label>
-                    <input type="number" min="0.01" step="0.01" className="form-input w-full" value={advForm.amount} onChange={e => setAdvForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))} />
+                    <input type="number" min="0.01" step="0.01" className="form-input w-full" title="مبلغ السلفة" aria-label="مبلغ السلفة" value={advForm.amount} onChange={e => setAdvForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))} />
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">العملة</label>
-                    <select className="form-input w-full" value={advForm.currency} onChange={e => setAdvForm(f => ({ ...f, currency: e.target.value }))}>
+                    <select className="form-input w-full" title="عملة السلفة" aria-label="عملة السلفة" value={advForm.currency} onChange={e => setAdvForm(f => ({ ...f, currency: e.target.value }))}>
                       {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">تاريخ السلفة</label>
-                    <input type="date" className="form-input w-full" value={advForm.advanceDate} onChange={e => setAdvForm(f => ({ ...f, advanceDate: e.target.value }))} />
+                    <input type="date" className="form-input w-full" title="تاريخ السلفة" aria-label="تاريخ السلفة" value={advForm.advanceDate} onChange={e => setAdvForm(f => ({ ...f, advanceDate: e.target.value }))} />
                   </div>
                 </>
               )}
@@ -1495,11 +1670,11 @@ export default function FinanceSalaries() {
                 <>
                   <div>
                     <label className="block text-sm font-medium mb-1">المبلغ</label>
-                    <input type="number" min="0.01" step="0.01" className="form-input w-full" value={advForm.amount} onChange={e => setAdvForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))} />
+                    <input type="number" min="0.01" step="0.01" className="form-input w-full" title="مبلغ السلفة" aria-label="مبلغ السلفة" value={advForm.amount} onChange={e => setAdvForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))} />
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">العملة</label>
-                    <select className="form-input w-full" value={advForm.currency} onChange={e => setAdvForm(f => ({ ...f, currency: e.target.value }))}>
+                    <select className="form-input w-full" title="عملة السلفة" aria-label="عملة السلفة" value={advForm.currency} onChange={e => setAdvForm(f => ({ ...f, currency: e.target.value }))}>
                       {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
@@ -1507,12 +1682,12 @@ export default function FinanceSalaries() {
               )}
               <div>
                 <label className="block text-sm font-medium mb-1">موعد السداد المتوقع</label>
-                <input type="date" className="form-input w-full" value={advForm.expectedRepay} onChange={e => setAdvForm(f => ({ ...f, expectedRepay: e.target.value }))} />
+                <input type="date" className="form-input w-full" title="موعد السداد المتوقع" aria-label="موعد السداد المتوقع" value={advForm.expectedRepay} onChange={e => setAdvForm(f => ({ ...f, expectedRepay: e.target.value }))} />
               </div>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">البيان (ملاحظات)</label>
-              <textarea className="form-input w-full" rows={2} value={advForm.notes} onChange={e => setAdvForm(f => ({ ...f, notes: e.target.value }))} placeholder="سبب السلفة أو تفاصيل إضافية" />
+              <textarea className="form-input w-full" rows={2} title="بيان السلفة" aria-label="بيان السلفة" value={advForm.notes} onChange={e => setAdvForm(f => ({ ...f, notes: e.target.value }))} placeholder="سبب السلفة أو تفاصيل إضافية" />
             </div>
             {(() => {
               const editing = advModal !== null && advModal !== 'create' ? (advModal as Advance) : null;

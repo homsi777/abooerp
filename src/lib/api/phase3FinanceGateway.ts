@@ -13,6 +13,8 @@ type BackendVoucher = {
   cashbox_id?: string | null;
   cashbox_name?: string | null;
   cashbox_code?: string | null;
+  related_entity_type?: string | null;
+  related_entity_id?: string | null;
   /** From server join: customer name or sender/receiver name */
   party_display_name?: string | null;
   status: 'draft' | 'confirmed' | 'cancelled';
@@ -49,6 +51,25 @@ export type BackendCashboxRecord = {
 export type BackendCashboxMovementRow = BackendCashboxTransaction & {
   cashbox_id?: string | null;
   created_by_username?: string | null;
+  reference_no?: string | null;
+  status?: string | null;
+  related_entity_type?: string | null;
+  source_label?: string | null;
+  party_display_name?: string | null;
+  debit_in?: number;
+  credit_out?: number;
+  running_balance?: number;
+};
+
+export type BackendCashboxStatement = {
+  cashbox: BackendCashboxRecord;
+  summary: {
+    openingBalance: number;
+    totalIncoming: number;
+    totalOutgoing: number;
+    closingBalance: number;
+  };
+  rows: BackendCashboxMovementRow[];
 };
 
 type BackendCashboxTransaction = {
@@ -286,13 +307,30 @@ function partyFallbackLabel(row: BackendVoucher): string {
   return 'غير محدد';
 }
 
+function internalVoucherPartyLabel(row: BackendVoucher, fallback: string): string {
+  if (row.related_entity_type === 'expense') return 'مصروف داخلي';
+  if (row.related_entity_type === 'cashbox_transfer') return 'مناقلة بين الصناديق';
+  if (row.related_entity_type === 'salary_record') return 'راتب موظف';
+  if (row.related_entity_type === 'manual_party') {
+    const match = String(row.notes ?? '').match(/^\s*جهة:\s*([^-|]+)/);
+    return match?.[1]?.trim() || 'جهة يدوية';
+  }
+  return fallback;
+}
+
+function voucherDescription(row: BackendVoucher): string {
+  const notes = row.notes || '';
+  if (row.related_entity_type !== 'manual_party') return notes;
+  return notes.replace(/^\s*جهة:\s*[^-|]+(?:\s*-\s*)?/, '').trim();
+}
+
 function toReceiptVoucher(row: BackendVoucher): ReceiptVoucher {
   return {
     id: syntheticId(row.id),
     voucherNo: row.voucher_no,
     date: row.created_at.split('T')[0],
     customerId: 0,
-    customerName: partyFallbackLabel(row),
+    customerName: internalVoucherPartyLabel(row, partyFallbackLabel(row)),
     customerBackendId: row.customer_id ?? null,
     agentBackendId: row.agent_id ?? null,
     amount: Number(row.original_amount),
@@ -300,10 +338,11 @@ function toReceiptVoucher(row: BackendVoucher): ReceiptVoucher {
     exchangeRateToUsd: Number(row.exchange_rate_to_usd),
     amountUsd: Number(row.base_amount_usd),
     paymentMethod: 'cash',
-    description: row.notes || '',
+    description: voucherDescription(row),
     createdBy: row.status,
     cashboxId: row.cashbox_id ?? undefined,
     cashboxName: row.cashbox_name || row.cashbox_code || undefined,
+    relatedEntityType: row.related_entity_type ?? null,
   };
 }
 
@@ -313,7 +352,7 @@ function toPaymentVoucher(row: BackendVoucher): PaymentVoucher {
     voucherNo: row.voucher_no,
     date: row.created_at.split('T')[0],
     vendorId: 0,
-    vendorName: partyFallbackLabel(row),
+    vendorName: internalVoucherPartyLabel(row, partyFallbackLabel(row)),
     customerBackendId: row.customer_id ?? null,
     agentBackendId: row.agent_id ?? null,
     amount: Number(row.original_amount),
@@ -321,10 +360,11 @@ function toPaymentVoucher(row: BackendVoucher): PaymentVoucher {
     exchangeRateToUsd: Number(row.exchange_rate_to_usd),
     amountUsd: Number(row.base_amount_usd),
     paymentMethod: 'cash',
-    description: row.notes || '',
+    description: voucherDescription(row),
     createdBy: row.status,
     cashboxId: row.cashbox_id ?? undefined,
     cashboxName: row.cashbox_name || row.cashbox_code || undefined,
+    relatedEntityType: row.related_entity_type ?? null,
   };
 }
 
@@ -394,6 +434,17 @@ export const phase3FinanceGateway = {
     },
     getMovements: async (cashboxId: string): Promise<BackendCashboxMovementRow[]> => {
       return httpClient.get<BackendCashboxMovementRow[]>(`/cashboxes/${cashboxId}/movements`);
+    },
+    getStatement: async (
+      cashboxId: string,
+      filters?: { dateFrom?: string; dateTo?: string; transactionType?: 'inflow' | 'outflow' },
+    ): Promise<BackendCashboxStatement> => {
+      const qs = new URLSearchParams();
+      if (filters?.dateFrom) qs.set('dateFrom', filters.dateFrom);
+      if (filters?.dateTo) qs.set('dateTo', filters.dateTo);
+      if (filters?.transactionType) qs.set('transactionType', filters.transactionType);
+      const suffix = qs.toString() ? `?${qs.toString()}` : '';
+      return httpClient.get<BackendCashboxStatement>(`/cashboxes/${cashboxId}/statement${suffix}`);
     },
   },
   movements: {

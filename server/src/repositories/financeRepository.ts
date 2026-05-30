@@ -24,6 +24,7 @@ export interface ReceiptVoucherInput {
   exchangeRateToUsd?: number;
   baseAmountUsd?: number;
   createdByUserId?: string;
+  createdAt?: string;
   expectedUpdatedAt?: string;
   companyId?: string;
   cashboxId?: string;
@@ -617,6 +618,121 @@ export class FinanceRepository {
       [cashboxId],
     );
     return result.rows;
+  }
+
+  async getCashboxStatement(
+    cashboxId: string,
+    scope?: DataScope,
+    filters?: { dateFrom?: string; dateTo?: string; transactionType?: 'inflow' | 'outflow' },
+  ) {
+    const cb = await this.getCashboxById(cashboxId, scope);
+    if (!cb) return null;
+
+    const values: unknown[] = [cashboxId];
+    const periodConditions = ['ct.cashbox_id = $1::uuid'];
+    const beforeConditions = ['ct.cashbox_id = $1::uuid'];
+
+    if (filters?.dateFrom) {
+      values.push(filters.dateFrom);
+      const ref = `$${values.length}::timestamptz`;
+      periodConditions.push(`ct.created_at >= ${ref}`);
+      beforeConditions.push(`ct.created_at < ${ref}`);
+    }
+    if (filters?.dateTo) {
+      values.push(filters.dateTo);
+      periodConditions.push(`ct.created_at <= $${values.length}::timestamptz`);
+    }
+    if (filters?.transactionType) {
+      values.push(filters.transactionType);
+      periodConditions.push(`ct.transaction_type = $${values.length}`);
+    }
+
+    const beforeResult = await pool.query(
+      `
+      select coalesce(sum(case when transaction_type = 'inflow' then original_amount else -original_amount end), 0) as delta
+      from cashbox_transactions ct
+      where ${beforeConditions.join(' and ')}
+      `,
+      values.slice(0, filters?.dateFrom ? 2 : 1),
+    );
+    const openingBalance = Number(cb.opening_balance || 0) + Number(beforeResult.rows[0]?.delta || 0);
+
+    const result = await pool.query(
+      `
+      select
+        ct.*,
+        coalesce(rv.voucher_no, pv.voucher_no, '-') as reference_no,
+        coalesce(rv.status, pv.status, case when ct.is_reversal then 'reversal' else 'posted' end) as status,
+        coalesce(rv.related_entity_type, pv.related_entity_type) as related_entity_type,
+        case
+          when coalesce(rv.related_entity_type, pv.related_entity_type) = 'cashbox_transfer' then 'cashbox_transfer'
+          when ct.source_voucher_type = 'receipt' then 'receipt_voucher'
+          when pv.related_entity_type = 'expense' then 'expense'
+          when pv.related_entity_type = 'salary_record' then 'salary_record'
+          when ct.source_voucher_type = 'payment' then 'payment_voucher'
+          else ct.source_voucher_type
+        end as source_label,
+        case
+          when pv.related_entity_type = 'salary_record' then emp.name
+          when coalesce(rv.related_entity_type, pv.related_entity_type) = 'cashbox_transfer' then 'مناقلة بين الصناديق'
+          when coalesce(rv.related_entity_type, pv.related_entity_type) = 'manual_party' then
+            trim(split_part(regexp_replace(coalesce(rv.notes, pv.notes, ''), '^\\s*جهة:\\s*', ''), ' - ', 1))
+          when rv.sender_receiver_id is not null then rv_sr.full_name
+          when pv.sender_receiver_id is not null then pv_sr.full_name
+          when rv.customer_id is not null then rv_c.name
+          when pv.customer_id is not null then pv_c.name
+          when rv.agent_id is not null then rv_a.name
+          when pv.agent_id is not null then pv_a.name
+          when pv.related_entity_type = 'expense' then 'مصروف داخلي'
+          else null
+        end as party_display_name,
+        coalesce(u.username, u.full_name, '-') as created_by_username
+      from cashbox_transactions ct
+      left join receipt_vouchers rv on ct.source_voucher_type = 'receipt' and rv.id = ct.source_voucher_id
+      left join payment_vouchers pv on ct.source_voucher_type = 'payment' and pv.id = ct.source_voucher_id
+      left join customers rv_c on rv_c.id = rv.customer_id
+      left join customers pv_c on pv_c.id = pv.customer_id
+      left join senders_receivers rv_sr on rv_sr.id = rv.sender_receiver_id
+      left join senders_receivers pv_sr on pv_sr.id = pv.sender_receiver_id
+      left join agents rv_a on rv_a.id = rv.agent_id
+      left join agents pv_a on pv_a.id = pv.agent_id
+      left join salary_records sal on pv.related_entity_type = 'salary_record' and sal.id = pv.related_entity_id
+      left join employees emp on emp.id = sal.employee_id
+      left join users u on u.id = ct.created_by_user_id
+      where ${periodConditions.join(' and ')}
+      order by ct.created_at asc, ct.id asc
+      `,
+      values,
+    );
+
+    let running = openingBalance;
+    let totalIncoming = 0;
+    let totalOutgoing = 0;
+    const rows = result.rows.map((row) => {
+      const amount = Number(row.original_amount || 0);
+      const incoming = row.transaction_type === 'inflow' ? amount : 0;
+      const outgoing = row.transaction_type === 'outflow' ? amount : 0;
+      totalIncoming += incoming;
+      totalOutgoing += outgoing;
+      running += incoming - outgoing;
+      return {
+        ...row,
+        debit_in: incoming,
+        credit_out: outgoing,
+        running_balance: Number(running.toFixed(2)),
+      };
+    });
+
+    return {
+      cashbox: cb,
+      summary: {
+        openingBalance: Number(openingBalance.toFixed(2)),
+        totalIncoming: Number(totalIncoming.toFixed(2)),
+        totalOutgoing: Number(totalOutgoing.toFixed(2)),
+        closingBalance: Number(running.toFixed(2)),
+      },
+      rows,
+    };
   }
 
   async listPartyFinancialMovements(scope?: DataScope) {
@@ -1264,12 +1380,12 @@ export class FinanceRepository {
       insert into cashbox_transactions(
         transaction_type, source_voucher_type, source_voucher_id, branch_id, agent_id, shipment_id, delivery_id,
         notes, original_amount, original_currency, exchange_rate_to_usd, base_amount_usd, created_by_user_id,
-        company_id, cashbox_id
+        company_id, cashbox_id, created_at
       ) values(
         'inflow', 'receipt', $1, $2, $3, $4, $5,
         $6, $7, $8, $9, $10, $11,
         coalesce($12, (select id from companies where is_active = true order by created_at limit 1)),
-        $13
+        $13, coalesce($14::timestamptz, now())
       )
       on conflict do nothing
       `,
@@ -1287,6 +1403,7 @@ export class FinanceRepository {
         voucher.created_by_user_id,
         voucher.company_id ?? null,
         voucher.cashbox_id ?? null,
+        voucher.created_at ?? null,
       ],
     );
 
@@ -1537,13 +1654,13 @@ export class FinanceRepository {
       insert into receipt_vouchers(
         voucher_no, branch_id, agent_id, shipment_id, delivery_id, customer_id, sender_receiver_id,
         related_entity_type, related_entity_id, status, notes, original_amount, original_currency,
-        exchange_rate_to_usd, base_amount_usd, created_by_user_id, company_id, cashbox_id
+        exchange_rate_to_usd, base_amount_usd, created_by_user_id, company_id, cashbox_id, created_at, updated_at
       ) values(
         $1,$2,$3,$4,$5,$6,$7,
         $8,$9,$10,$11,$12,$13,
         $14,$15,$16,
         coalesce($17::uuid, (select id from companies where is_active = true order by created_at asc limit 1)),
-        $18
+        $18, coalesce($19::timestamptz, now()), now()
       )
       returning *
       `,
@@ -1566,6 +1683,7 @@ export class FinanceRepository {
         input.createdByUserId ?? null,
         input.companyId ?? null,
         input.cashboxId ?? null,
+        input.createdAt ?? null,
       ],
     );
     const voucher = created.rows[0];
@@ -1864,53 +1982,61 @@ export class FinanceRepository {
     return voucher;
   }
 
+  async createPaymentVoucherWithClient(client: PoolClient, input: PaymentVoucherInput) {
+    const effectiveRate = input.exchangeRateToUsd ?? 1;
+    const created = await client.query(
+      `
+      insert into payment_vouchers(
+        voucher_no, branch_id, agent_id, shipment_id, delivery_id, customer_id, sender_receiver_id,
+        related_entity_type, related_entity_id, status, notes, original_amount, original_currency,
+        exchange_rate_to_usd, base_amount_usd, created_by_user_id, company_id, cashbox_id
+      ) values(
+        $1,$2,$3,$4,$5,$6,$7,
+        $8,$9,$10,$11,$12,$13,
+        $14,$15,$16,
+        coalesce($17, (select id from companies where is_active = true order by created_at limit 1)),
+        $18
+      )
+      returning *
+      `,
+      [
+        input.voucherNo,
+        input.branchId ?? null,
+        input.agentId ?? null,
+        input.shipmentId ?? null,
+        input.deliveryId ?? null,
+        input.customerId ?? null,
+        input.senderReceiverId ?? null,
+        input.relatedEntityType ?? null,
+        input.relatedEntityId ?? null,
+        input.status,
+        input.notes ?? null,
+        input.originalAmount,
+        input.originalCurrency,
+        effectiveRate,
+        input.baseAmountUsd ?? Number((input.originalAmount * effectiveRate).toFixed(2)),
+        input.createdByUserId ?? null,
+        input.companyId ?? null,
+        input.cashboxId ?? null,
+      ],
+    );
+    const voucher = created.rows[0];
+    if (voucher.status === 'confirmed') {
+      await this.insertCashboxAndMovementForPayment(client, voucher);
+    }
+    return voucher;
+  }
+
   async createPaymentVoucher(input: PaymentVoucherInput) {
     const client = await pool.connect();
     try {
       await client.query('begin');
-      const effectiveRate = input.exchangeRateToUsd ?? 1;
-      const created = await client.query(
-        `
-        insert into payment_vouchers(
-          voucher_no, branch_id, agent_id, shipment_id, delivery_id, customer_id, sender_receiver_id,
-          related_entity_type, related_entity_id, status, notes, original_amount, original_currency,
-          exchange_rate_to_usd, base_amount_usd, created_by_user_id, company_id, cashbox_id
-        ) values(
-          $1,$2,$3,$4,$5,$6,$7,
-          $8,$9,$10,$11,$12,$13,
-          $14,$15,$16,
-          coalesce($17, (select id from companies where is_active = true order by created_at limit 1)),
-          $18
-        )
-        returning *
-        `,
-        [
-          input.voucherNo,
-          input.branchId ?? null,
-          input.agentId ?? null,
-          input.shipmentId ?? null,
-          input.deliveryId ?? null,
-          input.customerId ?? null,
-          input.senderReceiverId ?? null,
-          input.relatedEntityType ?? null,
-          input.relatedEntityId ?? null,
-          input.status,
-          input.notes ?? null,
-          input.originalAmount,
-          input.originalCurrency,
-          effectiveRate,
-          input.baseAmountUsd ?? Number((input.originalAmount * effectiveRate).toFixed(2)),
-          input.createdByUserId ?? null,
-          input.companyId ?? null,
-          input.cashboxId ?? null,
-        ],
-      );
-      const voucher = created.rows[0];
-      if (voucher.status === 'confirmed') {
-        await this.insertCashboxAndMovementForPayment(client, voucher);
-      }
+      const voucher = await this.createPaymentVoucherWithClient(client, input);
       await client.query('commit');
       return voucher;
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
     } finally {
       client.release();
     }

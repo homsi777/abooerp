@@ -8,7 +8,7 @@ import {
   setActiveBranchId,
   setSessionTokens,
 } from './authStorage';
-import { configureHttpClientAuth, httpClient } from '../lib/api/httpClient';
+import { configureHttpClientAuth, getResolvedApiBaseUrl, httpClient } from '../lib/api/httpClient';
 import { realtimeClient } from '../lib/realtime/realtimeClient';
 
 export interface AuthUser {
@@ -263,7 +263,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     setSessionExpiredMessage(null);
     // Connect realtime SSE stream after login
-    const apiBase = localStorage.getItem('lan.apiBaseUrl') ?? (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4010/api/v1');
+    const apiBase = await getResolvedApiBaseUrl();
     realtimeClient.connect(apiBase, getAccessToken);
     return {
       ...response.user,

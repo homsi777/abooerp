@@ -29,6 +29,7 @@ const voucherBaseSchema = z.object({
   exchangeRateToUsd: z.coerce.number().positive().optional(),
   baseAmountUsd: z.coerce.number().optional(),
   createdByUserId: z.string().uuid().optional(),
+  createdAt: z.string().datetime({ offset: true }).optional(),
   expectedUpdatedAt: z.string().datetime({ offset: true }).optional(),
 });
 
@@ -54,6 +55,12 @@ const cashboxListQuerySchema = z.object({
   agentId: z.string().uuid().optional(),
   currencyCode: z.string().optional(),
   isActive: z.enum(['true', 'false']).optional(),
+});
+
+const cashboxStatementQuerySchema = z.object({
+  dateFrom: z.string().datetime({ offset: true }).optional(),
+  dateTo: z.string().datetime({ offset: true }).optional(),
+  transactionType: z.enum(['inflow', 'outflow']).optional(),
 });
 
 const receiptCreateSchema = voucherBaseSchema;
@@ -490,6 +497,21 @@ export function createFinanceRouter(service: FinanceService) {
     asyncHandler(async (req, res) => {
       const rows = await service.listCashboxMovementsForCashbox(String(req.params.id), parseDataScope(req));
       res.json({ success: true, data: rows });
+    }),
+  );
+
+  router.get(
+    '/cashboxes/:id/statement',
+    requireAnyPermissions(['finance.read', 'finance.write', 'finance.view']),
+    requireAnyPermissions(['finance.cashboxes.movements.view', 'finance.cashbox.read']),
+    asyncHandler(async (req, res) => {
+      const q = cashboxStatementQuerySchema.parse(req.query);
+      const data = await service.getCashboxStatement(String(req.params.id), parseDataScope(req), q);
+      if (!data) {
+        res.status(404).json({ success: false, error: 'الصندوق غير موجود' });
+        return;
+      }
+      res.json({ success: true, data });
     }),
   );
 

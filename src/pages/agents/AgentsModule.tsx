@@ -22,6 +22,9 @@ type AgentRecord = {
 type BranchRecord = { id: string; code?: string; name: string };
 type ShipmentRow = { id: string; agent_id?: string | null; status: string };
 type DebitCreditSummaryRow = { partyType: string; partyId: string; totalDebit: number; totalCredit: number; lastMovementAt: string | null };
+type AgentStatementModal =
+  | { kind: 'financial'; title: string; data: any }
+  | { kind: 'account'; title: string; data: any };
 type AgentForm = {
   id?: string;
   code: string;
@@ -62,6 +65,9 @@ export default function AgentsModule() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [editing, setEditing] = useState<AgentForm | null>(null);
+  const [statementModal, setStatementModal] = useState<AgentStatementModal | null>(null);
+  const [statementLoading, setStatementLoading] = useState(false);
+  const [reconciliationSaving, setReconciliationSaving] = useState(false);
   const [filters, setFilters] = useState({ search: '', branchId: '', status: '', city: '', onlyWithBalance: false });
 
   const load = async () => {
@@ -201,6 +207,62 @@ export default function AgentsModule() {
     }
   };
 
+  const openAgentStatement = async (agent: AgentRecord, kind: 'financial' | 'account') => {
+    setStatementLoading(true);
+    setError('');
+    try {
+      const endpoint = kind === 'financial' ? 'financial-statement' : 'account-statement';
+      const data = await httpClient.get<any>(`/agents/${agent.id}/${endpoint}`);
+      setStatementModal({
+        kind,
+        title: kind === 'financial' ? `كشف مالي للوكيل - ${agent.name}` : `كشف حساب شامل للوكيل - ${agent.name}`,
+        data,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تحميل كشف الوكيل.');
+    } finally {
+      setStatementLoading(false);
+    }
+  };
+
+  const refreshStatement = async (modal: AgentStatementModal) => {
+    const endpoint = modal.kind === 'financial' ? 'financial-statement' : 'account-statement';
+    const data = await httpClient.get<any>(`/agents/${modal.data.agent.id}/${endpoint}`);
+    setStatementModal({ ...modal, data });
+  };
+
+  const saveAgentReconciliation = async () => {
+    if (!statementModal) return;
+    const balanceAmount = statementModal.kind === 'financial'
+      ? Number(statementModal.data.summary.sinceLastReconciliation?.netAgentDue ?? statementModal.data.summary.netAgentDue ?? 0)
+      : Number(statementModal.data.summary.sinceLastReconciliation?.netAgentDue ?? statementModal.data.summary.netAgentDue ?? 0);
+    setReconciliationSaving(true);
+    setError('');
+    try {
+      await httpClient.post(`/agents/${statementModal.data.agent.id}/reconciliations`, {
+        balanceAmount,
+        currencyCode: 'USD',
+        notes: 'مطابقة حساب وكيل من شاشة الكشف',
+      });
+      await refreshStatement(statementModal);
+      setSuccess('تم حفظ تاريخ آخر مطابقة للوكيل.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر حفظ مطابقة الوكيل.');
+    } finally {
+      setReconciliationSaving(false);
+    }
+  };
+
+  const money = (value: unknown, currency = 'USD') => `${Number(value || 0).toLocaleString('ar-SY', { maximumFractionDigits: 2 })} ${currency}`;
+  const dateText = (value: unknown) => value ? new Date(String(value)).toLocaleString('ar-SY') : 'لا توجد مطابقة محفوظة';
+  const sourceLabel = (value: string) => ({
+    shipment_commission: 'عمولة شحنة',
+    transfer: 'حوالة',
+    receipt_voucher: 'سند قبض',
+    payment_voucher: 'سند دفع',
+    cashbox_transaction: 'حركة صندوق',
+  }[value] ?? value);
+
   return (
     <div className="h-full flex flex-col">
       <div className="mb-3 flex items-start justify-between gap-3">
@@ -255,13 +317,109 @@ export default function AgentsModule() {
             {rows.map((row, index) => (
               <tr key={row.id}>
                 <td>{index + 1}</td><td>{row.code}</td><td>{row.name}</td><td>{row.phone || '-'}</td><td>{[row.governorate, row.city, row.area].filter(Boolean).join(' / ') || '-'}</td><td>{row.branchName}</td><td>{row.is_active ? 'نشط' : 'معطل'}</td><td>{row.totalShipments}</td><td>{row.inTransit}</td><td>{row.delivered}</td><td>{row.balance.toLocaleString()}</td><td>{row.balanceDirection}</td>
-                <td><div className="flex gap-2 text-xs"><Link to={`/agents/${row.id}`}>ملف الوكيل</Link><button type="button" className="text-indigo-700" onClick={() => beginEdit(row)}>تعديل</button><button type="button" className="text-amber-700" onClick={() => void toggleAgent(row)}>{row.is_active ? 'تعطيل' : 'تفعيل'}</button><button type="button" className="text-indigo-700" onClick={() => navigate(`/finance/account-statement?partyType=agent&partyId=${row.id}`)}>كشف الحساب</button></div></td>
+                <td>
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <Link to={`/agents/${row.id}`}>ملف الوكيل</Link>
+                    <button type="button" className="text-indigo-700" onClick={() => void openAgentStatement(row, 'financial')}>كشف مالي للوكيل</button>
+                    <button type="button" className="text-indigo-700" onClick={() => void openAgentStatement(row, 'account')}>كشف حساب شامل</button>
+                    <button type="button" className="text-indigo-700" onClick={() => beginEdit(row)}>تعديل</button>
+                    <button type="button" className="text-amber-700" onClick={() => void toggleAgent(row)}>{row.is_active ? 'تعطيل' : 'تفعيل'}</button>
+                  </div>
+                </td>
               </tr>
             ))}
             {!loading && rows.length === 0 ? <tr><td colSpan={13} className="text-center p-6 text-gray-500">لا توجد بيانات بعد. ابدأ بإضافة وكيل جديد.</td></tr> : null}
           </tbody>
         </table>
       </div>
+      {statementLoading ? <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 text-white">جاري تحميل الكشف...</div> : null}
+      {statementModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] overflow-auto">
+            <div className="flex items-center justify-between border-b p-4">
+              <h3 className="font-bold text-lg">{statementModal.title}</h3>
+              <button type="button" className="toolbar-btn" onClick={() => setStatementModal(null)}>إغلاق</button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div className="stat-card"><div className="stat-value text-sm">{dateText(statementModal.data.generatedAt)}</div><div className="stat-label">تاريخ استخراج الكشف</div></div>
+                <div className="stat-card"><div className="stat-value text-sm">{dateText(statementModal.data.lastReconciliation?.reconciled_at)}</div><div className="stat-label">تاريخ آخر مطابقة</div></div>
+                <div className="stat-card"><div className="stat-value">{money(statementModal.data.lastReconciliation?.balance_amount, statementModal.data.lastReconciliation?.currency_code || 'USD')}</div><div className="stat-label">رصيد آخر مطابقة</div></div>
+                <div className="stat-card flex flex-col justify-center gap-2">
+                  <button type="button" className="toolbar-btn success" disabled={reconciliationSaving} onClick={() => void saveAgentReconciliation()}>
+                    {reconciliationSaving ? 'جاري الحفظ...' : 'حفظ مطابقة حتى الآن'}
+                  </button>
+                </div>
+              </div>
+              {statementModal.kind === 'financial' ? (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    <div className="stat-card"><div className="stat-value">{statementModal.data.summary.shipmentsCount}</div><div className="stat-label">شحنات</div></div>
+                    <div className="stat-card"><div className="stat-value">{statementModal.data.summary.transfersCount}</div><div className="stat-label">حوالات</div></div>
+                    <div className="stat-card"><div className="stat-value">{money(statementModal.data.summary.totalShipmentCommission)}</div><div className="stat-label">عمولة الشحن</div></div>
+                    <div className="stat-card"><div className="stat-value">{money(statementModal.data.summary.totalTransferCommission)}</div><div className="stat-label">عمولة الحوالات</div></div>
+                    <div className="stat-card"><div className="stat-value">{money(statementModal.data.summary.netVoucherBalance)}</div><div className="stat-label">صافي السندات</div></div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="stat-card"><div className="stat-value">{Number(statementModal.data.agent.commission_percentage || 0)}%</div><div className="stat-label">نسبة عمولة الوكيل الحالية</div></div>
+                    <div className="stat-card"><div className="stat-value">{money(statementModal.data.summary.sinceLastReconciliation?.totalAgentCommission)}</div><div className="stat-label">عمولة بعد آخر مطابقة</div></div>
+                    <div className="stat-card"><div className="stat-value">{money(statementModal.data.summary.sinceLastReconciliation?.paidToAgent)}</div><div className="stat-label">مدفوع للوكيل بعد المطابقة</div></div>
+                    <div className="stat-card"><div className="stat-value font-bold">{money(statementModal.data.summary.sinceLastReconciliation?.netAgentDue)}</div><div className="stat-label">مستحق للوكيل حتى الآن</div></div>
+                  </div>
+                  <section>
+                    <h4 className="font-bold mb-2">تفاصيل عمولات الشحن</h4>
+                    <table className="data-grid text-sm">
+                      <thead><tr><th>التاريخ</th><th>رقم الشحنة</th><th>المرسل</th><th>المستلم</th><th>الوجهة</th><th>أجرة الشحن</th><th>النسبة</th><th>العمولة</th><th>الحالة</th></tr></thead>
+                      <tbody>
+                        {statementModal.data.shipments.map((s: any) => (
+                          <tr key={s.id}><td>{String(s.created_at).split('T')[0]}</td><td>{s.shipment_no}</td><td>{s.sender_name ?? '-'}</td><td>{s.receiver_name ?? '-'}</td><td>{s.destination_city ?? '-'}</td><td>{money(s.freight_charge, s.original_currency)}</td><td>{Number(s.agent_commission_percentage_snapshot || 0)}%</td><td>{money(s.agent_commission_amount_snapshot, s.original_currency)}</td><td>{s.status}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </section>
+                  <section>
+                    <h4 className="font-bold mb-2">الحوالات والسندات المرتبطة</h4>
+                    <table className="data-grid text-sm">
+                      <thead><tr><th>النوع</th><th>التاريخ</th><th>المرجع</th><th>البيان</th><th>المبلغ</th><th>العمولة</th><th>الحالة</th></tr></thead>
+                      <tbody>
+                        {statementModal.data.transfers.map((t: any) => (
+                          <tr key={`t-${t.id}`}><td>حوالة</td><td>{String(t.transfer_date || t.created_at).split('T')[0]}</td><td>{t.shipment_no ?? '-'}</td><td>{t.sender_name} / {t.receiver_name}</td><td>{money(t.amount, t.currency)}</td><td>{money(t.agent_commission, t.agent_commission_currency)}</td><td>{t.status}</td></tr>
+                        ))}
+                        {statementModal.data.vouchers.map((v: any) => (
+                          <tr key={`v-${v.id}`}><td>{v.voucher_kind === 'receipt' ? 'سند قبض' : 'سند دفع'}</td><td>{String(v.created_at).split('T')[0]}</td><td>{v.voucher_no}</td><td>{v.notes ?? '-'}</td><td>{money(v.original_amount, v.original_currency)}</td><td>-</td><td>{v.status}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </section>
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="stat-card"><div className="stat-value">{statementModal.data.summary.rowsCount}</div><div className="stat-label">حركة</div></div>
+                    <div className="stat-card"><div className="stat-value text-green-700">{money(statementModal.data.summary.totalDebit)}</div><div className="stat-label">مدين</div></div>
+                    <div className="stat-card"><div className="stat-value text-red-700">{money(statementModal.data.summary.totalCredit)}</div><div className="stat-label">دائن</div></div>
+                    <div className="stat-card"><div className="stat-value font-bold">{money(statementModal.data.summary.netAgentDue)}</div><div className="stat-label">مستحق للوكيل</div></div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="stat-card"><div className="stat-value">{statementModal.data.summary.sinceLastReconciliation?.rowsCount ?? 0}</div><div className="stat-label">حركات بعد آخر مطابقة</div></div>
+                    <div className="stat-card"><div className="stat-value text-green-700">{money(statementModal.data.summary.sinceLastReconciliation?.totalDebit)}</div><div className="stat-label">مدين بعد المطابقة</div></div>
+                    <div className="stat-card"><div className="stat-value text-red-700">{money(statementModal.data.summary.sinceLastReconciliation?.totalCredit)}</div><div className="stat-label">دائن بعد المطابقة</div></div>
+                    <div className="stat-card"><div className="stat-value font-bold">{money(statementModal.data.summary.sinceLastReconciliation?.netAgentDue)}</div><div className="stat-label">مستحق بعد آخر مطابقة</div></div>
+                  </div>
+                  <table className="data-grid text-sm">
+                    <thead><tr><th>التاريخ</th><th>المصدر</th><th>المرجع</th><th>البيان</th><th>الطرف</th><th>مدين</th><th>دائن</th><th>العملة</th><th>الحالة</th></tr></thead>
+                    <tbody>
+                      {statementModal.data.rows.map((r: any) => (
+                        <tr key={`${r.source_type}-${r.source_id}-${r.at}`}><td>{String(r.at).split('T')[0]}</td><td>{sourceLabel(r.source_type)}</td><td>{r.reference_no ?? '-'}</td><td>{r.description ?? '-'}</td><td>{r.party_name ?? '-'}</td><td>{Number(r.debit || 0).toLocaleString()}</td><td>{Number(r.credit || 0).toLocaleString()}</td><td>{r.currency_code}</td><td>{r.status}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

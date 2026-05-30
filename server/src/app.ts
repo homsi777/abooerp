@@ -190,7 +190,7 @@ const employeeRepositorySingleton = new EmployeeRepository();
 app.use('/api/v1/employees', createEmployeeRouter(employeeRepositorySingleton));
 app.use(
   '/api/v1',
-  createSalaryRouter(new SalaryRepository(), new ExchangeRateRepository(), employeeRepositorySingleton),
+  createSalaryRouter(new SalaryRepository(), new ExchangeRateRepository(), employeeRepositorySingleton, financeRepository),
 );
 app.use('/api/v1/system', createLinkedDeviceRouter(new LinkedDeviceRepository()));
 app.use('/api/v1/license', createLicenseRouter(new LicenseRepository()));

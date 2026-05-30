@@ -10,6 +10,17 @@ function formatRealKey(raw: string): string {
   return parts.join('-');
 }
 
+function activationErrorMessage(err: unknown): string {
+  const message = err instanceof Error ? err.message : String((err as any)?.message ?? '');
+  if (message.includes('INVALID_LICENSE_CODE')) {
+    return 'كود التفعيل غير صالح أو غير معروف';
+  }
+  if (message.includes('Failed to fetch') || message.includes('NetworkError') || message.includes('Load failed')) {
+    return 'تعذّر الاتصال بالسيرفر — تأكد من تشغيل الخادم وأعد المحاولة';
+  }
+  return message || 'تعذّر تفعيل النظام';
+}
+
 interface Props {
   onActivated: () => void;
 }
@@ -68,7 +79,7 @@ export default function LicenseExpiredModal({ onActivated }: Props) {
       if (code === 'INVALID_LICENSE_CODE') {
         setError('كود التفعيل غير صالح أو غير معروف');
       } else {
-        setError('تعذّر الاتصال بالسيرفر — تأكد من تشغيل الخادم وأعد المحاولة');
+        setError(activationErrorMessage(err));
       }
     } finally {
       setActivating(false);
