@@ -13,4 +13,5 @@ resources/
 *.tsbuildinfo
 .env
 .env.*
+!server/.env.example
 node_modules

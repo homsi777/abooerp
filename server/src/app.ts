@@ -101,12 +101,20 @@ const STATIC_ALLOWED_ORIGINS = new Set([
   'app://electron',
 ]);
 
+const WEB_PUBLIC_ORIGINS = new Set(
+  String(process.env.WEB_PUBLIC_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+);
+
 const LAN_ORIGIN_RE = /^http:\/\/(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)\d+\.\d+(:\d+)?$/;
 
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true); // Electron renderer / curl / health checks
     if (STATIC_ALLOWED_ORIGINS.has(origin)) return callback(null, true);
+    if (WEB_PUBLIC_ORIGINS.has(origin)) return callback(null, true);
     if (LAN_ORIGIN_RE.test(origin)) return callback(null, true);
     // Allow same server's own LAN IPs dynamically
     const serverLanIps = getLocalLanAddresses();

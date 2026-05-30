@@ -26,6 +26,7 @@
     "dev:free-ports": "node server/scripts/freeDevPorts.cjs",
     "server:bootstrap": "npm run server:db:ensure && npm run server:migrate && npm run server:seed",
     "server:check": "tsc -p server/tsconfig.json --noEmit",
+    "deploy:web:vps": "bash scripts/deploy-abooerp-web.sh",
     "server:smoke:phase21": "tsx server/src/scripts/phase21Smoke.ts",
     "server:smoke:phase22-scope": "tsx server/src/scripts/phase22ScopeSmoke.ts",
     "server:smoke:phase23-auth-scope": "tsx server/src/scripts/phase23AuthScopeSmoke.ts",
