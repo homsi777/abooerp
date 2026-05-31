@@ -3,7 +3,7 @@ package com.example.data
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class ApiResponse<T>(
     val success: Boolean,
     val data: T? = null,
@@ -11,20 +11,20 @@ data class ApiResponse<T>(
     val correlationId: String? = null
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class LoginRequest(
     val username: String,
     val password: String,
     val branchId: String? = null
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class LoginResponseData(
     val user: UserData,
     val session: SessionData
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class UserData(
     val id: String,
     val username: String,
@@ -38,7 +38,7 @@ data class UserData(
     val agentId: String?
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class SessionData(
     val accessToken: String,
     val refreshToken: String,
@@ -46,18 +46,18 @@ data class SessionData(
     val expiresIn: String?
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class RefreshRequest(
     val refreshToken: String,
     val branchId: String? = null
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class LogoutRequest(
     val refreshToken: String
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class AgentProfile(
     val id: String,
     val code: String?,
@@ -72,21 +72,21 @@ data class AgentProfile(
     @Json(name = "is_active") val isActive: Boolean? = true
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class ProfileResponse(
     val agent: AgentProfile,
     val branchLabel: String?,
     val username: String?
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class WorkspaceSummary(
     val counts: SummaryCounts,
     val totals: SummaryTotals,
     val financeToday: FinanceToday? = null
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class SummaryCounts(
     @Json(name = "CONFIRMED") val confirmed: Int = 0,
     @Json(name = "AGENT_RECEIVED") val agentReceived: Int = 0,
@@ -94,20 +94,20 @@ data class SummaryCounts(
     @Json(name = "DELIVERED") val delivered: Int = 0
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class SummaryTotals(
     val all: Int = 0,
     val today: Int = 0,
     val upcoming: Int = 0
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class FinanceToday(
     val receiptVouchers: Int = 0,
     val paymentVouchers: Int = 0
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class Shipment(
     val id: String,
     @Json(name = "shipment_no") val trackingNumber: String?,
@@ -133,13 +133,13 @@ data class Shipment(
     val note: String? = null
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class ShipmentActionRequest(
     val note: String? = null,
     val metadata: Map<String, String>? = null
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class FinancialStatement(
     val agent: FinancialAgent?,
     val currency: String?,
@@ -147,7 +147,7 @@ data class FinancialStatement(
     val period: FinancialPeriod?
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class FinancialAgent(
     val id: String?,
     val code: String?,
@@ -155,7 +155,7 @@ data class FinancialAgent(
     val commissionPercentage: Double?
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class FinancialSummary(
     val totalShippingCommission: Double? = 0.0,
     val totalTransferCommission: Double? = 0.0,
@@ -166,13 +166,13 @@ data class FinancialSummary(
     val balanceAfterLastReconciliation: Double? = 0.0
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class FinancialPeriod(
     val fromDate: String? = null,
     val toDate: String? = null
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class Movement(
     val id: String?,
     val date: String?,
@@ -188,7 +188,7 @@ data class Movement(
     val balance: Double? = null
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class AccountStatement(
     val agent: FinancialAgent? = null,
     val currency: String? = null,
@@ -199,14 +199,14 @@ data class AccountStatement(
     val pagination: Pagination? = null
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class Pagination(
     val limit: Int? = 0,
     val offset: Int? = 0,
     val total: Int? = 0
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class AgentTransfer(
     val id: String?,
     val transferNo: String?,
@@ -224,13 +224,13 @@ data class AgentTransfer(
     val notes: String?
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class TransfersPage(
     val items: List<AgentTransfer>? = emptyList(),
     val pagination: Pagination? = null
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class AgentTransferDetails(
     val id: String?,
     val transferNo: String?,
@@ -251,7 +251,7 @@ data class AgentTransferDetails(
     val linkedShipment: LinkedShipment?
 )
 
-@JsonClass(generateAdapter = true)
+@JsonClass(generateAdapter = false)
 data class LinkedShipment(
     val id: String?,
     val shipmentNo: String?
