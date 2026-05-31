@@ -100,9 +100,9 @@ export class TransfersService {
       ) values(
         'agent', $1, $2, $3, $1, $4, $5,
         $6, $7, $8, $9,
-        $10, 'TRANSFER', $11, $11::text,
-        case when $4 = 'debit' then $6 else 0 end,
-        case when $4 = 'credit' then $6 else 0 end,
+        $10, 'TRANSFER', $11::uuid, $11::text,
+        case when $4 = 'debit' then $6::numeric else 0::numeric end,
+        case when $4 = 'credit' then $6::numeric else 0::numeric end,
         $7, $8, now()
       )
       on conflict do nothing
