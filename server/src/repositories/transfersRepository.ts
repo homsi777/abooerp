@@ -160,6 +160,84 @@ export class TransfersRepository {
     return rows;
   }
 
+  async listForAgent(input: {
+    companyId: string;
+    agentId: string;
+    status?: string;
+    search?: string;
+    limit: number;
+    offset: number;
+  }) {
+    const values: unknown[] = [input.companyId, input.agentId];
+    const conditions = ['t.company_id = $1', 't.agent_id = $2'];
+
+    if (input.status) {
+      values.push(input.status);
+      conditions.push(`upper(t.status) = upper($${values.length}::text)`);
+    }
+    if (input.search) {
+      values.push(`%${input.search}%`);
+      conditions.push(`(
+        t.sender_name ilike $${values.length}
+        or t.receiver_name ilike $${values.length}
+        or coalesce(s.shipment_no, '') ilike $${values.length}
+      )`);
+    }
+
+    const countResult = await this.pool.query<{ count: string }>(
+      `
+      select count(*)::text as count
+      from transfers t
+      left join shipments s on s.id = t.shipment_id
+      where ${conditions.join(' and ')}
+      `,
+      values,
+    );
+
+    values.push(input.limit);
+    const limitParam = `$${values.length}`;
+    values.push(input.offset);
+    const offsetParam = `$${values.length}`;
+
+    const result = await this.pool.query(
+      `
+      select
+        t.*,
+        s.shipment_no as linked_shipment_no
+      from transfers t
+      left join shipments s on s.id = t.shipment_id
+      where ${conditions.join(' and ')}
+      order by coalesce(t.transfer_date, t.created_at) desc, t.created_at desc, t.id desc
+      limit ${limitParam}
+      offset ${offsetParam}
+      `,
+      values,
+    );
+
+    return {
+      items: result.rows,
+      total: Number(countResult.rows[0]?.count ?? 0),
+    };
+  }
+
+  async getByIdForAgent(id: string, companyId: string, agentId: string) {
+    const result = await this.pool.query(
+      `
+      select
+        t.*,
+        s.shipment_no as linked_shipment_no
+      from transfers t
+      left join shipments s on s.id = t.shipment_id
+      where t.id = $1
+        and t.company_id = $2
+        and t.agent_id = $3
+      limit 1
+      `,
+      [id, companyId, agentId],
+    );
+    return result.rows[0] ?? null;
+  }
+
   async updateStatus(id: string, company_id: string, status: string, client?: PoolClient) {
     const db = client || this.pool;
     const query = `

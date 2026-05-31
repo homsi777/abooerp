@@ -61,6 +61,21 @@ export class TransfersService {
     return this.repo.list(filters);
   }
 
+  async listAgentPortalTransfers(input: {
+    companyId: string;
+    agentId: string;
+    status?: string;
+    search?: string;
+    limit: number;
+    offset: number;
+  }) {
+    return this.repo.listForAgent(input);
+  }
+
+  async getAgentPortalTransfer(id: string, companyId: string, agentId: string) {
+    return this.repo.getByIdForAgent(id, companyId, agentId);
+  }
+
   async updateTransferStatus(id: string, company_id: string, status: string, client?: PoolClient) {
     return this.repo.updateStatus(id, company_id, status, client);
   }

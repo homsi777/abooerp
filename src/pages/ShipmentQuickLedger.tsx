@@ -797,13 +797,6 @@ export default function ShipmentQuickLedger() {
     applyTripOriginToRows(value);
   };
 
-  const branchIdForOrigin = (originValue: string): number | undefined => {
-    const o = normalizeName(originValue);
-    if (!o) return undefined;
-    const match = branches.find((b) => normalizeName(b.name) === o);
-    return match?.id;
-  };
-
   const branchForOriginRow = (originValue: string): Branch | undefined => {
     const o = normalizeName(originValue);
     if (!o) return branches[0];
@@ -813,9 +806,8 @@ export default function ShipmentQuickLedger() {
   const lookupAgentsForRow = async (rowId: number, destinationValue: string, originValue: string) => {
     const destination = normalizeName(destinationValue);
     if (!destination) return;
-    const branchId = branchIdForOrigin(originValue);
     try {
-      const agents = await phase15Gateway.agents.lookupByDestination(destination, branchId);
+      const agents = await phase15Gateway.agents.lookupByDestination(destination);
       const mapped: SuggestedAgent[] = agents.map((a) => ({
         id: a.id,
         code: a.code,

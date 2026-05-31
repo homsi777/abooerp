@@ -59,6 +59,16 @@ export class ShipmentService {
       baseAmountUsd: computeBaseAmountUsd(input.originalAmount, input.exchangeRateToUsd),
     };
 
+    if (!payload.agentId && this.agentRepository && effectiveCompanyId && payload.destinationCity?.trim()) {
+      const destinationAgents = await this.agentRepository.lookupByDestination(
+        effectiveCompanyId,
+        payload.destinationCity,
+      );
+      if (destinationAgents.length === 1) {
+        payload.agentId = destinationAgents[0].id;
+      }
+    }
+
     if (payload.agentId && this.agentRepository && effectiveCompanyId) {
       try {
         const agent = await this.agentRepository.getAgentById(payload.agentId, effectiveCompanyId);

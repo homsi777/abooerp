@@ -2,16 +2,33 @@ import { Router, type Request } from 'express';
 import { z } from 'zod';
 import type { ShipmentService } from '../services/shipmentService.js';
 import type { FinanceService } from '../services/financeService.js';
+import type { TransfersService } from '../services/transfersService.js';
 import { AgentRepository } from '../repositories/agentRepository.js';
 import { requirePermissions } from '../middleware/authorization.js';
 import { asyncHandler } from '../utils/http.js';
 import { parseDataScope } from '../utils/scope.js';
 import { normalizeShipmentStatus, type CanonicalShipmentStatus } from '../domain/shipmentStatus.js';
 import { pool } from '../db/pool.js';
+import { HttpError } from '../utils/errors.js';
 
 const actionSchema = z.object({
   note: z.string().max(400).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+const accountStatementQuerySchema = z.object({
+  fromDate: z.string().optional(),
+  toDate: z.string().optional(),
+  sourceType: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+const transfersQuerySchema = z.object({
+  status: z.string().optional(),
+  search: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
 });
 
 const actionMap: Record<string, CanonicalShipmentStatus> = {
@@ -28,6 +45,82 @@ function startOfTodayUtc(): Date {
   const d = new Date();
   d.setUTCHours(0, 0, 0, 0);
   return d;
+}
+
+function requireAgentPortalContext(req: Request) {
+  const ctx = (req as any).requestUserContext as any;
+  if (String(ctx?.userType ?? '').toLowerCase() !== 'agent') {
+    throw new HttpError(403, 'AGENT_PORTAL_ONLY');
+  }
+  const companyId = ctx?.companyId as string | undefined;
+  const agentId = ctx?.scope?.agentId as string | undefined;
+  if (!agentId) {
+    throw new HttpError(403, 'AGENT_NOT_LINKED');
+  }
+  if (!companyId) {
+    throw new HttpError(403, 'Company scope required');
+  }
+  return {
+    companyId,
+    agentId,
+    currency: String(ctx?.baseCurrency ?? 'USD').toUpperCase(),
+  };
+}
+
+function parseOptionalDate(value: string | undefined, field: string): number | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    throw new HttpError(400, `${field} must be a valid date.`);
+  }
+  return timestamp;
+}
+
+function sourceTypeForMobile(sourceType: string): string {
+  const labels: Record<string, string> = {
+    shipment_commission: 'SHIPMENT_COMMISSION',
+    transfer: 'TRANSFER_COMMISSION',
+    receipt_voucher: 'RECEIPT_VOUCHER',
+    payment_voucher: 'PAYMENT_VOUCHER',
+    cashbox_transaction: 'CASHBOX_TRANSACTION',
+  };
+  return labels[sourceType] ?? sourceType.toUpperCase();
+}
+
+function referenceTypeForMobile(sourceType: string): string {
+  const labels: Record<string, string> = {
+    shipment_commission: 'SHIPMENT',
+    transfer: 'TRANSFER',
+    receipt_voucher: 'RECEIPT_VOUCHER',
+    payment_voucher: 'PAYMENT_VOUCHER',
+    cashbox_transaction: 'CASHBOX_TRANSACTION',
+  };
+  return labels[sourceType] ?? sourceType.toUpperCase();
+}
+
+function transferForMobile(row: any) {
+  return {
+    id: String(row.id),
+    transferNo: String(row.linked_shipment_no ?? row.id),
+    createdAt: row.created_at ?? row.transfer_date ?? null,
+    completedAt: row.posted_at ?? null,
+    senderName: row.sender_name ?? null,
+    senderPhone: null,
+    receiverName: row.receiver_name ?? null,
+    receiverPhone: null,
+    amount: Number(row.amount ?? 0),
+    currency: String(row.currency ?? 'USD'),
+    serviceFee: Number(row.transfer_service_fee ?? 0),
+    serviceFeeCurrency: String(row.transfer_service_fee_currency ?? row.currency ?? 'USD'),
+    agentCommission: Number(row.agent_commission ?? 0),
+    agentCommissionCurrency: String(row.agent_commission_currency ?? row.currency ?? 'USD'),
+    status: String(row.status ?? 'PENDING'),
+    linkedShipment: row.shipment_id
+      ? { id: String(row.shipment_id), shipmentNo: row.linked_shipment_no ?? null }
+      : null,
+    linkedShipmentNo: row.linked_shipment_no ?? null,
+    notes: row.notes ?? null,
+  };
 }
 
 async function workspaceSummaryPayload(
@@ -75,7 +168,12 @@ async function workspaceSummaryPayload(
   };
 }
 
-export function createAgentPortalRouter(service: ShipmentService, financeService: FinanceService, agents: AgentRepository) {
+export function createAgentPortalRouter(
+  service: ShipmentService,
+  financeService: FinanceService,
+  transfersService: TransfersService,
+  agents: AgentRepository,
+) {
   const router = Router();
 
   router.get(
@@ -136,6 +234,170 @@ export function createAgentPortalRouter(service: ShipmentService, financeService
       const scope = parseDataScope(req);
       const items = await service.list(scope);
       res.json({ success: true, data: items });
+    }),
+  );
+
+  router.get(
+    '/financial-statement',
+    requirePermissions(['agent_portal.view']),
+    asyncHandler(async (req, res) => {
+      const { companyId, agentId, currency } = requireAgentPortalContext(req);
+      const statement = await agents.getAgentFinancialStatement(companyId, agentId, currency);
+      if (!statement) {
+        throw new HttpError(404, 'AGENT_NOT_FOUND');
+      }
+      res.json({
+        success: true,
+        data: {
+          agent: {
+            id: statement.agent.id,
+            code: statement.agent.code,
+            name: statement.agent.name,
+            commissionPercentage: Number(statement.agent.commission_percentage ?? 0),
+          },
+          currency,
+          summary: {
+            totalShippingCommission: Number(statement.summary.totalShipmentCommission ?? 0),
+            totalTransferCommission: Number(statement.summary.totalTransferCommission ?? 0),
+            totalDue: Number(statement.summary.totalAgentCommission ?? 0),
+            totalPaid: Number(statement.summary.paidToAgent ?? 0),
+            balance: Number(statement.summary.netAgentDue ?? 0),
+            lastReconciliationDate: statement.lastReconciliation?.reconciled_at ?? null,
+            balanceAfterLastReconciliation: Number(statement.summary.sinceLastReconciliation?.netAgentDue ?? 0),
+          },
+          period: {
+            fromDate: null,
+            toDate: null,
+          },
+        },
+      });
+    }),
+  );
+
+  router.get(
+    '/account-statement',
+    requirePermissions(['agent_portal.view']),
+    asyncHandler(async (req, res) => {
+      const { companyId, agentId, currency } = requireAgentPortalContext(req);
+      const query = accountStatementQuerySchema.parse(req.query);
+      const fromTimestamp = parseOptionalDate(query.fromDate, 'fromDate');
+      const toTimestamp = parseOptionalDate(query.toDate, 'toDate');
+      const statement = await agents.getAgentAccountStatement(companyId, agentId, currency, null);
+      if (!statement) {
+        throw new HttpError(404, 'AGENT_NOT_FOUND');
+      }
+
+      const orderedRows = [...statement.rows].sort((a: any, b: any) => {
+        const byDate = Date.parse(String(a.at)) - Date.parse(String(b.at));
+        if (byDate !== 0) return byDate;
+        const byType = String(a.source_type).localeCompare(String(b.source_type));
+        if (byType !== 0) return byType;
+        return String(a.source_id).localeCompare(String(b.source_id));
+      });
+      const sourceType = query.sourceType?.trim().toUpperCase();
+      const openingBalance = orderedRows
+        .filter((row: any) => fromTimestamp !== null && Date.parse(String(row.at)) < fromTimestamp)
+        .reduce((sum: number, row: any) => sum + Number(row.credit ?? 0) - Number(row.debit ?? 0), 0);
+      const filteredRows = orderedRows.filter((row: any) => {
+        const timestamp = Date.parse(String(row.at));
+        if (fromTimestamp !== null && timestamp < fromTimestamp) return false;
+        if (toTimestamp !== null && timestamp > toTimestamp) return false;
+        return !sourceType || sourceTypeForMobile(String(row.source_type)) === sourceType;
+      });
+
+      let runningBalance = openingBalance;
+      const movements = filteredRows.map((row: any) => {
+        runningBalance += Number(row.credit ?? 0) - Number(row.debit ?? 0);
+        return {
+          id: `${row.source_type}:${row.source_id}`,
+          date: row.at,
+          sourceType: sourceTypeForMobile(String(row.source_type)),
+          referenceType: referenceTypeForMobile(String(row.source_type)),
+          referenceId: String(row.source_id),
+          referenceNo: row.reference_no ?? null,
+          description: row.description ?? null,
+          debit: Number(row.debit ?? 0),
+          credit: Number(row.credit ?? 0),
+          currency: String(row.currency_code ?? currency),
+          balance: runningBalance,
+          status: String(row.status ?? 'POSTED').toUpperCase(),
+        };
+      });
+
+      res.json({
+        success: true,
+        data: {
+          agent: {
+            id: statement.agent.id,
+            code: statement.agent.code,
+            name: statement.agent.name,
+          },
+          currency,
+          openingBalance,
+          closingBalance: runningBalance,
+          lastReconciliationDate: statement.lastReconciliation?.reconciled_at ?? null,
+          movements: movements.slice(query.offset, query.offset + query.limit),
+          pagination: {
+            limit: query.limit,
+            offset: query.offset,
+            total: movements.length,
+          },
+        },
+      });
+    }),
+  );
+
+  router.get(
+    '/transfers',
+    requirePermissions(['agent_portal.view']),
+    asyncHandler(async (req, res) => {
+      const { companyId, agentId } = requireAgentPortalContext(req);
+      const query = transfersQuerySchema.parse(req.query);
+      const result = await transfersService.listAgentPortalTransfers({
+        companyId,
+        agentId,
+        status: query.status,
+        search: query.search,
+        limit: query.limit,
+        offset: query.offset,
+      });
+      res.json({
+        success: true,
+        data: {
+          items: result.items.map(transferForMobile),
+          pagination: {
+            limit: query.limit,
+            offset: query.offset,
+            total: result.total,
+          },
+        },
+      });
+    }),
+  );
+
+  router.get(
+    '/transfers/:id',
+    requirePermissions(['agent_portal.view']),
+    asyncHandler(async (req, res) => {
+      const { companyId, agentId } = requireAgentPortalContext(req);
+      const transfer = await transfersService.getAgentPortalTransfer(String(req.params.id), companyId, agentId);
+      if (!transfer) {
+        throw new HttpError(404, 'TRANSFER_NOT_FOUND');
+      }
+      res.json({ success: true, data: transferForMobile(transfer) });
+    }),
+  );
+
+  router.post(
+    '/transfers/:id/complete',
+    requirePermissions(['agent_portal.view']),
+    asyncHandler(async (req, res) => {
+      const { companyId, agentId } = requireAgentPortalContext(req);
+      const transfer = await transfersService.getAgentPortalTransfer(String(req.params.id), companyId, agentId);
+      if (!transfer) {
+        throw new HttpError(404, 'TRANSFER_NOT_FOUND');
+      }
+      res.status(501).json({ success: false, error: 'TRANSFER_COMPLETE_NOT_AVAILABLE' });
     }),
   );
 

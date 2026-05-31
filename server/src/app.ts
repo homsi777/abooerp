@@ -217,7 +217,7 @@ app.use('/api/v1/goods-types', referenceRouters.goodsTypes);
 app.use('/api/v1/tariffs', referenceRouters.tariffs);
 app.use('/api/v1/shipments', createShipmentRouter(shipmentService));
 app.use('/api/v1/daily-ledger', createDailyLedgerRouter(dailyLedgerService));
-app.use('/api/v1/agent-portal', createAgentPortalRouter(shipmentService, financeService, new AgentRepository()));
+app.use('/api/v1/agent-portal', createAgentPortalRouter(shipmentService, financeService, transfersService, new AgentRepository()));
 app.use('/api/v1/dashboard', createDashboardRouter());
 app.use('/api/v1/manifests', createManifestRouter(manifestService));
 app.use('/api/v1/center-receipts', createCenterReceiptRouter(centerReceiptService));

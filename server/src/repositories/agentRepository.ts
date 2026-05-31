@@ -180,7 +180,7 @@ export class AgentRepository {
     return (result.rowCount ?? 0) > 0;
   }
 
-  async lookupByDestination(companyId: string, destination: string, branchId?: string): Promise<AgentRecord[]> {
+  async lookupByDestination(companyId: string, destination: string, _branchId?: string): Promise<AgentRecord[]> {
     const normalized = destination.trim().toLowerCase();
     const result = await pool.query<AgentRecord>(
       `
@@ -189,15 +189,14 @@ export class AgentRepository {
       join branches b on b.id = a.branch_id
       where b.company_id = $1
         and a.is_active = true
-        and ($2::uuid is null or a.branch_id = $2::uuid)
         and (
-          lower(coalesce(a.area, '')) = $3
-          or lower(coalesce(a.city, '')) = $3
-          or lower(coalesce(a.governorate, '')) = $3
+          lower(coalesce(a.area, '')) = $2
+          or lower(coalesce(a.city, '')) = $2
+          or lower(coalesce(a.governorate, '')) = $2
         )
       order by a.created_at desc
       `,
-      [companyId, branchId ?? null, normalized],
+      [companyId, normalized],
     );
     return result.rows;
   }
@@ -254,7 +253,7 @@ export class AgentRepository {
     return result.rows[0];
   }
 
-  async getAgentFinancialStatement(companyId: string, agentId: string) {
+  async getAgentFinancialStatement(companyId: string, agentId: string, currencyCode?: string) {
     const agent = await this.getAgentById(agentId, companyId);
     if (!agent) return null;
     const lastReconciliation = await this.getLastAgentReconciliation(companyId, agentId);
@@ -282,10 +281,11 @@ export class AgentRepository {
       where s.company_id = $1
         and s.agent_id = $2
         and s.deleted_at is null
+        and ($4::text is null or upper(s.original_currency) = upper($4))
       order by s.created_at desc
       limit 500
       `,
-      [companyId, agentId, Number(agent.commission_percentage ?? 0)],
+      [companyId, agentId, Number(agent.commission_percentage ?? 0), currencyCode ?? null],
     );
 
     const transfers = await pool.query(
@@ -308,10 +308,11 @@ export class AgentRepository {
       left join shipments s on s.id = t.shipment_id
       where t.company_id = $1
         and t.agent_id = $2
+        and ($3::text is null or upper(t.agent_commission_currency) = upper($3))
       order by coalesce(t.transfer_date, t.created_at) desc
       limit 500
       `,
-      [companyId, agentId],
+      [companyId, agentId, currencyCode ?? null],
     );
 
     const vouchers = await pool.query(
@@ -322,17 +323,19 @@ export class AgentRepository {
         from receipt_vouchers rv
         left join cashboxes cb on cb.id = rv.cashbox_id
         where rv.company_id = $1 and rv.agent_id = $2
+          and ($3::text is null or upper(rv.original_currency) = upper($3))
         union all
         select 'payment' as voucher_kind, pv.id, pv.voucher_no, pv.created_at, pv.status, pv.notes,
           pv.original_amount, pv.original_currency, pv.cashbox_id, cb.name as cashbox_name
         from payment_vouchers pv
         left join cashboxes cb on cb.id = pv.cashbox_id
         where pv.company_id = $1 and pv.agent_id = $2
+          and ($3::text is null or upper(pv.original_currency) = upper($3))
       ) rows
       order by created_at desc
       limit 500
       `,
-      [companyId, agentId],
+      [companyId, agentId, currencyCode ?? null],
     );
 
     const summaryResult = await pool.query(
@@ -345,6 +348,7 @@ export class AgentRepository {
           coalesce(sum(coalesce(agent_commission_amount_snapshot, round((coalesce(freight_charge, 0) * coalesce($4::numeric, 0)) / 100, 2), 0)) filter (where $3::timestamptz is not null and created_at > $3::timestamptz), 0)::numeric as shipment_commission_since
         from shipments
         where company_id = $1 and agent_id = $2 and deleted_at is null
+          and ($5::text is null or upper(original_currency) = upper($5))
       ),
       transfer_totals as (
         select
@@ -354,6 +358,7 @@ export class AgentRepository {
           coalesce(sum(coalesce(agent_commission, 0)) filter (where $3::timestamptz is not null and coalesce(transfer_date, created_at) > $3::timestamptz), 0)::numeric as transfer_commission_since
         from transfers
         where company_id = $1 and agent_id = $2
+          and ($5::text is null or upper(agent_commission_currency) = upper($5))
       ),
       receipt_totals as (
         select
@@ -363,6 +368,7 @@ export class AgentRepository {
           coalesce(sum(original_amount) filter (where status = 'confirmed' and $3::timestamptz is not null and created_at > $3::timestamptz), 0)::numeric as receipts_since
         from receipt_vouchers
         where company_id = $1 and agent_id = $2
+          and ($5::text is null or upper(original_currency) = upper($5))
       ),
       payment_totals as (
         select
@@ -372,11 +378,12 @@ export class AgentRepository {
           coalesce(sum(original_amount) filter (where status = 'confirmed' and $3::timestamptz is not null and created_at > $3::timestamptz), 0)::numeric as payments_since
         from payment_vouchers
         where company_id = $1 and agent_id = $2
+          and ($5::text is null or upper(original_currency) = upper($5))
       )
       select *
       from shipment_totals, transfer_totals, receipt_totals, payment_totals
       `,
-      [companyId, agentId, lastReconciledAt, Number(agent.commission_percentage ?? 0)],
+      [companyId, agentId, lastReconciledAt, Number(agent.commission_percentage ?? 0), currencyCode ?? null],
     );
     const totals = summaryResult.rows[0] ?? {};
 
@@ -427,7 +434,7 @@ export class AgentRepository {
     };
   }
 
-  async getAgentAccountStatement(companyId: string, agentId: string) {
+  async getAgentAccountStatement(companyId: string, agentId: string, currencyCode?: string, rowLimit: number | null = 1000) {
     const agent = await this.getAgentById(agentId, companyId);
     if (!agent) return null;
     const lastReconciliation = await this.getLastAgentReconciliation(companyId, agentId);
@@ -521,10 +528,11 @@ export class AgentRepository {
         where ct.company_id = $1 and (ct.agent_id = $2 or cb.agent_id = $2)
           and ct.source_voucher_id is null
       ) x
+      where ($4::text is null or upper(x.currency_code) = upper($4))
       order by at desc
-      limit 1000
+      limit $5
       `,
-      [companyId, agentId, Number(agent.commission_percentage ?? 0)],
+      [companyId, agentId, Number(agent.commission_percentage ?? 0), currencyCode ?? null, rowLimit],
     );
 
     const totalDebit = result.rows.reduce((sum, row) => sum + Number(row.debit || 0), 0);
