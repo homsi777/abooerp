@@ -90,15 +90,14 @@ class AuthViewModel(
     }
 
     fun logout() {
+        val refreshToken = authStorage.getRefreshToken() ?: ""
+        authStorage.clear()
+        _authState.value = AuthState.Idle
         viewModelScope.launch {
             try {
-                val refreshToken = authStorage.getRefreshToken() ?: ""
                 apiService.logout(com.example.data.LogoutRequest(refreshToken))
             } catch (e: Exception) {
                 // Ignore logout network errors
-            } finally {
-                authStorage.clear()
-                _authState.value = AuthState.Idle
             }
         }
     }

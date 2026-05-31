@@ -2,6 +2,7 @@ package com.example.ui.home
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,6 +33,7 @@ fun HomeScreen(
     onLogout: () -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    var accountMenuOpen by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -54,17 +56,39 @@ fun HomeScreen(
                         IconButton(onClick = viewModel::loadData) {
                             Icon(Icons.Default.Refresh, contentDescription = "تحديث")
                         }
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .background(MaterialTheme.colorScheme.primaryContainer, androidx.compose.foundation.shape.CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                "أ.م",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
+                        Box {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .background(MaterialTheme.colorScheme.primaryContainer, androidx.compose.foundation.shape.CircleShape)
+                                    .clickable { accountMenuOpen = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "أ.م",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = accountMenuOpen,
+                                onDismissRequest = { accountMenuOpen = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("الملف الشخصي") },
+                                    onClick = {
+                                        accountMenuOpen = false
+                                        onNavigateToProfile()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("تسجيل الخروج", color = MaterialTheme.colorScheme.error) },
+                                    onClick = {
+                                        accountMenuOpen = false
+                                        onLogout()
+                                    },
+                                )
+                            }
                         }
                     }
                 }
@@ -103,8 +127,11 @@ fun HomeScreen(
                         }
                         if (s.message.contains("انتهت الجلسة") || s.message.contains("401")) {
                             Spacer(modifier = Modifier.height(8.dp))
-                            TextButton(onClick = onLogout) {
-                                Text("تسجيل الخروج والانتقال لصفحة تسجيل الدخول", color = MaterialTheme.colorScheme.error)
+                            Button(
+                                onClick = onLogout,
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            ) {
+                                Text("تسجيل الخروج")
                             }
                         }
                     }
