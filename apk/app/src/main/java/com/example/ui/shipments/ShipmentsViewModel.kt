@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.Shipment
 import com.example.data.ShipmentActionRequest
+import com.example.data.ShipmentPortalDetails
 import com.example.network.ApiService
 import java.io.IOException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +25,8 @@ class ShipmentsViewModel(private val apiService: ApiService) : ViewModel() {
 
     private val _actionState = MutableStateFlow<String?>(null)
     val actionState: StateFlow<String?> = _actionState.asStateFlow()
+    private val _details = MutableStateFlow<Map<String, ShipmentPortalDetails>>(emptyMap())
+    val details: StateFlow<Map<String, ShipmentPortalDetails>> = _details.asStateFlow()
 
     init {
         loadShipments()
@@ -66,6 +69,19 @@ class ShipmentsViewModel(private val apiService: ApiService) : ViewModel() {
     fun deliverShipment(id: String, note: String) = performAction(id) { apiService.deliverShipment(id, ShipmentActionRequest(note)) }
     fun requestReturnShipment(id: String, reason: String) = performAction(id) { apiService.requestReturnShipment(id, ShipmentActionRequest(reason)) }
     fun markReturnedShipment(id: String) = performAction(id) { apiService.markReturnedShipment(id, ShipmentActionRequest()) }
+
+    fun loadShipmentDetails(id: String) {
+        viewModelScope.launch {
+            try {
+                val response = apiService.getShipmentDetails(id)
+                if (response.success && response.data != null) {
+                    _details.value = _details.value + (id to response.data)
+                }
+            } catch (_: Exception) {
+                // The list row remains a safe fallback if the detail endpoint is temporarily unavailable.
+            }
+        }
+    }
 
     private fun performAction(id: String, action: suspend () -> com.example.data.ApiResponse<Unit>) {
         viewModelScope.launch {

@@ -26,6 +26,9 @@ interface ApiService {
     @GET("agent-portal/shipments")
     suspend fun getShipments(): ApiResponse<List<Shipment>>
 
+    @GET("agent-portal/shipments/{id}/details")
+    suspend fun getShipmentDetails(@Path("id") id: String): ApiResponse<ShipmentPortalDetails>
+
     @POST("agent-portal/shipments/{id}/agent-received")
     suspend fun markAgentReceived(@Path("id") id: String, @Body request: ShipmentActionRequest): ApiResponse<Unit>
 

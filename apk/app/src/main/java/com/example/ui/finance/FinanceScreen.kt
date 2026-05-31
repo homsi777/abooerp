@@ -79,7 +79,7 @@ fun FinanceScreen(
                     is FinanceState.Success -> when (selectedTab) {
                         0 -> FinancialSummaryView(current.financial)
                         1 -> AccountStatementView(current.account) { selectedMovement = it }
-                        else -> TransfersView(current.transfers, current.transfersUnavailable, viewModel::completeTransfer)
+                        else -> TransfersView(current.transfers, current.transfersUnavailable, viewModel::completeTransfer, onOpenShipment)
                     }
                 }
             }
@@ -293,37 +293,60 @@ private fun MovementDetailsSheet(movement: Movement, onDismiss: () -> Unit, onOp
 }
 
 @Composable
-private fun TransfersView(transfers: List<AgentTransfer>, unavailable: Boolean, onComplete: (String) -> Unit) {
+private fun TransfersView(
+    transfers: List<AgentTransfer>,
+    unavailable: Boolean,
+    onComplete: (String) -> Unit,
+    onOpenShipment: (String) -> Unit,
+) {
+    var selectedType by remember { mutableIntStateOf(0) }
+    val filteredTransfers = transfers.filter {
+        if (selectedType == 0) it.type?.uppercase() != "SHIPMENT_LINKED"
+        else it.type?.uppercase() == "SHIPMENT_LINKED"
+    }
     if (unavailable) {
         EmptyView("هذه الميزة غير متاحة حالياً من الخادم")
         return
     }
-    if (transfers.isEmpty()) {
-        EmptyView("لا توجد حوالات حالياً")
-        return
-    }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(transfers, key = { it.id ?: it.hashCode().toString() }) { transfer ->
+        item {
+            TabRow(selectedTabIndex = selectedType) {
+                Tab(selected = selectedType == 0, onClick = { selectedType = 0 }, text = { Text("حوالات مستقلة") })
+                Tab(selected = selectedType == 1, onClick = { selectedType = 1 }, text = { Text("حوالات مع شحنات") })
+            }
+        }
+        if (filteredTransfers.isEmpty()) {
+            item { Text("لا توجد حوالات حالياً", modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp)) }
+        }
+        items(filteredTransfers, key = { it.id ?: it.hashCode().toString() }) { transfer ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("حوالة: ${safeText(transfer.transferNo)}", fontWeight = FontWeight.Bold)
                         Text(statusLabel(transfer.status), color = MaterialTheme.colorScheme.primary)
                     }
+                    Text("النوع: ${transferTypeLabel(transfer.type)}")
+                    Text("دورك: ${agentRoleLabel(transfer.currentAgentRole)}")
                     Text("التاريخ: ${formatDate(transfer.createdAt)}")
                     Text("المرسل: ${safeText(transfer.senderName)}")
                     Text("المستلم: ${safeText(transfer.receiverName)}")
-                    Text("المبلغ: ${money(transfer.amount, transfer.currency)}")
-                    Text("أجرة الحوالة: ${money(transfer.serviceFee, transfer.serviceFeeCurrency ?: transfer.currency)}")
+                    Text("أصل الحوالة: ${money(transfer.principalAmount ?: transfer.amount, transfer.currency)}")
+                    Text("أجرة الحوالة: ${money(transfer.transferFee ?: transfer.serviceFee, transfer.serviceFeeCurrency ?: transfer.currency)}")
                     Text("عمولة الوكيل: ${money(transfer.agentCommission, transfer.agentCommissionCurrency ?: transfer.currency)}")
-                    Text("الشحنة المرتبطة: ${safeText(transfer.linkedShipmentNo)}")
-                    Text("الوجهة: ${safeText(transfer.destinationCity)}")
+                    if (!transfer.linkedShipmentNo.isNullOrBlank()) Text("الشحنة المرتبطة: ${safeText(transfer.linkedShipmentNo)}")
+                    Text("من: ${safeText(transfer.sourceCity)}")
+                    Text("إلى: ${safeText(transfer.destinationCity)}")
                     Text("وكيل المصدر: ${safeText(transfer.originAgentName)}")
                     Text("وكيل الوجهة: ${safeText(transfer.destinationAgentName)}")
                     Text("ملاحظات: ${safeText(transfer.notes)}")
-                    if (transfer.canDeliver == true && !transfer.id.isNullOrBlank()) {
+                    if (transfer.canCurrentAgentComplete == true && !transfer.id.isNullOrBlank()) {
                         Button(onClick = { onComplete(transfer.id) }, modifier = Modifier.fillMaxWidth()) {
                             Text("تسليم الحوالة")
+                        }
+                    }
+                    if (!transfer.linkedShipment?.id.isNullOrBlank()) {
+                        OutlinedButton(onClick = { onOpenShipment(transfer.linkedShipment!!.id!!) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("عرض تفاصيل الشحنة")
                         }
                     }
                 }

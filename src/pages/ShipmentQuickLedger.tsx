@@ -132,7 +132,7 @@ function isRowComplete(row: LedgerRow) {
 }
 
 function rowAmountUsd(row: LedgerRow) {
-  return Math.max(parseUsd(row.collectAmount) + parseUsd(row.receiverCollect) + parseUsd(row.fees) - parseUsd(row.prepaidAmount), 0);
+  return Math.max(parseUsd(row.collectAmount) + parseUsd(row.receiverCollect) + parseUsd(row.fees) + parseUsd(row.transferServiceFee) - parseUsd(row.prepaidAmount), 0);
 }
 
 function parseWeightKg(value: string) {

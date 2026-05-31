@@ -183,6 +183,7 @@ export class TransfersRepository {
     agentId: string;
     status?: string;
     search?: string;
+    type?: 'independent' | 'shipment_linked';
     limit: number;
     offset: number;
   }) {
@@ -200,6 +201,11 @@ export class TransfersRepository {
         or t.receiver_name ilike $${values.length}
         or coalesce(s.shipment_no, '') ilike $${values.length}
       )`);
+    }
+    if (input.type === 'independent') {
+      conditions.push('t.shipment_id is null');
+    } else if (input.type === 'shipment_linked') {
+      conditions.push('t.shipment_id is not null');
     }
 
     const countResult = await this.pool.query<{ count: string }>(
@@ -222,8 +228,13 @@ export class TransfersRepository {
       select
         t.*,
         s.shipment_no as linked_shipment_no,
+        s.origin_city as linked_source_city,
+        s.destination_city as linked_destination_city,
+        s.financial_status as linked_shipment_financial_status,
         origin_agent.name as origin_agent_name,
-        destination_agent.name as destination_agent_name
+        coalesce(origin_agent.area, origin_agent.city, origin_agent.governorate) as origin_agent_city,
+        destination_agent.name as destination_agent_name,
+        coalesce(destination_agent.area, destination_agent.city, destination_agent.governorate) as destination_agent_city
       from transfers t
       left join shipments s on s.id = t.shipment_id
       left join agents origin_agent on origin_agent.id = t.origin_agent_id
@@ -248,8 +259,13 @@ export class TransfersRepository {
       select
         t.*,
         s.shipment_no as linked_shipment_no,
+        s.origin_city as linked_source_city,
+        s.destination_city as linked_destination_city,
+        s.financial_status as linked_shipment_financial_status,
         origin_agent.name as origin_agent_name,
-        destination_agent.name as destination_agent_name
+        coalesce(origin_agent.area, origin_agent.city, origin_agent.governorate) as origin_agent_city,
+        destination_agent.name as destination_agent_name,
+        coalesce(destination_agent.area, destination_agent.city, destination_agent.governorate) as destination_agent_city
       from transfers t
       left join shipments s on s.id = t.shipment_id
       left join agents origin_agent on origin_agent.id = t.origin_agent_id
@@ -260,6 +276,34 @@ export class TransfersRepository {
       limit 1
       `,
       [id, companyId, agentId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async getByShipmentIdForAgent(shipmentId: string, companyId: string, agentId: string) {
+    const result = await this.pool.query(
+      `
+      select
+        t.*,
+        s.shipment_no as linked_shipment_no,
+        s.origin_city as linked_source_city,
+        s.destination_city as linked_destination_city,
+        s.financial_status as linked_shipment_financial_status,
+        origin_agent.name as origin_agent_name,
+        coalesce(origin_agent.area, origin_agent.city, origin_agent.governorate) as origin_agent_city,
+        destination_agent.name as destination_agent_name,
+        coalesce(destination_agent.area, destination_agent.city, destination_agent.governorate) as destination_agent_city
+      from transfers t
+      join shipments s on s.id = t.shipment_id
+      left join agents origin_agent on origin_agent.id = t.origin_agent_id
+      left join agents destination_agent on destination_agent.id = t.destination_agent_id
+      where t.shipment_id = $1
+        and t.company_id = $2
+        and (t.agent_id = $3 or t.origin_agent_id = $3 or t.destination_agent_id = $3)
+      order by t.created_at desc
+      limit 1
+      `,
+      [shipmentId, companyId, agentId],
     );
     return result.rows[0] ?? null;
   }

@@ -21,23 +21,33 @@ import com.example.ui.*
 @Composable
 fun ShipmentDetailsScreen(shipment: Shipment, viewModel: ShipmentsViewModel, onBack: () -> Unit) {
     val actionState by viewModel.actionState.collectAsStateWithLifecycle()
+    val detailsById by viewModel.details.collectAsStateWithLifecycle()
+    val details = detailsById[shipment.id]
+    val info = details?.shipmentInfo
+    val financials = details?.shipmentFinancials
+    val linkedTransfer = details?.linkedTransfer
     val context = LocalContext.current
     var showDeliverDialog by remember { mutableStateOf(false) }
     var deliverNote by remember { mutableStateOf("") }
+    val currency = financials?.currency ?: shipment.currency
     val shareText = """
         شركة عبو المحمود
         تفاصيل الشحنة
-        رقم الشحنة: ${safeText(shipment.trackingNumber)}
-        الحالة: ${statusLabel(shipment.status)}
-        من: ${safeText(shipment.sourceBranch)}
-        إلى: ${safeText(shipment.destinationBranch)}
-        المرسل: ${safeText(shipment.senderName)}
-        المستلم: ${safeText(shipment.receiverName)}
-        عدد الطرود: ${shipment.pieces ?: 0}
-        المبلغ: ${money(shipment.amount, shipment.currency)}
-        أجرة الشحن: ${money(shipment.freightCharge, shipment.currency)}
+        رقم الشحنة: ${safeText(info?.shipmentNo ?: shipment.trackingNumber)}
+        الحالة: ${statusLabel(info?.status ?: shipment.status)}
+        من: ${safeText(info?.sourceCity ?: shipment.sourceBranch)}
+        إلى: ${safeText(info?.destinationCity ?: shipment.destinationBranch)}
+        المرسل: ${safeText(info?.senderName ?: shipment.senderName)}
+        المستلم: ${safeText(info?.receiverName ?: shipment.receiverName)}
+        عدد الطرود: ${info?.piecesCount ?: shipment.pieces ?: 0}
+        إجمالي المطلوب عند التسليم: ${money(financials?.totalAmountToCollectOnDelivery ?: shipment.amount, currency)}
+        أجرة الشحن: ${money(financials?.shippingFee ?: shipment.freightCharge, currency)}
+        أصل الحوالة المرتبطة: ${money(financials?.linkedTransferPrincipal ?: shipment.hawalaAmount, currency)}
     """.trimIndent()
 
+    LaunchedEffect(shipment.id) {
+        viewModel.loadShipmentDetails(shipment.id)
+    }
     LaunchedEffect(actionState) {
         actionState?.let {
             Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
@@ -83,33 +93,47 @@ fun ShipmentDetailsScreen(shipment: Shipment, viewModel: ShipmentsViewModel, onB
     ) { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(9.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("شحنة رقم ${safeText(shipment.trackingNumber)}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Detail("الحالة", statusLabel(shipment.status))
-            Detail("تاريخ الإنشاء", formatDate(shipment.date))
-            HorizontalDivider()
-            Detail("المدينة المصدر", safeText(shipment.sourceBranch))
-            Detail("المدينة الوجهة", safeText(shipment.destinationBranch))
-            Detail("المرسل", safeText(shipment.senderName))
-            Detail("هاتف المرسل", safeText(shipment.senderPhone))
-            Detail("المستلم", safeText(shipment.receiverName))
-            Detail("هاتف المستلم", safeText(shipment.receiverPhone))
-            HorizontalDivider()
-            Detail("عدد الطرود", (shipment.pieces ?: 0).toString())
-            Detail("عدد الطرود المحملة", (shipment.loadedPiecesCount ?: 0).toString())
-            Detail("الوزن", "${shipment.weight ?: 0.0} كغ")
-            Detail("إجمالي المطلوب عند التسليم", money(shipment.amount, shipment.currency))
-            Detail("أجرة الشحن", money(shipment.freightCharge, shipment.currency))
-            Detail("تحصيل لصالح المرسل", money(shipment.senderCollectionAmount, shipment.currency))
-            Detail("أصل الحوالة", money(shipment.hawalaAmount, shipment.currency))
-            Detail("أجرة خدمة الحوالة", money(shipment.transferServiceFee, shipment.currency))
-            Detail("مستحقات إضافية", money(shipment.additionalCharges, shipment.currency))
-            Detail("مدفوع مسبقاً", money(shipment.prepaidAmount, shipment.currency))
-            Detail("نسبة عمولة الوكيل", percentage(shipment.agentCommissionPercentageSnapshot))
-            Detail("عمولة الوكيل", money(shipment.agentCommissionAmountSnapshot, shipment.currency))
-            Detail("الوصف والملاحظات", safeText(shipment.description ?: shipment.note))
-            HorizontalDivider()
+            Text("شحنة رقم ${safeText(info?.shipmentNo ?: shipment.trackingNumber)}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Section("بيانات الشحنة") {
+                Detail("الحالة", statusLabel(info?.status ?: shipment.status))
+                Detail("تاريخ الإنشاء", formatDate(info?.createdAt ?: shipment.date))
+                Detail("المدينة المصدر", safeText(info?.sourceCity ?: shipment.sourceBranch))
+                Detail("المدينة الوجهة", safeText(info?.destinationCity ?: shipment.destinationBranch))
+                Detail("المرسل", safeText(info?.senderName ?: shipment.senderName))
+                Detail("هاتف المرسل", safeText(info?.senderPhone ?: shipment.senderPhone))
+                Detail("المستلم", safeText(info?.receiverName ?: shipment.receiverName))
+                Detail("هاتف المستلم", safeText(info?.receiverPhone ?: shipment.receiverPhone))
+                Detail("عدد الطرود", (info?.piecesCount ?: shipment.pieces ?: 0).toString())
+                Detail("عدد الطرود المحملة", (info?.loadedPiecesCount ?: shipment.loadedPiecesCount ?: 0).toString())
+                Detail("الوزن", "${info?.weightKg ?: shipment.weight ?: 0.0} كغ")
+                Detail("الوصف والملاحظات", safeText(info?.description ?: shipment.description ?: shipment.note))
+            }
+            Section("تفصيل المبالغ") {
+                Detail("أجرة الشحن", money(financials?.shippingFee ?: shipment.freightCharge, currency))
+                Detail("تحصيل لصالح المرسل", money(financials?.senderCollectionAmount ?: shipment.senderCollectionAmount, currency))
+                Detail("مستحقات إضافية", money(financials?.additionalCharges ?: shipment.additionalCharges, currency))
+                Detail("تحصيل إضافي", money(financials?.generalCollectionAmount, currency))
+                Detail("مدفوع مسبقاً", money(financials?.prepaidAmount ?: shipment.prepaidAmount, currency))
+                Detail("المطلوب للشحن فقط", money(financials?.shippingAmountToCollectOnDelivery, currency))
+                Detail("أصل الحوالة المرتبطة", money(financials?.linkedTransferPrincipal ?: shipment.hawalaAmount, currency))
+                Detail("أجرة خدمة الحوالة", money(financials?.linkedTransferServiceFee ?: shipment.transferServiceFee, currency))
+                Detail("إجمالي المطلوب عند التسليم", money(financials?.totalAmountToCollectOnDelivery ?: shipment.amount, currency))
+            }
+            Section("استحقاق الوكيل") {
+                Detail("نسبة عمولة الوكيل", percentage(financials?.agentCommissionPercentage ?: shipment.agentCommissionPercentageSnapshot))
+                Detail("عمولة الوكيل", money(financials?.agentCommissionAmount ?: shipment.agentCommissionAmountSnapshot, currency))
+            }
+            if (linkedTransfer != null) {
+                Section("الحوالة المرتبطة بالشحنة") {
+                    Detail("الحالة", statusLabel(linkedTransfer.status))
+                    Detail("أصل الحوالة", money(linkedTransfer.principalAmount ?: linkedTransfer.amount, linkedTransfer.currency))
+                    Detail("أجرة الحوالة", money(linkedTransfer.transferFee ?: linkedTransfer.serviceFee, linkedTransfer.currency))
+                    Detail("وكيل الوجهة", safeText(linkedTransfer.destinationAgentName))
+                    Detail("هل يجب دفع أصل الحوالة للمستلم؟", if (linkedTransfer.shouldCurrentAgentPayPrincipal == true) "نعم" else "لا")
+                }
+            }
             Text("الإجراءات المتاحة", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Button(onClick = { viewModel.markAgentReceived(shipment.id) }, modifier = Modifier.fillMaxWidth()) { Text("تأكيد استلام الوكيل") }
             Button(onClick = { viewModel.markOutForDelivery(shipment.id) }, modifier = Modifier.fillMaxWidth()) { Text("خارج للتسليم") }
@@ -117,6 +141,17 @@ fun ShipmentDetailsScreen(shipment: Shipment, viewModel: ShipmentsViewModel, onB
             OutlinedButton(onClick = { viewModel.requestReturnShipment(shipment.id, "مطلوب الإرجاع") }, modifier = Modifier.fillMaxWidth()) {
                 Text("طلب إرجاع")
             }
+        }
+    }
+}
+
+@Composable
+private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            HorizontalDivider()
+            content()
         }
     }
 }

@@ -59,9 +59,23 @@ fun movementTypeLabel(value: String?): String = when (value?.uppercase()) {
     "LOADING_DUES" -> "مستحقات إضافية"
     "GENERAL_COLLECTION" -> "تحصيل إضافي"
     "SHIPMENT_HAWALA_TRUST" -> "أصل حوالة مرتبطة بشحنة"
+    "SHIPMENT_TRANSFER_SERVICE_FEE" -> "أجرة خدمة حوالة مرتبطة بشحنة"
     "TRANSFER_PRINCIPAL_COLLECTED" -> "قبض أصل حوالة"
     "TRANSFER_SERVICE_FEE_COLLECTED" -> "قبض أجرة حوالة"
     "TRANSFER_PRINCIPAL_PAID" -> "تسليم أصل حوالة"
+    else -> "غير محدد"
+}
+
+fun transferTypeLabel(value: String?): String = when (value?.uppercase()) {
+    "SHIPMENT_LINKED" -> "مرتبطة بشحنة"
+    "INDEPENDENT" -> "مستقلة"
+    else -> "غير محدد"
+}
+
+fun agentRoleLabel(value: String?): String = when (value?.uppercase()) {
+    "ORIGIN_AGENT" -> "وكيل المصدر"
+    "DESTINATION_AGENT" -> "وكيل الوجهة"
+    "RELATED_AGENT" -> "وكيل مرتبط"
     else -> "غير محدد"
 }
 

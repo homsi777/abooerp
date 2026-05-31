@@ -145,6 +145,48 @@ data class ShipmentActionRequest(
 )
 
 @JsonClass(generateAdapter = false)
+data class ShipmentPortalDetails(
+    val shipmentInfo: ShipmentInfo,
+    val shipmentFinancials: ShipmentFinancials,
+    val linkedTransfer: AgentTransfer? = null
+)
+
+@JsonClass(generateAdapter = false)
+data class ShipmentInfo(
+    val id: String,
+    val shipmentNo: String?,
+    val createdAt: String?,
+    val status: String?,
+    val sourceCity: String?,
+    val destinationCity: String?,
+    val senderName: String?,
+    val senderPhone: String?,
+    val receiverName: String?,
+    val receiverPhone: String?,
+    val piecesCount: Int? = 0,
+    val loadedPiecesCount: Int? = 0,
+    val weightKg: Double? = 0.0,
+    val description: String? = null
+)
+
+@JsonClass(generateAdapter = false)
+data class ShipmentFinancials(
+    val currency: String?,
+    val shippingFee: Double? = 0.0,
+    val senderCollectionAmount: Double? = 0.0,
+    val additionalCharges: Double? = 0.0,
+    val generalCollectionAmount: Double? = 0.0,
+    val prepaidAmount: Double? = 0.0,
+    val discountAmount: Double? = 0.0,
+    val shippingAmountToCollectOnDelivery: Double? = 0.0,
+    val linkedTransferPrincipal: Double? = 0.0,
+    val linkedTransferServiceFee: Double? = 0.0,
+    val totalAmountToCollectOnDelivery: Double? = 0.0,
+    val agentCommissionPercentage: Double? = 0.0,
+    val agentCommissionAmount: Double? = 0.0
+)
+
+@JsonClass(generateAdapter = false)
 data class FinancialStatement(
     val agent: FinancialAgent?,
     val currency: String?,
@@ -215,24 +257,34 @@ data class Pagination(
 data class AgentTransfer(
     val id: String?,
     val transferNo: String?,
+    val type: String? = null,
     val createdAt: String?,
     val senderName: String?,
     val receiverName: String?,
     val amount: Double?,
+    val principalAmount: Double? = null,
     val currency: String?,
     val serviceFee: Double?,
+    val transferFee: Double? = null,
     val serviceFeeCurrency: String?,
     val agentCommission: Double?,
     val agentCommissionCurrency: String?,
     val status: String?,
     val linkedShipmentNo: String?,
+    val linkedShipment: LinkedShipment? = null,
     val notes: String?,
     val destinationCity: String? = null,
+    val sourceCity: String? = null,
     val originAgentName: String? = null,
     val destinationAgentName: String? = null,
     val collectedAt: String? = null,
     val paidOutAt: String? = null,
-    val canDeliver: Boolean? = false
+    val cancelledAt: String? = null,
+    val currentAgentRole: String? = null,
+    val canCurrentAgentComplete: Boolean? = false,
+    val canDeliver: Boolean? = false,
+    val shouldCurrentAgentPayPrincipal: Boolean? = false,
+    val isTransferFeeIncomeRecognized: Boolean? = false
 )
 
 @JsonClass(generateAdapter = false)

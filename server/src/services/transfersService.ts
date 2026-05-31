@@ -289,6 +289,7 @@ export class TransfersService {
     agentId: string;
     status?: string;
     search?: string;
+    type?: 'independent' | 'shipment_linked';
     limit: number;
     offset: number;
   }) {
@@ -297,6 +298,10 @@ export class TransfersService {
 
   async getAgentPortalTransfer(id: string, companyId: string, agentId: string) {
     return this.repo.getByIdForAgent(id, companyId, agentId);
+  }
+
+  async getAgentPortalTransferByShipmentId(shipmentId: string, companyId: string, agentId: string) {
+    return this.repo.getByShipmentIdForAgent(shipmentId, companyId, agentId);
   }
 
   async updateTransferStatus(id: string, company_id: string, status: string, client?: PoolClient) {

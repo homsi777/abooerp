@@ -122,7 +122,9 @@ export class ShipmentRepository {
           0
         ) as loaded_pieces_count,
         sender.full_name as sender_name,
-        receiver.full_name as receiver_name
+        sender.phone as sender_phone,
+        receiver.full_name as receiver_name,
+        receiver.phone as receiver_phone
       from shipments s
       left join senders_receivers sender on sender.id = s.sender_id
       left join senders_receivers receiver on receiver.id = s.receiver_id
@@ -157,7 +159,9 @@ export class ShipmentRepository {
           0
         ) as loaded_pieces_count,
         sender.full_name as sender_name,
-        receiver.full_name as receiver_name
+        sender.phone as sender_phone,
+        receiver.full_name as receiver_name,
+        receiver.phone as receiver_phone
       from shipments s
       left join senders_receivers sender on sender.id = s.sender_id
       left join senders_receivers receiver on receiver.id = s.receiver_id

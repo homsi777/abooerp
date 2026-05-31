@@ -11,6 +11,7 @@ import { normalizeShipmentStatus, type CanonicalShipmentStatus } from '../domain
 import { pool } from '../db/pool.js';
 import { HttpError } from '../utils/errors.js';
 import { AuditService } from '../services/auditService.js';
+import { calculateShipmentFinancialBreakdown } from '../utils/shipmentFinancialBreakdown.js';
 
 const actionSchema = z.object({
   note: z.string().max(400).optional(),
@@ -28,6 +29,7 @@ const accountStatementQuerySchema = z.object({
 const transfersQuerySchema = z.object({
   status: z.string().optional(),
   search: z.string().optional(),
+  type: z.enum(['independent', 'shipment_linked']).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -99,6 +101,7 @@ function sourceTypeForMobile(sourceType: string): string {
     loading_dues: 'LOADING_DUES',
     general_collection: 'GENERAL_COLLECTION',
     shipment_hawala_trust: 'SHIPMENT_HAWALA_TRUST',
+    shipment_transfer_service_fee: 'SHIPMENT_TRANSFER_SERVICE_FEE',
     transfer_principal_collected: 'TRANSFER_PRINCIPAL_COLLECTED',
     transfer_service_fee_collected: 'TRANSFER_SERVICE_FEE_COLLECTED',
     transfer_principal_paid: 'TRANSFER_PRINCIPAL_PAID',
@@ -119,6 +122,7 @@ function referenceTypeForMobile(sourceType: string): string {
     loading_dues: 'SHIPMENT',
     general_collection: 'SHIPMENT',
     shipment_hawala_trust: 'SHIPMENT',
+    shipment_transfer_service_fee: 'SHIPMENT',
     transfer_principal_collected: 'TRANSFER',
     transfer_service_fee_collected: 'TRANSFER',
     transfer_principal_paid: 'TRANSFER',
@@ -128,6 +132,18 @@ function referenceTypeForMobile(sourceType: string): string {
 }
 
 function transferForMobile(row: any, currentAgentId?: string) {
+  const destinationAgentId = String(row.destination_agent_id ?? row.agent_id ?? '');
+  const originAgentId = String(row.origin_agent_id ?? '');
+  const status = String(row.status ?? 'PENDING').toUpperCase();
+  const type = row.shipment_id ? 'SHIPMENT_LINKED' : 'INDEPENDENT';
+  const currentAgentRole = currentAgentId
+    ? destinationAgentId === currentAgentId
+      ? 'DESTINATION_AGENT'
+      : originAgentId === currentAgentId
+        ? 'ORIGIN_AGENT'
+        : 'RELATED_AGENT'
+    : null;
+  const canCurrentAgentComplete = Boolean(currentAgentId && destinationAgentId === currentAgentId && status === 'PENDING');
   return {
     id: String(row.id),
     transferNo: String(row.linked_shipment_no ?? row.id),
@@ -137,24 +153,77 @@ function transferForMobile(row: any, currentAgentId?: string) {
     senderPhone: null,
     receiverName: row.receiver_name ?? null,
     receiverPhone: null,
+    type,
     amount: Number(row.amount ?? 0),
+    principalAmount: Number(row.amount ?? 0),
     currency: String(row.currency ?? 'USD'),
     serviceFee: Number(row.transfer_service_fee ?? 0),
+    transferFee: Number(row.transfer_service_fee ?? 0),
     serviceFeeCurrency: String(row.transfer_service_fee_currency ?? row.currency ?? 'USD'),
     agentCommission: Number(row.agent_commission ?? 0),
     agentCommissionCurrency: String(row.agent_commission_currency ?? row.currency ?? 'USD'),
-    status: String(row.status ?? 'PENDING'),
+    status,
     linkedShipment: row.shipment_id
       ? { id: String(row.shipment_id), shipmentNo: row.linked_shipment_no ?? null }
       : null,
     linkedShipmentNo: row.linked_shipment_no ?? null,
     notes: row.notes ?? null,
     destinationCity: row.destination_city ?? null,
+    sourceCity: row.linked_source_city ?? row.origin_agent_city ?? null,
     originAgentName: row.origin_agent_name ?? null,
     destinationAgentName: row.destination_agent_name ?? null,
     collectedAt: row.collected_at ?? null,
     paidOutAt: row.paid_out_at ?? null,
-    canDeliver: Boolean(currentAgentId && String(row.destination_agent_id ?? row.agent_id ?? '') === currentAgentId && String(row.status).toUpperCase() === 'PENDING'),
+    cancelledAt: row.cancelled_at ?? null,
+    currentAgentRole,
+    canCurrentAgentComplete,
+    canDeliver: canCurrentAgentComplete,
+    shouldCurrentAgentPayPrincipal: Boolean(currentAgentId && destinationAgentId === currentAgentId),
+    isTransferFeeIncomeRecognized: type === 'SHIPMENT_LINKED'
+      ? String(row.linked_shipment_financial_status ?? '').toUpperCase() !== 'UNPOSTED'
+      : Boolean(row.collected_at),
+  };
+}
+
+function shipmentDetailsForMobile(shipment: any, linkedTransfer: any | null, currentAgentId: string) {
+  const breakdown = calculateShipmentFinancialBreakdown(shipment);
+  const shippingAmountToCollectOnDelivery = Math.max(
+    breakdown.totalDueOnDelivery - breakdown.hawalaAmount - breakdown.transferServiceFeeAmount,
+    0,
+  );
+  return {
+    shipmentInfo: {
+      id: String(shipment.id),
+      shipmentNo: shipment.shipment_no ?? null,
+      createdAt: shipment.created_at ?? null,
+      status: String(shipment.status ?? 'REGISTERED'),
+      sourceCity: shipment.origin_city ?? null,
+      destinationCity: shipment.destination_city ?? null,
+      senderName: shipment.sender_name ?? null,
+      senderPhone: shipment.sender_phone ?? null,
+      receiverName: shipment.receiver_name ?? null,
+      receiverPhone: shipment.receiver_phone ?? null,
+      piecesCount: Number(shipment.pieces_count ?? 0),
+      loadedPiecesCount: Number(shipment.loaded_pieces_count ?? 0),
+      weightKg: Number(shipment.weight_kg ?? 0),
+      description: shipment.description ?? null,
+    },
+    shipmentFinancials: {
+      currency: String(shipment.original_currency ?? 'USD'),
+      shippingFee: breakdown.companyShippingFee,
+      senderCollectionAmount: breakdown.senderCollectionAmount,
+      additionalCharges: breakdown.loadingDuesAmount,
+      generalCollectionAmount: breakdown.generalCollectionAmount,
+      prepaidAmount: breakdown.prepaidAmount,
+      discountAmount: breakdown.discountAmount,
+      shippingAmountToCollectOnDelivery,
+      linkedTransferPrincipal: breakdown.hawalaAmount,
+      linkedTransferServiceFee: breakdown.transferServiceFeeAmount,
+      totalAmountToCollectOnDelivery: breakdown.totalDueOnDelivery,
+      agentCommissionPercentage: Number(shipment.agent_commission_percentage_snapshot ?? 0),
+      agentCommissionAmount: Number(shipment.agent_commission_amount_snapshot ?? 0),
+    },
+    linkedTransfer: linkedTransfer ? transferForMobile(linkedTransfer, currentAgentId) : null,
   };
 }
 
@@ -304,6 +373,20 @@ export function createAgentPortalRouter(
   );
 
   router.get(
+    '/shipments/:id/details',
+    requirePermissions(['agent_portal.view']),
+    asyncHandler(async (req, res) => {
+      const { companyId, agentId } = requireAgentPortalContext(req);
+      const shipment = await service.getById(String(req.params.id), parseDataScope(req));
+      if (!shipment) {
+        throw new HttpError(404, 'SHIPMENT_NOT_FOUND');
+      }
+      const linkedTransfer = await transfersService.getAgentPortalTransferByShipmentId(String(req.params.id), companyId, agentId);
+      res.json({ success: true, data: shipmentDetailsForMobile(shipment, linkedTransfer, agentId) });
+    }),
+  );
+
+  router.get(
     '/financial-statement',
     requirePermissions(['agent_portal.view']),
     asyncHandler(async (req, res) => {
@@ -424,6 +507,7 @@ export function createAgentPortalRouter(
         agentId,
         status: query.status,
         search: query.search,
+        type: query.type,
         limit: query.limit,
         offset: query.offset,
       });

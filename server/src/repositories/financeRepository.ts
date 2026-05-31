@@ -102,6 +102,7 @@ export type ShipmentComponentMovementType =
   | 'sender_collection_trust'
   | 'loading_dues'
   | 'shipment_hawala_trust'
+  | 'shipment_transfer_service_fee'
   | 'general_collection';
 
 export interface DashboardCacheMetricsSnapshot {
@@ -1799,6 +1800,11 @@ export class FinanceRepository {
         movementType: 'shipment_hawala_trust' as ShipmentComponentMovementType,
         amount: input.breakdown.hawalaAmount,
         notes: `أصل حوالة بعهدة الوكيل — الشحنة رقم ${input.shipmentNo}`,
+      },
+      {
+        movementType: 'shipment_transfer_service_fee' as ShipmentComponentMovementType,
+        amount: input.breakdown.transferServiceFeeAmount,
+        notes: `أجرة خدمة حوالة مرتبطة بالشحنة — الشحنة رقم ${input.shipmentNo}`,
       },
       {
         movementType: 'general_collection' as ShipmentComponentMovementType,
