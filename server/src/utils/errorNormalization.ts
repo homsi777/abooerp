@@ -59,6 +59,14 @@ export function normalizeError(error: unknown): NormalizedError {
       details: (error as any)?.detail,
     };
   }
+  if (dbCode === '42703' || dbCode === '42P01' || dbCode === '23514') {
+    return {
+      statusCode: 503,
+      message: 'مخطط قاعدة البيانات غير محدث. شغّل ترحيلات قاعدة البيانات ثم أعد تشغيل الخادم.',
+      code: 'DB_SCHEMA_OUTDATED',
+      details: (error as any)?.detail || (error as any)?.message,
+    };
+  }
 
   return {
     statusCode: 500,

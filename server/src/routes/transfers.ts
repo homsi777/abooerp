@@ -94,7 +94,7 @@ export function createTransfersRouter(transfersService: TransfersService) {
           payload,
           collectionCashboxId: data.collection_cashbox_id,
           userId: scope.userId,
-          baseCurrency: (req as any).requestContext?.baseCurrency,
+          baseCurrency: (req as any).requestUserContext?.baseCurrency,
         })
       : await transfersService.createTransfer(payload);
 
@@ -146,7 +146,7 @@ export function createTransfersRouter(transfersService: TransfersService) {
         res.status(403).json({ success: false, error: 'Company scope required' });
         return;
       }
-      const baseCurrency = (req as any).requestContext?.baseCurrency as string | undefined;
+      const baseCurrency = (req as any).requestUserContext?.baseCurrency as string | undefined;
       const transfer = await transfersService.completeTransfer({
         id: String(req.params.id),
         companyId: String(scope.companyId),
