@@ -145,6 +145,25 @@ data class ShipmentActionRequest(
 )
 
 @JsonClass(generateAdapter = false)
+data class CreateShipmentRequest(
+    val shipmentNo: String,
+    val senderName: String,
+    val senderPhone: String? = null,
+    val receiverName: String,
+    val receiverPhone: String? = null,
+    val destinationCity: String,
+    val piecesCount: Int = 1,
+    val weightKg: Double? = null,
+    val freightCharge: Double = 0.0,
+    val senderCollectionAmount: Double = 0.0,
+    val hawalaAmount: Double = 0.0,
+    val transferServiceFee: Double = 0.0,
+    val additionalCharges: Double = 0.0,
+    val prepaidAmount: Double = 0.0,
+    val notes: String? = null
+)
+
+@JsonClass(generateAdapter = false)
 data class ShipmentPortalDetails(
     val shipmentInfo: ShipmentInfo,
     val shipmentFinancials: ShipmentFinancials,

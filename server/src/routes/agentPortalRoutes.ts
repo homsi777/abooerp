@@ -44,6 +44,24 @@ const createTransferSchema = z.object({
   notes: z.string().max(1000).optional(),
 });
 
+const createShipmentSchema = z.object({
+  shipmentNo: z.string().min(1).max(100),
+  senderName: z.string().min(1).max(255),
+  senderPhone: z.string().max(50).optional(),
+  receiverName: z.string().min(1).max(255),
+  receiverPhone: z.string().max(50).optional(),
+  destinationCity: z.string().min(1).max(255),
+  piecesCount: z.coerce.number().int().positive().default(1),
+  weightKg: z.coerce.number().positive().optional(),
+  freightCharge: z.coerce.number().min(0).default(0),
+  senderCollectionAmount: z.coerce.number().min(0).default(0),
+  hawalaAmount: z.coerce.number().min(0).default(0),
+  transferServiceFee: z.coerce.number().min(0).default(0),
+  additionalCharges: z.coerce.number().min(0).default(0),
+  prepaidAmount: z.coerce.number().min(0).default(0),
+  notes: z.string().max(1000).optional(),
+});
+
 const actionMap: Record<string, CanonicalShipmentStatus> = {
   'agent-received': 'AGENT_RECEIVED',
   'mark-in-transit': 'IN_TRANSIT',
@@ -87,6 +105,37 @@ function parseOptionalDate(value: string | undefined, field: string): number | n
     throw new HttpError(400, `${field} must be a valid date.`);
   }
   return timestamp;
+}
+
+async function ensurePortalParty(input: {
+  name: string;
+  phone?: string;
+  type: 'sender' | 'receiver';
+  branchId: string;
+  agentId: string;
+  userId?: string;
+}) {
+  const existing = await pool.query(
+    `
+    select id from senders_receivers
+    where agent_id = $1
+      and lower(trim(full_name)) = lower(trim($2))
+      and coalesce(phone, '') = coalesce($3, '')
+    order by created_at asc
+    limit 1
+    `,
+    [input.agentId, input.name, input.phone?.trim() || null],
+  );
+  if (existing.rows[0]?.id) return String(existing.rows[0].id);
+  const created = await pool.query(
+    `
+    insert into senders_receivers(code, full_name, phone, type, branch_id, agent_id, created_by_user_id)
+    values($1, $2, $3, $4, $5, $6, $7)
+    returning id
+    `,
+    [`MOB-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, input.name.trim(), input.phone?.trim() || null, input.type, input.branchId, input.agentId, input.userId ?? null],
+  );
+  return String(created.rows[0].id);
 }
 
 function sourceTypeForMobile(sourceType: string): string {
@@ -369,6 +418,62 @@ export function createAgentPortalRouter(
       const scope = parseDataScope(req);
       const items = await service.list(scope);
       res.json({ success: true, data: items });
+    }),
+  );
+
+  router.post(
+    '/shipments',
+    requirePermissions(['agent_portal.view']),
+    asyncHandler(async (req, res) => {
+      const { companyId, agentId } = requireAgentPortalContext(req);
+      const ctx = (req as any).requestUserContext as any;
+      const branchId = ctx?.scope?.branchId as string | undefined;
+      const userId = ctx?.userId as string | undefined;
+      if (!branchId) throw new HttpError(403, 'AGENT_BRANCH_NOT_LINKED');
+      const input = createShipmentSchema.parse(req.body);
+      const agent = await agents.getAgentById(agentId, companyId);
+      if (!agent) throw new HttpError(403, 'AGENT_NOT_LINKED');
+      const [senderId, receiverId] = await Promise.all([
+        ensurePortalParty({ name: input.senderName, phone: input.senderPhone, type: 'sender', branchId, agentId, userId }),
+        ensurePortalParty({ name: input.receiverName, phone: input.receiverPhone, type: 'receiver', branchId, agentId, userId }),
+      ]);
+      const originalAmount = Math.max(
+        input.freightCharge + input.senderCollectionAmount + input.hawalaAmount +
+          input.transferServiceFee + input.additionalCharges - input.prepaidAmount,
+        0,
+      );
+      const item = await service.create({
+        shipmentNo: input.shipmentNo,
+        senderId,
+        receiverId,
+        branchId,
+        originCity: agent.area ?? agent.city ?? agent.governorate ?? undefined,
+        destinationCity: input.destinationCity,
+        description: input.notes,
+        piecesCount: input.piecesCount,
+        weightKg: input.weightKg,
+        status: 'REGISTERED',
+        originalAmount,
+        originalCurrency: 'USD',
+        exchangeRateToUsd: 1,
+        baseAmountUsd: originalAmount,
+        companyId,
+        createdBy: userId,
+        freightCharge: input.freightCharge,
+        transferFee: input.senderCollectionAmount,
+        hawalaAmount: input.hawalaAmount,
+        transferServiceFee: input.transferServiceFee,
+        additionalCharges: input.additionalCharges,
+        prepaidAmount: input.prepaidAmount,
+      }, { companyId, branchId, userId });
+      auditService.logAsync({
+        req,
+        action: 'AGENT_PORTAL_SHIPMENT_CREATED',
+        entityType: 'shipment',
+        entityId: String(item.id),
+        metadata: { agentId, shipmentNo: item.shipment_no, destinationCity: item.destination_city },
+      });
+      res.status(201).json({ success: true, data: item });
     }),
   );
 
