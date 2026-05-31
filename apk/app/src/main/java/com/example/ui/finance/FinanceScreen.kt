@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
@@ -15,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -29,8 +31,11 @@ fun FinanceScreen(
     onOpenShipment: (String) -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var selectedTab by remember { mutableIntStateOf(0) }
     var selectedMovement by remember { mutableStateOf<Movement?>(null) }
+    var showCreateTransfer by remember { mutableStateOf(false) }
+    val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
     val tabs = listOf("ملخص الحساب", "كشف الحساب", "الحوالات")
 
     Scaffold(
@@ -44,6 +49,11 @@ fun FinanceScreen(
                         }
                     },
                     actions = {
+                        if (selectedTab == 2) {
+                            IconButton(onClick = { showCreateTransfer = true }) {
+                                Icon(Icons.Default.Add, contentDescription = "إنشاء حوالة")
+                            }
+                        }
                         IconButton(onClick = viewModel::loadData) {
                             Icon(Icons.Default.Refresh, contentDescription = "تحديث")
                         }
@@ -69,11 +79,28 @@ fun FinanceScreen(
                     is FinanceState.Success -> when (selectedTab) {
                         0 -> FinancialSummaryView(current.financial)
                         1 -> AccountStatementView(current.account) { selectedMovement = it }
-                        else -> TransfersView(current.transfers, current.transfersUnavailable)
+                        else -> TransfersView(current.transfers, current.transfersUnavailable, viewModel::completeTransfer)
                     }
                 }
             }
         }
+    }
+
+    LaunchedEffect(actionMessage) {
+        actionMessage?.let {
+            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+            viewModel.clearActionMessage()
+        }
+    }
+
+    if (showCreateTransfer) {
+        CreateTransferDialog(
+            onDismiss = { showCreateTransfer = false },
+            onConfirm = {
+                viewModel.createTransfer(it)
+                showCreateTransfer = false
+            },
+        )
     }
 
     selectedMovement?.let { movement ->
@@ -266,7 +293,7 @@ private fun MovementDetailsSheet(movement: Movement, onDismiss: () -> Unit, onOp
 }
 
 @Composable
-private fun TransfersView(transfers: List<AgentTransfer>, unavailable: Boolean) {
+private fun TransfersView(transfers: List<AgentTransfer>, unavailable: Boolean, onComplete: (String) -> Unit) {
     if (unavailable) {
         EmptyView("هذه الميزة غير متاحة حالياً من الخادم")
         return
@@ -290,9 +317,51 @@ private fun TransfersView(transfers: List<AgentTransfer>, unavailable: Boolean) 
                     Text("أجرة الحوالة: ${money(transfer.serviceFee, transfer.serviceFeeCurrency ?: transfer.currency)}")
                     Text("عمولة الوكيل: ${money(transfer.agentCommission, transfer.agentCommissionCurrency ?: transfer.currency)}")
                     Text("الشحنة المرتبطة: ${safeText(transfer.linkedShipmentNo)}")
+                    Text("الوجهة: ${safeText(transfer.destinationCity)}")
+                    Text("وكيل المصدر: ${safeText(transfer.originAgentName)}")
+                    Text("وكيل الوجهة: ${safeText(transfer.destinationAgentName)}")
                     Text("ملاحظات: ${safeText(transfer.notes)}")
+                    if (transfer.canDeliver == true && !transfer.id.isNullOrBlank()) {
+                        Button(onClick = { onComplete(transfer.id) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("تسليم الحوالة")
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun CreateTransferDialog(onDismiss: () -> Unit, onConfirm: (CreateAgentTransferRequest) -> Unit) {
+    var sender by remember { mutableStateOf("") }
+    var receiver by remember { mutableStateOf("") }
+    var destination by remember { mutableStateOf("") }
+    var amount by remember { mutableStateOf("") }
+    var fee by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
+    val valid = sender.isNotBlank() && receiver.isNotBlank() && destination.isNotBlank() && (amount.toDoubleOrNull() ?: 0.0) > 0
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("إنشاء حوالة جديدة") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(sender, { sender = it }, label = { Text("اسم المرسل") })
+                OutlinedTextField(receiver, { receiver = it }, label = { Text("اسم المستلم") })
+                OutlinedTextField(destination, { destination = it }, label = { Text("الوجهة") })
+                OutlinedTextField(amount, { amount = it }, label = { Text("المبلغ USD") })
+                OutlinedTextField(fee, { fee = it }, label = { Text("أجرة الحوالة USD") })
+                OutlinedTextField(notes, { notes = it }, label = { Text("ملاحظات") })
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = valid,
+                onClick = {
+                    onConfirm(CreateAgentTransferRequest(sender, receiver, destination, amount.toDouble(), "USD", fee.toDoubleOrNull() ?: 0.0, notes.ifBlank { null }))
+                },
+            ) { Text("إنشاء وقبض") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
+    )
 }

@@ -10,6 +10,7 @@ import { parseDataScope } from '../utils/scope.js';
 import { normalizeShipmentStatus, type CanonicalShipmentStatus } from '../domain/shipmentStatus.js';
 import { pool } from '../db/pool.js';
 import { HttpError } from '../utils/errors.js';
+import { AuditService } from '../services/auditService.js';
 
 const actionSchema = z.object({
   note: z.string().max(400).optional(),
@@ -29,6 +30,16 @@ const transfersQuerySchema = z.object({
   search: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
   offset: z.coerce.number().int().min(0).default(0),
+});
+
+const createTransferSchema = z.object({
+  senderName: z.string().min(1).max(255),
+  receiverName: z.string().min(1).max(255),
+  destinationCity: z.string().min(1).max(255),
+  amount: z.coerce.number().positive(),
+  currency: z.string().min(1).max(10).default('USD'),
+  transferServiceFee: z.coerce.number().min(0).default(0),
+  notes: z.string().max(1000).optional(),
 });
 
 const actionMap: Record<string, CanonicalShipmentStatus> = {
@@ -83,6 +94,15 @@ function sourceTypeForMobile(sourceType: string): string {
     receipt_voucher: 'RECEIPT_VOUCHER',
     payment_voucher: 'PAYMENT_VOUCHER',
     cashbox_transaction: 'CASHBOX_TRANSACTION',
+    shipment_shipping_fee: 'SHIPMENT_SHIPPING_FEE',
+    sender_collection_trust: 'SENDER_COLLECTION_TRUST',
+    loading_dues: 'LOADING_DUES',
+    general_collection: 'GENERAL_COLLECTION',
+    shipment_hawala_trust: 'SHIPMENT_HAWALA_TRUST',
+    transfer_principal_collected: 'TRANSFER_PRINCIPAL_COLLECTED',
+    transfer_service_fee_collected: 'TRANSFER_SERVICE_FEE_COLLECTED',
+    transfer_principal_paid: 'TRANSFER_PRINCIPAL_PAID',
+    transfer_agent_commission: 'TRANSFER_COMMISSION',
   };
   return labels[sourceType] ?? sourceType.toUpperCase();
 }
@@ -94,11 +114,20 @@ function referenceTypeForMobile(sourceType: string): string {
     receipt_voucher: 'RECEIPT_VOUCHER',
     payment_voucher: 'PAYMENT_VOUCHER',
     cashbox_transaction: 'CASHBOX_TRANSACTION',
+    shipment_shipping_fee: 'SHIPMENT',
+    sender_collection_trust: 'SHIPMENT',
+    loading_dues: 'SHIPMENT',
+    general_collection: 'SHIPMENT',
+    shipment_hawala_trust: 'SHIPMENT',
+    transfer_principal_collected: 'TRANSFER',
+    transfer_service_fee_collected: 'TRANSFER',
+    transfer_principal_paid: 'TRANSFER',
+    transfer_agent_commission: 'TRANSFER',
   };
   return labels[sourceType] ?? sourceType.toUpperCase();
 }
 
-function transferForMobile(row: any) {
+function transferForMobile(row: any, currentAgentId?: string) {
   return {
     id: String(row.id),
     transferNo: String(row.linked_shipment_no ?? row.id),
@@ -120,6 +149,12 @@ function transferForMobile(row: any) {
       : null,
     linkedShipmentNo: row.linked_shipment_no ?? null,
     notes: row.notes ?? null,
+    destinationCity: row.destination_city ?? null,
+    originAgentName: row.origin_agent_name ?? null,
+    destinationAgentName: row.destination_agent_name ?? null,
+    collectedAt: row.collected_at ?? null,
+    paidOutAt: row.paid_out_at ?? null,
+    canDeliver: Boolean(currentAgentId && String(row.destination_agent_id ?? row.agent_id ?? '') === currentAgentId && String(row.status).toUpperCase() === 'PENDING'),
   };
 }
 
@@ -175,6 +210,7 @@ export function createAgentPortalRouter(
   agents: AgentRepository,
 ) {
   const router = Router();
+  const auditService = new AuditService();
 
   router.get(
     '/profile',
@@ -205,6 +241,36 @@ export function createAgentPortalRouter(
           username: ctx.username as string,
         },
       });
+    }),
+  );
+
+  router.post(
+    '/transfers',
+    requirePermissions(['agent_portal.view']),
+    asyncHandler(async (req, res) => {
+      const { companyId, agentId } = requireAgentPortalContext(req);
+      const payload = createTransferSchema.parse(req.body);
+      const transfer = await transfersService.createAgentPortalTransfer({
+        companyId,
+        originAgentId: agentId,
+        senderName: payload.senderName,
+        receiverName: payload.receiverName,
+        destinationCity: payload.destinationCity,
+        amount: payload.amount,
+        currency: payload.currency,
+        transferServiceFee: payload.transferServiceFee,
+        notes: payload.notes,
+        userId: (req as any).requestUserContext?.userId,
+        baseCurrency: (req as any).requestUserContext?.baseCurrency,
+      });
+      auditService.logAsync({
+        req,
+        action: 'AGENT_PORTAL_TRANSFER_CREATED',
+        entityType: 'transfer',
+        entityId: String(transfer.id),
+        metadata: { originAgentId: agentId, destinationAgentId: transfer.destination_agent_id, amount: transfer.amount, currency: transfer.currency },
+      });
+      res.status(201).json({ success: true, data: transferForMobile(transfer) });
     }),
   );
 
@@ -364,7 +430,7 @@ export function createAgentPortalRouter(
       res.json({
         success: true,
         data: {
-          items: result.items.map(transferForMobile),
+          items: result.items.map((row) => transferForMobile(row, agentId)),
           pagination: {
             limit: query.limit,
             offset: query.offset,
@@ -384,7 +450,7 @@ export function createAgentPortalRouter(
       if (!transfer) {
         throw new HttpError(404, 'TRANSFER_NOT_FOUND');
       }
-      res.json({ success: true, data: transferForMobile(transfer) });
+      res.json({ success: true, data: transferForMobile(transfer, agentId) });
     }),
   );
 
@@ -393,11 +459,21 @@ export function createAgentPortalRouter(
     requirePermissions(['agent_portal.view']),
     asyncHandler(async (req, res) => {
       const { companyId, agentId } = requireAgentPortalContext(req);
-      const transfer = await transfersService.getAgentPortalTransfer(String(req.params.id), companyId, agentId);
-      if (!transfer) {
-        throw new HttpError(404, 'TRANSFER_NOT_FOUND');
-      }
-      res.status(501).json({ success: false, error: 'TRANSFER_COMPLETE_NOT_AVAILABLE' });
+      const transfer = await transfersService.completeAgentPortalTransfer({
+        id: String(req.params.id),
+        companyId,
+        agentId,
+        userId: (req as any).requestUserContext?.userId,
+        baseCurrency: (req as any).requestUserContext?.baseCurrency,
+      });
+      auditService.logAsync({
+        req,
+        action: 'AGENT_PORTAL_TRANSFER_DELIVERED',
+        entityType: 'transfer',
+        entityId: String(transfer.id),
+        metadata: { destinationAgentId: agentId, amount: transfer.amount, currency: transfer.currency },
+      });
+      res.json({ success: true, data: transferForMobile(transfer, agentId) });
     }),
   );
 

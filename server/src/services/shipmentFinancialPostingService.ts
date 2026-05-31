@@ -461,7 +461,7 @@ export class ShipmentFinancialPostingService {
         `update party_financial_movements
          set is_reversal = true, reverse_reason = $2
          where shipment_id = $1
-           and movement_type in ('shipment_charge', 'shipment_shipping_fee', 'sender_collection_trust', 'loading_dues', 'general_collection')
+           and movement_type in ('shipment_charge', 'shipment_shipping_fee', 'sender_collection_trust', 'loading_dues', 'general_collection', 'shipment_hawala_trust')
            and is_reversal = false`,
         [shipmentId, reason],
       );

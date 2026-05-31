@@ -5,6 +5,7 @@ import { useToast } from '../components/Toast';
 import { Plus, RefreshCw, Check, X, Search, Ban } from 'lucide-react';
 import { useAuth } from '../context/AuthProvider';
 import { getCurrencyManagementSettings } from '../lib/settings/currencySettingsStore';
+import { httpClient } from '../lib/api/httpClient';
 
 export default function Transfers() {
   const { showToast } = useToast();
@@ -19,6 +20,8 @@ export default function Transfers() {
   const [postingCashboxes, setPostingCashboxes] = useState<BackendCashboxRecord[]>([]);
   const [postingCashboxId, setPostingCashboxId] = useState('');
   const [posting, setPosting] = useState(false);
+  const [agents, setAgents] = useState<Array<{ id: string; name: string; city?: string | null; governorate?: string | null; area?: string | null }>>([]);
+  const [cashboxes, setCashboxes] = useState<BackendCashboxRecord[]>([]);
   
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<Partial<Transfer>>({});
@@ -47,6 +50,16 @@ export default function Transfers() {
   useEffect(() => {
     void loadData();
   }, [statusFilter]);
+
+  useEffect(() => {
+    void Promise.all([
+      httpClient.get<Array<{ id: string; name: string; city?: string | null; governorate?: string | null; area?: string | null }>>('/agents?includeInactive=false'),
+      phase3FinanceGateway.cashbox.listMaster({ isActive: 'true' }),
+    ]).then(([agentRows, cashboxRows]) => {
+      setAgents(agentRows);
+      setCashboxes(cashboxRows.filter((row) => row.is_active));
+    }).catch((err: any) => showToast(err.message || 'تعذر تحميل الوكلاء والصناديق', 'error'));
+  }, [showToast]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,6 +98,10 @@ export default function Transfers() {
         company_transfer_profit_main: Number(formData.company_transfer_profit_main) || Number(formData.transfer_service_fee_main) || 0,
         notes: formData.notes,
         status: formData.status || 'PENDING',
+        origin_agent_id: formData.origin_agent_id,
+        destination_agent_id: formData.destination_agent_id,
+        destination_city: formData.destination_city,
+        collection_cashbox_id: formData.collection_cashbox_id,
       };
 
       if (!formData.id) {
@@ -119,9 +136,9 @@ export default function Transfers() {
     setPostingCashboxes([]);
     setPostingCashboxId('');
     try {
-      const currency = String(transfer.transfer_service_fee_currency ?? transfer.currency ?? 'USD');
+      const currency = String(transfer.currency ?? 'USD');
       const boxes = await phase3FinanceGateway.cashbox.listMaster({ currencyCode: currency, isActive: 'true' });
-      const active = boxes.filter((b) => b.is_active);
+      const active = boxes.filter((b) => b.is_active && (!transfer.destination_agent_id || b.agent_id === transfer.destination_agent_id));
       setPostingCashboxes(active);
       if (active.length === 1) {
         setPostingCashboxId(active[0].id);
@@ -180,6 +197,10 @@ export default function Transfers() {
       agent_commission: 0,
       transfer_service_fee: 0,
       company_transfer_profit: 0,
+      origin_agent_id: '',
+      destination_agent_id: '',
+      destination_city: '',
+      collection_cashbox_id: '',
     });
     setIsEditing(true);
   };
@@ -214,9 +235,9 @@ export default function Transfers() {
           <div className="card w-[520px] max-w-[95vw]">
             <div className="flex justify-between items-center border-b pb-2 mb-4">
               <div>
-                <h3 className="font-semibold text-lg">ترحيل أجرة الحوالة</h3>
+                <h3 className="font-semibold text-lg">تسليم الحوالة</h3>
                 <div className="text-xs text-gray-500">
-                  {displaySender(postingTransfer)} → {displayReceiver(postingTransfer)} — {formatMoney(postingTransfer.transfer_service_fee, postingTransfer.transfer_service_fee_currency)}
+                  {displaySender(postingTransfer)} → {displayReceiver(postingTransfer)} — {formatMoney(postingTransfer.amount, postingTransfer.currency)}
                 </div>
               </div>
               <button className="text-gray-400 hover:text-gray-600" onClick={closeCompleteDialog} title="إغلاق">
@@ -238,7 +259,7 @@ export default function Transfers() {
               </div>
 
               <div className="text-xs text-gray-500">
-                سيتم إنشاء سند قبض مؤكد بقيمة أجرة الحوالة وربطه بالحوالة، مع تسجيل حركة صندوق.
+                سيتم إنشاء سند دفع مؤكد بقيمة أصل الحوالة وربطه بالحوالة، مع تسجيل حركة صندوق ومنع تكرار التسليم.
               </div>
 
               <div className="flex gap-3 justify-end pt-2">
@@ -246,7 +267,7 @@ export default function Transfers() {
                   إلغاء
                 </button>
                 <button type="button" className="btn btn-primary" onClick={confirmComplete} disabled={posting || !postingCashboxId}>
-                  {posting ? 'جاري الترحيل...' : 'ترحيل'}
+                  {posting ? 'جاري التسليم...' : 'تسليم'}
                 </button>
               </div>
             </div>
@@ -301,6 +322,7 @@ export default function Transfers() {
                   <th>المرسل</th>
                   <th>المستلم</th>
                   <th>الوكيل</th>
+                  <th>الوجهة</th>
                   <th>المبلغ</th>
                   <th>عمولة الوكيل</th>
                   <th>أجرة الحوالة</th>
@@ -330,6 +352,7 @@ export default function Transfers() {
                     <td>{displaySender(t)}</td>
                     <td>{displayReceiver(t)}</td>
                     <td>{t.agent_name || '-'}</td>
+                    <td>{t.destination_city || '-'}</td>
                     <td>{t.amount.toLocaleString()} {t.currency}</td>
                     <td>{(t.agent_commission ?? t.commission ?? 0).toLocaleString()} {(t.agent_commission_currency ?? t.commission_currency ?? t.currency)}</td>
                     <td>{(t.transfer_service_fee ?? 0).toLocaleString()} {(t.transfer_service_fee_currency ?? t.currency)}</td>
@@ -360,7 +383,7 @@ export default function Transfers() {
                 ))}
                 {transfers.length === 0 && (
                   <tr>
-                    <td colSpan={13} className="text-center py-8 text-gray-500">
+                    <td colSpan={14} className="text-center py-8 text-gray-500">
                       لا يوجد حوالات
                     </td>
                   </tr>
@@ -444,6 +467,36 @@ export default function Transfers() {
               <div className="form-group">
                 <label>اسم المستلم <span className="text-red-500">*</span></label>
                 <input required type="text" className="form-input" value={formData.receiver_name || ''} onChange={e => setFormData({...formData, receiver_name: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>وكيل المصدر <span className="text-red-500">*</span></label>
+                <select required className="form-input" value={formData.origin_agent_id || ''} onChange={e => setFormData({...formData, origin_agent_id: e.target.value, collection_cashbox_id: ''})}>
+                  <option value="">اختر وكيل المصدر</option>
+                  {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>صندوق قبض المصدر <span className="text-red-500">*</span></label>
+                <select required className="form-input" value={formData.collection_cashbox_id || ''} onChange={e => setFormData({...formData, collection_cashbox_id: e.target.value})}>
+                  <option value="">اختر صندوق القبض</option>
+                  {cashboxes.filter((box) => box.agent_id === formData.origin_agent_id && box.currency_code === (formData.currency || 'USD')).map((box) => (
+                    <option key={box.id} value={box.id}>{box.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>وكيل الوجهة <span className="text-red-500">*</span></label>
+                <select required className="form-input" value={formData.destination_agent_id || ''} onChange={e => {
+                  const agent = agents.find((item) => item.id === e.target.value);
+                  setFormData({...formData, destination_agent_id: e.target.value, destination_city: agent?.area || agent?.city || agent?.governorate || ''});
+                }}>
+                  <option value="">اختر وكيل الوجهة</option>
+                  {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>الوجهة <span className="text-red-500">*</span></label>
+                <input required type="text" className="form-input" value={formData.destination_city || ''} onChange={e => setFormData({...formData, destination_city: e.target.value})} />
               </div>
               <div className="form-group">
                 <label>المبلغ <span className="text-red-500">*</span></label>

@@ -59,6 +59,9 @@ interface ApiService {
     @GET("agent-portal/transfers/{id}")
     suspend fun getTransferDetails(@Path("id") id: String): ApiResponse<AgentTransferDetails>
 
+    @POST("agent-portal/transfers")
+    suspend fun createTransfer(@Body request: CreateAgentTransferRequest): ApiResponse<AgentTransfer>
+
     @POST("agent-portal/transfers/{id}/complete")
-    suspend fun completeTransfer(@Path("id") id: String): ApiResponse<Unit>
+    suspend fun completeTransfer(@Path("id") id: String): ApiResponse<AgentTransfer>
 }

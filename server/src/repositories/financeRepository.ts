@@ -101,6 +101,7 @@ export type ShipmentComponentMovementType =
   | 'shipment_shipping_fee'
   | 'sender_collection_trust'
   | 'loading_dues'
+  | 'shipment_hawala_trust'
   | 'general_collection';
 
 export interface DashboardCacheMetricsSnapshot {
@@ -1795,6 +1796,11 @@ export class FinanceRepository {
         notes: `مستحقات تحميل / إضافي — الشحنة رقم ${input.shipmentNo}`,
       },
       {
+        movementType: 'shipment_hawala_trust' as ShipmentComponentMovementType,
+        amount: input.breakdown.hawalaAmount,
+        notes: `أصل حوالة بعهدة الوكيل — الشحنة رقم ${input.shipmentNo}`,
+      },
+      {
         movementType: 'general_collection' as ShipmentComponentMovementType,
         amount: input.breakdown.generalCollectionAmount,
         notes: `تحصيل إضافي — الشحنة رقم ${input.shipmentNo}`,
@@ -2101,6 +2107,50 @@ export class FinanceRepository {
     } finally {
       client.release();
     }
+  }
+
+  async updatePaymentVoucherWithClient(client: PoolClient, id: string, payload: Partial<PaymentVoucherInput>) {
+    const existingResult = await client.query(`select * from payment_vouchers where id = $1 for update`, [id]);
+    const existing = existingResult.rows[0];
+    if (!existing) return null;
+
+    let nextCashboxId = existing.cashbox_id as string | null | undefined;
+    if (existing.status === 'draft' && payload.cashboxId !== undefined) {
+      nextCashboxId = payload.cashboxId ?? null;
+    }
+    const updated = await client.query(
+      `
+      update payment_vouchers
+      set status = coalesce($2, status),
+          notes = coalesce($3, notes),
+          original_amount = coalesce($4, original_amount),
+          original_currency = coalesce($5, original_currency),
+          exchange_rate_to_usd = coalesce($6, exchange_rate_to_usd),
+          base_amount_usd = coalesce($7, base_amount_usd),
+          cashbox_id = $8,
+          updated_at = now()
+      where id = $1
+      returning *
+      `,
+      [
+        id,
+        payload.status ?? null,
+        payload.notes ?? null,
+        payload.originalAmount ?? null,
+        payload.originalCurrency ?? null,
+        payload.exchangeRateToUsd ?? null,
+        payload.baseAmountUsd ?? null,
+        nextCashboxId ?? null,
+      ],
+    );
+    const voucher = updated.rows[0];
+    if (existing.status !== 'confirmed' && voucher.status === 'confirmed') {
+      await this.insertCashboxAndMovementForPayment(client, voucher);
+    }
+    if (existing.status === 'confirmed' && voucher.status === 'cancelled') {
+      await this.createVoucherReversalEntries(client, 'payment', voucher, `Payment voucher ${voucher.voucher_no} cancelled`);
+    }
+    return voucher;
   }
 
   async autoGenerateReceiptFromDelivery(deliveryId: string, createdByUserId?: string, options?: AutoGenerateOptions) {

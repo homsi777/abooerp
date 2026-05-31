@@ -5,6 +5,15 @@ export interface Transfer {
   company_id: string;
   branch_id?: string;
   agent_id?: string;
+  origin_agent_id?: string;
+  destination_agent_id?: string;
+  destination_city?: string;
+  origin_agent_name?: string;
+  destination_agent_name?: string;
+  collection_cashbox_id?: string;
+  collection_receipt_voucher_id?: string;
+  payout_cashbox_id?: string;
+  payout_payment_voucher_id?: string;
   shipment_id?: string;
   shipment_no?: string;
   branch_name?: string;
@@ -68,6 +77,10 @@ export interface CreateTransferPayload {
   status?: string;
   notes?: string;
   shipment_id?: string;
+  origin_agent_id?: string;
+  destination_agent_id?: string;
+  destination_city?: string;
+  collection_cashbox_id?: string;
 }
 
 export const transfersGateway = {

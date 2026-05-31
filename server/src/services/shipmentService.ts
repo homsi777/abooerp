@@ -141,8 +141,8 @@ export class ShipmentService {
     if (
       this.transfersService
       && effectiveCompanyId
-      && typeof payload.transferServiceFee === 'number'
-      && payload.transferServiceFee > 0
+      && typeof payload.hawalaAmount === 'number'
+      && payload.hawalaAmount > 0
     ) {
       try {
         let senderDisplay = 'غير معروف';
@@ -159,7 +159,7 @@ export class ShipmentService {
         } catch {}
 
         const currency = payload.originalCurrency || 'USD';
-        const transferAmount = Number(payload.transferFee ?? 0);
+        const transferAmount = Number(payload.hawalaAmount ?? 0);
         const transferMain = computeBaseAmountUsd(transferAmount, payload.exchangeRateToUsd || 1);
         const fee = Number(payload.transferServiceFee ?? 0);
         const feeMain = computeBaseAmountUsd(fee, payload.exchangeRateToUsd || 1);

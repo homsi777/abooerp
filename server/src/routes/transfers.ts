@@ -31,6 +31,10 @@ const createTransferSchema = z.object({
   status: z.string().optional(),
   notes: z.string().optional(),
   shipment_id: z.string().uuid().optional(),
+  origin_agent_id: z.string().uuid().optional(),
+  destination_agent_id: z.string().uuid().optional(),
+  destination_city: z.string().optional(),
+  collection_cashbox_id: z.string().uuid().optional(),
 });
 
 const completeTransferSchema = z.object({
@@ -75,13 +79,24 @@ export function createTransfersRouter(transfersService: TransfersService) {
       return;
     }
 
-    const transfer = await transfersService.createTransfer({
+    const payload = {
       ...data,
       company_id: String(scope.companyId),
       branch_id: scope.branchId,
-      agent_id: scope.agentId,
+      agent_id: data.destination_agent_id ?? scope.agentId,
       status: data.status || 'PENDING'
-    });
+    };
+    if (!data.shipment_id && (!data.origin_agent_id || !data.destination_agent_id || !data.collection_cashbox_id)) {
+      throw new HttpError(400, 'الحوالة المستقلة تتطلب وكيل المصدر ووكيل الوجهة وصندوق قبض المصدر.');
+    }
+    const transfer = data.collection_cashbox_id
+      ? await transfersService.createTransferAndCollect({
+          payload,
+          collectionCashboxId: data.collection_cashbox_id,
+          userId: scope.userId,
+          baseCurrency: (req as any).requestContext?.baseCurrency,
+        })
+      : await transfersService.createTransfer(payload);
 
     auditService.logAsync({
       req,

@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.AccountStatement
 import com.example.data.AgentTransfer
 import com.example.data.FinancialStatement
+import com.example.data.CreateAgentTransferRequest
 import com.example.network.ApiService
 import java.io.IOException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,9 +29,39 @@ sealed class FinanceState {
 class FinanceViewModel(private val apiService: ApiService) : ViewModel() {
     private val _uiState = MutableStateFlow<FinanceState>(FinanceState.Loading)
     val uiState: StateFlow<FinanceState> = _uiState.asStateFlow()
+    private val _actionMessage = MutableStateFlow<String?>(null)
+    val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
 
     init {
         loadData()
+    }
+
+    fun createTransfer(request: CreateAgentTransferRequest) {
+        viewModelScope.launch {
+            try {
+                val response = apiService.createTransfer(request)
+                _actionMessage.value = if (response.success) "تم إنشاء الحوالة وتسجيل قبضها بنجاح" else response.error ?: "تعذر إنشاء الحوالة"
+                if (response.success) loadData()
+            } catch (error: Exception) {
+                _actionMessage.value = errorMessage(error)
+            }
+        }
+    }
+
+    fun completeTransfer(id: String) {
+        viewModelScope.launch {
+            try {
+                val response = apiService.completeTransfer(id)
+                _actionMessage.value = if (response.success) "تم تسليم الحوالة وترحيل سند الدفع بنجاح" else response.error ?: "تعذر تسليم الحوالة"
+                if (response.success) loadData()
+            } catch (error: Exception) {
+                _actionMessage.value = errorMessage(error)
+            }
+        }
+    }
+
+    fun clearActionMessage() {
+        _actionMessage.value = null
     }
 
     fun loadData() {

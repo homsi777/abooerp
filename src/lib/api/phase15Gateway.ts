@@ -48,6 +48,7 @@ type BackendShipmentRecord = {
   freight_charge?: number;
   transfer_fee?: number;
   additional_charges?: number;
+  hawala_amount?: number;
   prepaid_amount?: number;
   discount_amount?: number;
   transfer_service_fee?: number;
@@ -337,6 +338,7 @@ function mapShipment(record: BackendShipmentRecord): Shipment {
     freightCharge: Number(record.freight_charge ?? record.original_amount ?? 0),
     transferFee: Number(record.transfer_fee ?? 0),
     additionalCharges: Number(record.additional_charges ?? 0),
+    hawalaAmount: Number(record.hawala_amount ?? 0),
     transferServiceFee: Number(record.transfer_service_fee ?? 0),
     prepaidAmount: Number(record.prepaid_amount ?? 0),
     discount: Number(record.discount_amount ?? 0),
@@ -743,6 +745,7 @@ export const phase15Gateway = {
         freightCharge: data.freightCharge ?? originalAmount,
         transferFee: data.transferFee ?? 0,
         additionalCharges: data.additionalCharges ?? 0,
+        hawalaAmount: data.hawalaAmount ?? 0,
         prepaidAmount: data.prepaidAmount ?? 0,
         discountAmount: data.discount ?? 0,
         transferServiceFee: data.transferServiceFee ?? 0,
@@ -779,6 +782,7 @@ export const phase15Gateway = {
         freightCharge: data.freightCharge,
         transferFee: data.transferFee,
         additionalCharges: data.additionalCharges,
+        hawalaAmount: data.hawalaAmount,
         prepaidAmount: data.prepaidAmount,
         discountAmount: data.discount,
         transferServiceFee: data.transferServiceFee,

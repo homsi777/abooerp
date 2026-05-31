@@ -54,6 +54,14 @@ fun movementTypeLabel(value: String?): String = when (value?.uppercase()) {
     "RECEIPT_VOUCHER" -> "سند قبض"
     "PAYMENT_VOUCHER" -> "سند دفع"
     "CASHBOX_TRANSACTION" -> "حركة صندوق"
+    "SHIPMENT_SHIPPING_FEE" -> "أجرة شحن على العهدة"
+    "SENDER_COLLECTION_TRUST" -> "تحصيل لصالح المرسل"
+    "LOADING_DUES" -> "مستحقات إضافية"
+    "GENERAL_COLLECTION" -> "تحصيل إضافي"
+    "SHIPMENT_HAWALA_TRUST" -> "أصل حوالة مرتبطة بشحنة"
+    "TRANSFER_PRINCIPAL_COLLECTED" -> "قبض أصل حوالة"
+    "TRANSFER_SERVICE_FEE_COLLECTED" -> "قبض أجرة حوالة"
+    "TRANSFER_PRINCIPAL_PAID" -> "تسليم أصل حوالة"
     else -> "غير محدد"
 }
 

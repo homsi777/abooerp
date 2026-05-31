@@ -38,6 +38,7 @@ export interface ShipmentCreateInput {
   freightCharge?: number;
   transferFee?: number;
   additionalCharges?: number;
+  hawalaAmount?: number;
   prepaidAmount?: number;
   discountAmount?: number;
   transferServiceFee?: number;
@@ -199,13 +200,13 @@ export class ShipmentRepository {
         original_amount, original_currency, exchange_rate_to_usd, base_amount_usd,
         company_id, created_by,
         payer_party_kind, default_cashbox_id,
-        freight_charge, transfer_fee, additional_charges, prepaid_amount, discount_amount, transfer_service_fee,
+        freight_charge, transfer_fee, additional_charges, hawala_amount, prepaid_amount, discount_amount, transfer_service_fee,
         agent_commission_base_type, agent_commission_base_amount,
         agent_commission_percentage_snapshot, agent_commission_amount_snapshot
       )
       values(
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-        $20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31
+        $20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32
       )
       returning *
       `,
@@ -234,6 +235,7 @@ export class ShipmentRepository {
         input.freightCharge ?? input.originalAmount,
         input.transferFee ?? 0,
         input.additionalCharges ?? 0,
+        input.hawalaAmount ?? 0,
         input.prepaidAmount ?? 0,
         input.discountAmount ?? 0,
         input.transferServiceFee ?? 0,
@@ -323,11 +325,12 @@ export class ShipmentRepository {
           additional_charges = coalesce($23, additional_charges),
           prepaid_amount = coalesce($24, prepaid_amount),
           discount_amount = coalesce($25, discount_amount),
-          transfer_service_fee = coalesce($26, transfer_service_fee),
-          agent_commission_base_type = coalesce($27, agent_commission_base_type),
-          agent_commission_base_amount = coalesce($28, agent_commission_base_amount),
-          agent_commission_percentage_snapshot = coalesce($29, agent_commission_percentage_snapshot),
-          agent_commission_amount_snapshot = coalesce($30, agent_commission_amount_snapshot),
+          hawala_amount = coalesce($26, hawala_amount),
+          transfer_service_fee = coalesce($27, transfer_service_fee),
+          agent_commission_base_type = coalesce($28, agent_commission_base_type),
+          agent_commission_base_amount = coalesce($29, agent_commission_base_amount),
+          agent_commission_percentage_snapshot = coalesce($30, agent_commission_percentage_snapshot),
+          agent_commission_amount_snapshot = coalesce($31, agent_commission_amount_snapshot),
           updated_at = now()
         where id = $1
           and deleted_at is null
@@ -361,6 +364,7 @@ export class ShipmentRepository {
           typeof payload.freightCharge === 'number' ? payload.freightCharge : null,
           typeof payload.transferFee === 'number' ? payload.transferFee : null,
           typeof payload.additionalCharges === 'number' ? payload.additionalCharges : null,
+          typeof payload.hawalaAmount === 'number' ? payload.hawalaAmount : null,
           typeof payload.prepaidAmount === 'number' ? payload.prepaidAmount : null,
           typeof payload.discountAmount === 'number' ? payload.discountAmount : null,
           typeof payload.transferServiceFee === 'number' ? payload.transferServiceFee : null,

@@ -124,6 +124,11 @@ data class Shipment(
     @Json(name = "original_amount") val amount: Double?,
     @Json(name = "original_currency") val currency: String?,
     @Json(name = "freight_charge") val freightCharge: Double? = 0.0,
+    @Json(name = "transfer_fee") val senderCollectionAmount: Double? = 0.0,
+    @Json(name = "hawala_amount") val hawalaAmount: Double? = 0.0,
+    @Json(name = "transfer_service_fee") val transferServiceFee: Double? = 0.0,
+    @Json(name = "additional_charges") val additionalCharges: Double? = 0.0,
+    @Json(name = "prepaid_amount") val prepaidAmount: Double? = 0.0,
     @Json(name = "agent_commission_percentage_snapshot") val agentCommissionPercentageSnapshot: Double? = 0.0,
     @Json(name = "agent_commission_amount_snapshot") val agentCommissionAmountSnapshot: Double? = 0.0,
     val status: String?,
@@ -221,7 +226,13 @@ data class AgentTransfer(
     val agentCommissionCurrency: String?,
     val status: String?,
     val linkedShipmentNo: String?,
-    val notes: String?
+    val notes: String?,
+    val destinationCity: String? = null,
+    val originAgentName: String? = null,
+    val destinationAgentName: String? = null,
+    val collectedAt: String? = null,
+    val paidOutAt: String? = null,
+    val canDeliver: Boolean? = false
 )
 
 @JsonClass(generateAdapter = false)
@@ -249,6 +260,17 @@ data class AgentTransferDetails(
     val notes: String?,
     val completedAt: String?,
     val linkedShipment: LinkedShipment?
+)
+
+@JsonClass(generateAdapter = false)
+data class CreateAgentTransferRequest(
+    val senderName: String,
+    val receiverName: String,
+    val destinationCity: String,
+    val amount: Double,
+    val currency: String = "USD",
+    val transferServiceFee: Double = 0.0,
+    val notes: String? = null
 )
 
 @JsonClass(generateAdapter = false)

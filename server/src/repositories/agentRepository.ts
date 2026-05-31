@@ -281,6 +281,7 @@ export class AgentRepository {
       where s.company_id = $1
         and s.agent_id = $2
         and s.deleted_at is null
+        and upper(s.status) <> 'CANCELLED'
         and ($4::text is null or upper(s.original_currency) = upper($4))
       order by s.created_at desc
       limit 500
@@ -308,6 +309,7 @@ export class AgentRepository {
       left join shipments s on s.id = t.shipment_id
       where t.company_id = $1
         and t.agent_id = $2
+        and upper(t.status) <> 'CANCELLED'
         and ($3::text is null or upper(t.agent_commission_currency) = upper($3))
       order by coalesce(t.transfer_date, t.created_at) desc
       limit 500
@@ -347,7 +349,7 @@ export class AgentRepository {
           count(*) filter (where $3::timestamptz is not null and created_at > $3::timestamptz)::int as shipments_since_count,
           coalesce(sum(coalesce(agent_commission_amount_snapshot, round((coalesce(freight_charge, 0) * coalesce($4::numeric, 0)) / 100, 2), 0)) filter (where $3::timestamptz is not null and created_at > $3::timestamptz), 0)::numeric as shipment_commission_since
         from shipments
-        where company_id = $1 and agent_id = $2 and deleted_at is null
+        where company_id = $1 and agent_id = $2 and deleted_at is null and upper(status) <> 'CANCELLED'
           and ($5::text is null or upper(original_currency) = upper($5))
       ),
       transfer_totals as (
@@ -357,7 +359,7 @@ export class AgentRepository {
           count(*) filter (where $3::timestamptz is not null and coalesce(transfer_date, created_at) > $3::timestamptz)::int as transfers_since_count,
           coalesce(sum(coalesce(agent_commission, 0)) filter (where $3::timestamptz is not null and coalesce(transfer_date, created_at) > $3::timestamptz), 0)::numeric as transfer_commission_since
         from transfers
-        where company_id = $1 and agent_id = $2
+        where company_id = $1 and agent_id = $2 and upper(status) = 'COMPLETED'
           and ($5::text is null or upper(agent_commission_currency) = upper($5))
       ),
       receipt_totals as (
@@ -386,6 +388,20 @@ export class AgentRepository {
       [companyId, agentId, lastReconciledAt, Number(agent.commission_percentage ?? 0), currencyCode ?? null],
     );
     const totals = summaryResult.rows[0] ?? {};
+    const movementTotalsResult = await pool.query(
+      `
+      select
+        coalesce(sum(debit_amount), 0)::numeric as debit,
+        coalesce(sum(credit_amount), 0)::numeric as credit
+      from party_financial_movements
+      where party_type = 'agent'
+        and party_id = $1
+        and is_reversal = false
+        and ($2::text is null or upper(coalesce(currency_code, original_currency)) = upper($2))
+      `,
+      [agentId, currencyCode ?? null],
+    );
+    const movementTotals = movementTotalsResult.rows[0] ?? {};
 
     const totalShipmentCommission = Number(totals.shipment_commission || 0);
     const totalTransferCommission = Number(totals.transfer_commission || 0);
@@ -397,6 +413,9 @@ export class AgentRepository {
     const sincePayments = lastReconciledAt ? Number(totals.payments_since || 0) : totalPayments;
     const totalAgentCommission = totalShipmentCommission + totalTransferCommission;
     const sinceAgentCommission = sinceShipmentCommission + sinceTransferCommission;
+    const detailedStatement = await this.getAgentAccountStatement(companyId, agentId, currencyCode, null);
+    const settlementBalance = Number(detailedStatement?.summary.netAgentDue ?? 0);
+    const settlementBalanceSince = Number(detailedStatement?.summary.sinceLastReconciliation.netAgentDue ?? settlementBalance);
 
     return {
       agent,
@@ -413,7 +432,10 @@ export class AgentRepository {
         totalPayments,
         netVoucherBalance: totalReceipts - totalPayments,
         paidToAgent: totalPayments,
-        netAgentDue: totalAgentCommission - totalPayments,
+        netAgentDue: settlementBalance,
+        accountDebit: Number(movementTotals.debit || 0),
+        accountCredit: Number(movementTotals.credit || 0),
+        settlementBalance,
         sinceLastReconciliation: {
           shipmentsCount: lastReconciledAt ? Number(totals.shipments_since_count || 0) : Number(totals.shipments_count || 0),
           transfersCount: lastReconciledAt ? Number(totals.transfers_since_count || 0) : Number(totals.transfers_count || 0),
@@ -425,7 +447,7 @@ export class AgentRepository {
           totalReceipts: sinceReceipts,
           totalPayments: sincePayments,
           paidToAgent: sincePayments,
-          netAgentDue: sinceAgentCommission - sincePayments,
+          netAgentDue: settlementBalanceSince,
         },
       },
       shipments: shipments.rows,
@@ -457,7 +479,36 @@ export class AgentRepository {
           coalesce(sender.full_name, '-') as party_name
         from shipments s
         left join senders_receivers sender on sender.id = s.sender_id
-        where s.company_id = $1 and s.agent_id = $2 and s.deleted_at is null
+        where s.company_id = $1 and s.agent_id = $2 and s.deleted_at is null and upper(s.status) <> 'CANCELLED'
+
+        union all
+
+        select
+          coalesce(pfm.posted_at, pfm.created_at) as at,
+          pfm.movement_type as source_type,
+          coalesce(pfm.shipment_id, pfm.reference_id, pfm.id)::text as source_id,
+          coalesce(pfm.reference_no, pfm.reference_id::text) as reference_no,
+          pfm.notes as description,
+          coalesce(pfm.debit_amount, 0)::numeric as debit,
+          coalesce(pfm.credit_amount, 0)::numeric as credit,
+          coalesce(pfm.currency_code, pfm.original_currency) as currency_code,
+          'POSTED' as status,
+          'حركة مالية موثقة' as party_name
+        from party_financial_movements pfm
+        where pfm.party_type = 'agent'
+          and pfm.party_id = $2
+          and pfm.is_reversal = false
+          and pfm.movement_type in (
+            'shipment_shipping_fee',
+            'sender_collection_trust',
+            'loading_dues',
+            'general_collection',
+            'shipment_hawala_trust',
+            'transfer_principal_collected',
+            'transfer_service_fee_collected',
+            'transfer_principal_paid',
+            'transfer_agent_commission'
+          )
 
         union all
 
@@ -475,6 +526,17 @@ export class AgentRepository {
         from transfers t
         left join shipments s on s.id = t.shipment_id
         where t.company_id = $1 and t.agent_id = $2
+          and upper(t.status) = 'COMPLETED'
+          and not exists (
+            select 1
+            from party_financial_movements pfm
+            where pfm.reference_type = 'TRANSFER'
+              and pfm.reference_id = t.id
+              and pfm.movement_type = 'transfer_agent_commission'
+              and pfm.party_type = 'agent'
+              and pfm.party_id = $2
+              and pfm.is_reversal = false
+          )
 
         union all
 

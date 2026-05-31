@@ -83,6 +83,7 @@ export interface Shipment {
   freightCharge: number;
   transferFee: number;
   additionalCharges: number;
+  hawalaAmount?: number;
   transferServiceFee?: number;
   prepaidAmount?: number;
   discount: number;

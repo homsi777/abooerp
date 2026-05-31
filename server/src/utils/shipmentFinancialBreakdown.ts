@@ -3,6 +3,7 @@ export type ShipmentFinancialBreakdownInput = {
   freight_charge?: number | string | null;
   transfer_fee?: number | string | null;
   additional_charges?: number | string | null;
+  hawala_amount?: number | string | null;
   prepaid_amount?: number | string | null;
   discount_amount?: number | string | null;
   general_collection_amount?: number | string | null;
@@ -12,6 +13,7 @@ export type ShipmentFinancialBreakdown = {
   companyShippingFee: number;
   senderCollectionAmount: number;
   loadingDuesAmount: number;
+  hawalaAmount: number;
   generalCollectionAmount: number;
   prepaidAmount: number;
   discountAmount: number;
@@ -32,6 +34,7 @@ export function calculateShipmentFinancialBreakdown(row: ShipmentFinancialBreakd
   const originalAmount = money(row.original_amount);
   const senderCollectionAmount = money(row.transfer_fee);
   const loadingDuesAmount = money(row.additional_charges);
+  const hawalaAmount = money(row.hawala_amount);
   const generalCollectionAmount = money(row.general_collection_amount);
   const prepaidAmount = money(row.prepaid_amount);
   const discountAmount = money(row.discount_amount);
@@ -39,6 +42,7 @@ export function calculateShipmentFinancialBreakdown(row: ShipmentFinancialBreakd
   const hasSeparatedComponents =
     hasExplicitValue(row.transfer_fee) ||
     hasExplicitValue(row.additional_charges) ||
+    hasExplicitValue(row.hawala_amount) ||
     hasExplicitValue(row.general_collection_amount) ||
     hasExplicitValue(row.prepaid_amount) ||
     hasExplicitValue(row.discount_amount);
@@ -54,13 +58,14 @@ export function calculateShipmentFinancialBreakdown(row: ShipmentFinancialBreakd
   const companyShippingFee = explicitFreight && !freightLooksLikeLegacyBackfill
     ? freightValue
     : hasSeparatedComponents
-      ? money(Math.max(originalAmount - senderCollectionAmount - loadingDuesAmount - generalCollectionAmount + prepaidAmount + discountAmount, 0))
+      ? money(Math.max(originalAmount - senderCollectionAmount - loadingDuesAmount - hawalaAmount - generalCollectionAmount + prepaidAmount + discountAmount, 0))
       : originalAmount;
 
   return {
     companyShippingFee,
     senderCollectionAmount,
     loadingDuesAmount,
+    hawalaAmount,
     generalCollectionAmount,
     prepaidAmount,
     discountAmount,
@@ -68,6 +73,7 @@ export function calculateShipmentFinancialBreakdown(row: ShipmentFinancialBreakd
       companyShippingFee +
         senderCollectionAmount +
         loadingDuesAmount +
+        hawalaAmount +
         generalCollectionAmount -
         prepaidAmount -
         discountAmount,
@@ -80,6 +86,7 @@ export function buildShipmentBreakdownMetadata(breakdown: ShipmentFinancialBreak
     company_shipping_fee: breakdown.companyShippingFee,
     sender_collection_amount: breakdown.senderCollectionAmount,
     loading_dues_amount: breakdown.loadingDuesAmount,
+    hawala_amount: breakdown.hawalaAmount,
     general_collection_amount: breakdown.generalCollectionAmount,
     prepaid_amount: breakdown.prepaidAmount,
     discount_amount: breakdown.discountAmount,
