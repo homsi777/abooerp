@@ -75,6 +75,21 @@ export class ReferenceRepository {
       }
     }
 
+    if (companyId && (table === 'drivers' || table === 'vehicles')) {
+      const alias = table === 'drivers' ? 'd' : 'v';
+      const result = await pool.query(
+        `
+        select ${alias}.*
+        from ${table} ${alias}
+        left join branches b on b.id = ${alias}.branch_id
+        where ${alias}.branch_id is null or b.company_id = $1
+        order by ${alias}.created_at desc
+        `,
+        [companyId],
+      );
+      return result.rows;
+    }
+
     return this.list();
   }
 

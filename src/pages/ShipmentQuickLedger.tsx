@@ -735,8 +735,8 @@ export default function ShipmentQuickLedger() {
           phase15Gateway.cities.getAll(),
           phase15Gateway.goodsTypes.getAll(),
           phase15Gateway.sendersReceivers.getAll(),
-          phase15Gateway.drivers.getAll().catch(() => [] as Driver[]),
-          phase15Gateway.vehicles.getAll().catch(() => [] as Vehicle[]),
+          phase15Gateway.drivers.getAll(),
+          phase15Gateway.vehicles.getAll(),
         ]);
         if (cancelled) return;
         setBranches(branchesData);
