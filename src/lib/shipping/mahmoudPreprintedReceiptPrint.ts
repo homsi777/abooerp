@@ -6,6 +6,8 @@
 export type MahmoudReceiptRow = {
   receiptNo: string;
   date: string;
+  /** الجهة — الرقة، السخة، إلخ */
+  destination: string;
   receiver: string;
   sender: string;
   parcelType: string;
@@ -32,6 +34,7 @@ export type FieldDef = {
 export const MAHMOUD_RECEIPT_FIELD_LABELS: Record<string, string> = {
   receiptNo: 'رقم الإيصال',
   date: 'التاريخ',
+  destination: 'الجهة',
   receiver: 'المطلوب من السيد',
   sender: 'المرسل',
   parcelType: 'النوع',
@@ -45,6 +48,7 @@ export const MAHMOUD_RECEIPT_FIELD_LABELS: Record<string, string> = {
 export const MAHMOUD_RECEIPT_FIELD_ORDER = [
   'receiptNo',
   'date',
+  'destination',
   'receiver',
   'sender',
   'parcelType',
@@ -89,19 +93,20 @@ function resolveSlotIndex(slotIndex: number, transform: MahmoudPrintTransform): 
 }
 
 /**
- * مواقع مُعايرة — القالب الافتراضي (يُنسخ لكل إيصال).
- * global offset: top=0, left=0
+ * قالب افتراضي — slot 0.
+ * global offset: top=0, left=0 — fontSize مُخفّض قليلاً (14/13pt)
  */
 export const MAHMOUD_RECEIPT_FIELD_LAYOUT: Record<string, FieldDef> = {
-  receiptNo: { top: 12.5, left: 88, width: 20, height: 4, fontSize: 16, align: 'center' },
-  date: { top: 26.5, left: 98.5, width: 16, height: 5.5, fontSize: 16, align: 'center' },
-  receiver: { top: 44.5, left: 137.5, width: 92, height: 4.5, fontSize: 16, align: 'right' },
-  hawala: { top: 58, left: 189, width: 10, height: 3.8, fontSize: 15, align: 'center' },
-  amount: { top: 58.5, left: 153, width: 10, height: 3.8, fontSize: 15, align: 'center' },
-  prepaid: { top: 56.5, left: 170.5, width: 10, height: 3.8, fontSize: 15, align: 'center' },
-  parcelCount: { top: 58, left: 138.5, width: 9, height: 3.8, fontSize: 15, align: 'center' },
-  parcelType: { top: 57, left: 74, width: 36, height: 3.8, fontSize: 15, align: 'right' },
-  sender: { top: 57, left: 38.5, width: 26, height: 3.8, fontSize: 15, align: 'right' },
+  receiptNo: { top: 10, left: 88, width: 20, height: 4, fontSize: 14, align: 'center' },
+  date: { top: 24, left: 98.5, width: 16, height: 5.5, fontSize: 14, align: 'center' },
+  destination: { top: 23.5, left: 59, width: 28, height: 5.5, fontSize: 14, align: 'center' },
+  receiver: { top: 44.5, left: 137.5, width: 92, height: 4.5, fontSize: 14, align: 'right' },
+  sender: { top: 57, left: 38.5, width: 26, height: 3.8, fontSize: 13, align: 'right' },
+  parcelType: { top: 57, left: 74, width: 36, height: 3.8, fontSize: 13, align: 'right' },
+  parcelCount: { top: 57.5, left: 138.5, width: 9, height: 3.8, fontSize: 13, align: 'center' },
+  prepaid: { top: 58, left: 174, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+  amount: { top: 58, left: 154.5, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+  hawala: { top: 58, left: 194, width: 10, height: 3.8, fontSize: 13, align: 'center' },
 };
 
 export type MahmoudReceiptSlotLayouts = Record<number, Record<string, FieldDef>>;
@@ -110,16 +115,61 @@ function cloneFieldLayout(source: Record<string, FieldDef> = MAHMOUD_RECEIPT_FIE
   return JSON.parse(JSON.stringify(source)) as Record<string, FieldDef>;
 }
 
-/** مواقع كل إيصال على الصفحة — 4 × 9 حقول */
-export function createDefaultSlotLayouts(): MahmoudReceiptSlotLayouts {
-  const layouts: MahmoudReceiptSlotLayouts = {};
-  for (let i = 0; i < MAHMOUD_RECEIPTS_PER_PAGE; i += 1) {
-    layouts[i] = cloneFieldLayout();
-  }
-  return layouts;
-}
+/** مواقع مُعايرة — slots 0–3 (يونيو 2026) */
+export const MAHMOUD_RECEIPT_SLOT_LAYOUTS: MahmoudReceiptSlotLayouts = {
+  0: {
+    receiptNo: { top: 10, left: 88, width: 20, height: 4, fontSize: 14, align: 'center' },
+    date: { top: 24, left: 98.5, width: 16, height: 5.5, fontSize: 14, align: 'center' },
+    destination: { top: 23.5, left: 59, width: 28, height: 5.5, fontSize: 14, align: 'center' },
+    receiver: { top: 44.5, left: 137.5, width: 92, height: 4.5, fontSize: 14, align: 'right' },
+    sender: { top: 57, left: 38.5, width: 26, height: 3.8, fontSize: 13, align: 'right' },
+    parcelType: { top: 57, left: 74, width: 36, height: 3.8, fontSize: 13, align: 'right' },
+    parcelCount: { top: 57.5, left: 138.5, width: 9, height: 3.8, fontSize: 13, align: 'center' },
+    prepaid: { top: 58, left: 174, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+    amount: { top: 58, left: 154.5, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+    hawala: { top: 58, left: 194, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+  },
+  1: {
+    receiptNo: { top: 8, left: 88, width: 20, height: 4, fontSize: 14, align: 'center' },
+    date: { top: 21, left: 98.5, width: 16, height: 5.5, fontSize: 14, align: 'center' },
+    destination: { top: 23.5, left: 59, width: 28, height: 5.5, fontSize: 14, align: 'center' },
+    receiver: { top: 41, left: 137.5, width: 92, height: 4.5, fontSize: 14, align: 'right' },
+    sender: { top: 55.5, left: 38.5, width: 26, height: 3.8, fontSize: 13, align: 'right' },
+    parcelType: { top: 55, left: 74, width: 36, height: 3.8, fontSize: 13, align: 'right' },
+    parcelCount: { top: 55.5, left: 138.5, width: 9, height: 3.8, fontSize: 13, align: 'center' },
+    prepaid: { top: 56, left: 174, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+    amount: { top: 55.5, left: 154.5, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+    hawala: { top: 55.5, left: 194, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+  },
+  2: {
+    receiptNo: { top: 8.5, left: 88, width: 20, height: 4, fontSize: 14, align: 'center' },
+    date: { top: 21.5, left: 98.5, width: 16, height: 5.5, fontSize: 14, align: 'center' },
+    destination: { top: 21.5, left: 59, width: 28, height: 5.5, fontSize: 14, align: 'center' },
+    receiver: { top: 40.5, left: 137.5, width: 92, height: 4.5, fontSize: 14, align: 'right' },
+    sender: { top: 54, left: 38.5, width: 26, height: 3.8, fontSize: 13, align: 'right' },
+    parcelType: { top: 54, left: 74, width: 36, height: 3.8, fontSize: 13, align: 'right' },
+    parcelCount: { top: 54, left: 138.5, width: 9, height: 3.8, fontSize: 13, align: 'center' },
+    prepaid: { top: 54.5, left: 174, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+    amount: { top: 54.5, left: 154.5, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+    hawala: { top: 54, left: 192, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+  },
+  3: {
+    receiptNo: { top: 5, left: 88, width: 20, height: 4, fontSize: 14, align: 'center' },
+    date: { top: 18.5, left: 98.5, width: 16, height: 5.5, fontSize: 14, align: 'center' },
+    destination: { top: 18, left: 59, width: 28, height: 5.5, fontSize: 14, align: 'center' },
+    receiver: { top: 37.5, left: 137.5, width: 92, height: 4.5, fontSize: 14, align: 'right' },
+    sender: { top: 53, left: 33, width: 26, height: 3.8, fontSize: 13, align: 'right' },
+    parcelType: { top: 52.5, left: 74, width: 36, height: 3.8, fontSize: 13, align: 'right' },
+    parcelCount: { top: 52, left: 138.5, width: 9, height: 3.8, fontSize: 13, align: 'center' },
+    prepaid: { top: 52, left: 174, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+    amount: { top: 52, left: 154.5, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+    hawala: { top: 52, left: 191, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+  },
+};
 
-export const MAHMOUD_RECEIPT_SLOT_LAYOUTS: MahmoudReceiptSlotLayouts = createDefaultSlotLayouts();
+export function createDefaultSlotLayouts(): MahmoudReceiptSlotLayouts {
+  return JSON.parse(JSON.stringify(MAHMOUD_RECEIPT_SLOT_LAYOUTS)) as MahmoudReceiptSlotLayouts;
+}
 
 function getSlotLayout(
   slotIndex: number,
@@ -132,6 +182,7 @@ export const MAHMOUD_RECEIPT_DUMMY_ROWS: MahmoudReceiptRow[] = [
   {
     receiptNo: '9365',
     date: '06-06-26',
+    destination: 'الرقة',
     receiver: 'محمد أحمد',
     sender: 'علي حسن',
     parcelType: 'صندوق خشب',
@@ -143,6 +194,7 @@ export const MAHMOUD_RECEIPT_DUMMY_ROWS: MahmoudReceiptRow[] = [
   {
     receiptNo: '9302',
     date: '06-06-26',
+    destination: 'حلب',
     receiver: 'فاطمة يوسف',
     sender: 'خالد عمر',
     parcelType: 'طرد خردة',
@@ -154,6 +206,7 @@ export const MAHMOUD_RECEIPT_DUMMY_ROWS: MahmoudReceiptRow[] = [
   {
     receiptNo: '9400',
     date: '06-06-26',
+    destination: 'السخة',
     receiver: 'سارة محمود',
     sender: 'أحمد ناصر',
     parcelType: 'كيس',
@@ -165,6 +218,7 @@ export const MAHMOUD_RECEIPT_DUMMY_ROWS: MahmoudReceiptRow[] = [
   {
     receiptNo: '9411',
     date: '06-06-26',
+    destination: 'دمشق',
     receiver: 'حسين كريم',
     sender: 'مكتب الشحن',
     parcelType: 'صندوق',
@@ -174,6 +228,35 @@ export const MAHMOUD_RECEIPT_DUMMY_ROWS: MahmoudReceiptRow[] = [
     transferServiceFee: '2',
   },
 ];
+
+/** تحويل سطر الدفتر إلى صف إيصال للطباعة على الورق المطبوع */
+export function mapLedgerRowToMahmoudReceipt(
+  row: {
+    receiptNo: string;
+    destination: string;
+    receiver: string;
+    sender: string;
+    parcelType: string;
+    parcelCount: string;
+    prepaidAmount: string;
+    receiverCollect: string;
+    transferServiceFee: string;
+  },
+  dateLabel = '',
+): MahmoudReceiptRow {
+  return {
+    receiptNo: row.receiptNo,
+    date: dateLabel,
+    destination: row.destination,
+    receiver: row.receiver,
+    sender: row.sender,
+    parcelType: row.parcelType,
+    parcelCount: row.parcelCount,
+    prepaidAmount: row.prepaidAmount,
+    hawalaAmount: row.receiverCollect,
+    transferServiceFee: row.transferServiceFee,
+  };
+}
 
 function escapeHtml(value: string) {
   return String(value ?? '')
@@ -233,6 +316,7 @@ function renderReceiptSlot(
   return `<div class="receipt-slot" data-slot-index="${slotIndex}" data-base-top="${slotTop}" style="top:${slotTop}mm;height:${MAHMOUD_RECEIPT_SLOT_HEIGHT_MM}mm">
   ${renderField(slotIndex, 'receiptNo', row.receiptNo, L.receiptNo, debug, transform)}
   ${renderField(slotIndex, 'date', row.date, L.date, debug, transform)}
+  ${renderField(slotIndex, 'destination', row.destination, L.destination, debug, transform)}
   ${renderField(slotIndex, 'receiver', row.receiver, L.receiver, debug, transform)}
   ${renderField(slotIndex, 'hawala', row.hawalaAmount, L.hawala, debug, transform)}
   ${renderField(slotIndex, 'amount', row.transferServiceFee, L.amount, debug, transform)}
@@ -518,7 +602,7 @@ export function buildMahmoudPreprintedReceiptHtml(
 
   const calibrationPanel = debug
     ? `<aside class="calibration-panel no-print">
-    <strong>4 إيصالات × 9 حقول — تحكم منفصل</strong>
+    <strong>4 إيصالات × 10 حقول — تحكم منفصل</strong>
     <div class="global-offset">
       <label>↓ <input id="offTop" type="number" step="0.5" value="0" title="إزاحة عامة أعلى/أسفل" /></label>
       <label>→ <input id="offLeft" type="number" step="0.5" value="0" title="إزاحة عامة يمين/يسار" /></label>
