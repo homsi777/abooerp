@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { clearLanConnection, CLOUD_API_PORT, getLanPort, saveLanConnection } from '../../lib/api/httpClient';
-import { registerDesktopDevice } from '../../lib/deviceRegistration';
+import { registerDesktopDevice, registrationStatusMessage } from '../../lib/deviceRegistration';
 
 export const DEVICE_BOOTSTRAP_STORAGE_KEY = 'erp.deviceBootstrap.v1';
 
@@ -135,7 +135,12 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
         backendPort: port,
       });
     }
-    await registerDesktopDevice(apiBase);
+    const regStatus = await registerDesktopDevice(apiBase);
+    if (regStatus === 'unknown' || regStatus === 'skipped' || regStatus === 'blocked') {
+      setBranchErr(registrationStatusMessage(regStatus));
+      setBranchStatus('fail');
+      return;
+    }
     localStorage.setItem(DEVICE_BOOTSTRAP_STORAGE_KEY, 'branch');
     window.location.reload();
   };

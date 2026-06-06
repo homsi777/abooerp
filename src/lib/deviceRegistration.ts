@@ -1,6 +1,20 @@
+import { httpClient } from './api/httpClient';
+
 export type DeviceRegistrationStatus = 'ok' | 'pending' | 'blocked' | 'unknown' | 'skipped';
 
-import { httpClient } from './api/httpClient';
+export function registrationStatusMessage(status: DeviceRegistrationStatus): string {
+  switch (status) {
+    case 'ok':
+    case 'pending':
+      return 'تم تسجيل الجهاز على السحابة. من المتصفح: الإعدادات → الأجهزة المرتبطة → «معلق» → موافقة.';
+    case 'blocked':
+      return 'هذا الجهاز محظور من قِبل المسؤول.';
+    case 'skipped':
+      return 'تعذر قراءة معرّف الجهاز. أعد تشغيل برنامج سطح المكتب ثم حاول مرة أخرى.';
+    default:
+      return 'تعذر تسجيل الجهاز على السيرفر. تحقق من IP والمنفذ (2730) ثم أعد «حفظ».';
+  }
+}
 
 function parseRegistrationResponse(payload: unknown): DeviceRegistrationStatus {
   if (!payload || typeof payload !== 'object') return 'unknown';

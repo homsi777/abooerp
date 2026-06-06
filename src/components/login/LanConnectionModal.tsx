@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { CLOUD_API_PORT, getLanPort, getLanState, saveLanConnection } from '../../lib/api/httpClient';
-import { registerDesktopDevice } from '../../lib/deviceRegistration';
+import { registerDesktopDevice, registrationStatusMessage } from '../../lib/deviceRegistration';
 
 type TestStatus = 'idle' | 'testing' | 'success' | 'fail';
 
@@ -100,7 +100,12 @@ export default function LanConnectionModal({ onClose, onConnected }: Props) {
         backendPort: port,
       });
     }
-    await registerDesktopDevice(apiBase);
+    const regStatus = await registerDesktopDevice(apiBase);
+    if (regStatus === 'unknown' || regStatus === 'skipped' || regStatus === 'blocked') {
+      setStatus('fail');
+      setErrorMsg(registrationStatusMessage(regStatus));
+      return;
+    }
     onConnected(ip.trim(), testedBranches);
     onClose();
   };
