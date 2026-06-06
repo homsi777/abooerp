@@ -1,6 +1,7 @@
 import { computeBaseAmountUsd } from '../utils/money.js';
 import { pool } from '../db/pool.js';
 import type { ShipmentCreateInput, ShipmentRepository } from '../repositories/shipmentRepository.js';
+import { resolveAgentDestinationLabel } from '../utils/agentDestination.js';
 import { HttpError } from '../utils/errors.js';
 import type { DataScope } from '../utils/scope.js';
 import type { InventoryService } from './inventoryService.js';
@@ -67,6 +68,7 @@ export class ShipmentService {
       );
       if (destinationAgents.length === 1) {
         payload.agentId = destinationAgents[0].id;
+        payload.destinationCity = resolveAgentDestinationLabel(destinationAgents[0]) || payload.destinationCity;
       }
     }
 

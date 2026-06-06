@@ -1,3 +1,4 @@
+import { createReadStream } from 'node:fs';
 import { Router } from 'express';
 import { z } from 'zod';
 import { requirePermissions } from '../middleware/authorization.js';
@@ -89,6 +90,33 @@ export function createBackupRouter(backupService: BackupService) {
       });
       res.status(201).json({ success: true, data });
     })
+  );
+
+  router.get(
+    '/backups/:id/download',
+    requirePermissions(['settings.backup.read']),
+    asyncHandler(async (req, res) => {
+      const companyId = requireCompanyId(req);
+      const backup = await backupService.getBackupById(String(req.params.id), companyId);
+      if (!backup) {
+        res.status(404).json({ success: false, error: 'Backup not found.' });
+        return;
+      }
+      if (backup.is_stub) {
+        res.status(400).json({
+          success: false,
+          error: 'هذه النسخة وهمية (stub) ولا تحتوي بيانات قاعدة — أنشئ نسخة جديدة بعد تفعيل pg_dump.',
+        });
+        return;
+      }
+      if (backup.status !== 'ready' && backup.status !== 'restored') {
+        res.status(409).json({ success: false, error: 'Backup is not ready for download.' });
+        return;
+      }
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${backup.file_name}"`);
+      createReadStream(backup.file_path).pipe(res);
+    }),
   );
 
   router.post(

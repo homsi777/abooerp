@@ -1412,7 +1412,7 @@ body {
 
 .centers-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 10px;
 }
 
@@ -1440,6 +1440,12 @@ body {
   color: #0f172a;
   font-size: 18px;
   font-weight: 800;
+}
+
+.centers-totals-row td {
+  background: #f8fafc;
+  border-top: 2px solid #cbd5e1;
+  font-weight: 700;
 }
 
 .centers-agents {

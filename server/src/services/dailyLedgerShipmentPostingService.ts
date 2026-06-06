@@ -5,6 +5,7 @@ import type { DataScope } from '../utils/scope.js';
 import type { AgentRepository } from '../repositories/agentRepository.js';
 import type { DailyLedgerRepository } from '../repositories/dailyLedgerRepository.js';
 import type { ShipmentService } from '../services/shipmentService.js';
+import { resolveAgentDestinationLabel } from '../utils/agentDestination.js';
 import type { ShipmentFinancialInput } from './shipmentFinancialPostingService.js';
 
 type LedgerRowRecord = {
@@ -275,6 +276,7 @@ export class DailyLedgerShipmentPostingService {
         `لا يوجد وكيل واحد فقط للوجهة «${normalizeName(row.destination)}». يرجى ضبط الوكيل في تعريف الوكلاء.`,
       );
     }
+    const destinationCity = resolveAgentDestinationLabel(agents[0]) || normalizeName(row.destination);
 
     const amounts = amountsFromLedgerRow(row);
     const accountCustomer = await resolveAccountCustomerBySenderName(row.company_id, row.sender_name ?? '');
@@ -313,7 +315,7 @@ export class DailyLedgerShipmentPostingService {
         customerId: accountCustomer?.id,
         companyId: row.company_id,
         originCity: normalizeName(row.origin_label) || normalizeName(row.line_label),
-        destinationCity: normalizeName(row.destination),
+        destinationCity,
         description: notes || normalizeName(row.parcel_type),
         piecesCount: Number(row.parcel_count) || 1,
         weightKg: row.weight_kg == null ? undefined : Number(row.weight_kg),

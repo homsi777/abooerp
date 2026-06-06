@@ -1,4 +1,5 @@
 import { pool } from '../db/pool.js';
+import { numericCodeKey, normalizeDestinationKey } from '../utils/agentDestination.js';
 import { computeAgentBalanceDue, computeAgentRemittanceDue } from '../utils/agentShipmentSettlement.js';
 
 export interface AgentRecord {
@@ -182,7 +183,8 @@ export class AgentRepository {
   }
 
   async lookupByDestination(companyId: string, destination: string, _branchId?: string): Promise<AgentRecord[]> {
-    const normalized = destination.trim().toLowerCase();
+    const normalized = normalizeDestinationKey(destination);
+    const numericKey = numericCodeKey(destination);
     const result = await pool.query<AgentRecord>(
       `
       select a.id, a.code, a.name, a.phone, a.governorate, a.city, a.area, a.address, a.notes, a.branch_id, a.telegram_chat_id, a.is_active, a.commission_percentage, a.created_at::text, a.updated_at::text
@@ -191,13 +193,19 @@ export class AgentRepository {
       where b.company_id = $1
         and a.is_active = true
         and (
-          lower(coalesce(a.area, '')) = $2
-          or lower(coalesce(a.city, '')) = $2
-          or lower(coalesce(a.governorate, '')) = $2
+          lower(trim(coalesce(a.area, ''))) = $2
+          or lower(trim(coalesce(a.city, ''))) = $2
+          or lower(trim(coalesce(a.governorate, ''))) = $2
+          or lower(trim(a.code)) = $2
+          or (
+            $3::text is not null
+            and trim(a.code) ~ '^[0-9]+$'
+            and coalesce(nullif(ltrim(trim(a.code), '0'), ''), '0') = $3
+          )
         )
       order by a.created_at desc
       `,
-      [companyId, normalized],
+      [companyId, normalized, numericKey],
     );
     return result.rows;
   }

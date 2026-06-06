@@ -21,6 +21,10 @@ const allowedInvokeChannels = new Set([
     'backup:get-config',
     'backup:open-directory',
     'backup:select-restore-file',
+    'backup:select-save-path',
+    'backup:copy-file',
+    'backup:download-to-path',
+    'backup:write-file',
     'diagnostics:health-check',
     'diagnostics:get-logs',
     'diagnostics:get-version-meta',
@@ -71,6 +75,10 @@ const backupRuntime = {
     getConfig: () => invokeAllowed('backup:get-config'),
     openDirectory: () => invokeAllowed('backup:open-directory'),
     selectRestoreFile: () => invokeAllowed('backup:select-restore-file'),
+    selectSavePath: (payload) => invokeAllowed('backup:select-save-path', payload),
+    copyFile: (payload) => invokeAllowed('backup:copy-file', payload),
+    downloadToPath: (payload) => invokeAllowed('backup:download-to-path', payload),
+    writeFile: (payload) => invokeAllowed('backup:write-file', payload),
 };
 const filesystemRuntime = {
     readConfig: () => invokeAllowed('fs:read-config'),

@@ -46,6 +46,28 @@ function defaultDateFrom() {
   return d.toISOString().split('T')[0];
 }
 
+function sumNumeric(values: Array<number | null | undefined>): number {
+  return values.reduce((sum, value) => sum + (Number(value) || 0), 0);
+}
+
+function computeProvincialTotals(rows: ProvincialInboundRow[]) {
+  return {
+    shipments: rows.length,
+    parcelCount: sumNumeric(rows.map((r) => r.parcelCount)),
+    weightKg: sumNumeric(rows.map((r) => r.weightKg)),
+    collectAmount: sumNumeric(rows.map((r) => r.collectAmount)),
+    prepaidAmount: sumNumeric(rows.map((r) => r.prepaidAmount)),
+    hawalaAmount: sumNumeric(rows.map((r) => r.hawalaAmount)),
+    transferServiceFee: sumNumeric(rows.map((r) => r.transferServiceFee)),
+    totalAmount: sumNumeric(rows.map((r) => r.totalAmount)),
+  };
+}
+
+function formatWeightTotal(value: number): string {
+  if (!value) return '0';
+  return value % 1 === 0 ? value.toLocaleString() : value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
 export default function Centers() {
   const { showToast } = useToast();
   const [rows, setRows] = useState<ProvincialInboundRow[]>([]);
@@ -102,6 +124,8 @@ export default function Centers() {
     () => rows.filter((row) => matchesCenter(row.operationalCenter, selectedCenter)),
     [rows, selectedCenter],
   );
+
+  const selectedTotals = useMemo(() => computeProvincialTotals(selectedRows), [selectedRows]);
 
   const completeCenterReceive = async (row: ProvincialInboundRow) => {
     setProcessingId(row.shipmentId);
@@ -175,6 +199,27 @@ export default function Centers() {
         row.totalAmount,
         shipmentStatusLabelAr(normalizeShipmentStatus(row.shipmentStatus)),
         row.centerReceived ? 'مستلم' : 'بانتظار الاستلام',
+      ]).concat([
+        [
+          'المجاميع',
+          '',
+          '',
+          '',
+          selectedCenter,
+          '',
+          '',
+          selectedTotals.parcelCount,
+          selectedTotals.weightKg,
+          '',
+          '',
+          selectedTotals.collectAmount,
+          selectedTotals.prepaidAmount,
+          selectedTotals.hawalaAmount,
+          selectedTotals.transferServiceFee,
+          selectedTotals.totalAmount,
+          '',
+          '',
+        ],
       ]),
     );
     showToast('تم تنزيل CSV', 'success');
@@ -253,21 +298,36 @@ export default function Centers() {
               <strong>{selectedCenter}</strong>
             </div>
             <div>
-              <span>الشحنات</span>
-              <strong>{selectedRows.length}</strong>
+              <span>عدد الشحنات</span>
+              <strong>{selectedTotals.shipments.toLocaleString()}</strong>
+            </div>
+            <div>
+              <span>عدد الطرود</span>
+              <strong>{selectedTotals.parcelCount.toLocaleString()}</strong>
+            </div>
+            <div>
+              <span>مجموع الأوزان (كغ)</span>
+              <strong>{formatWeightTotal(selectedTotals.weightKg)}</strong>
+            </div>
+            <div>
+              <span>مبالغ (تحصيل)</span>
+              <strong>{formatCurrency(selectedTotals.collectAmount, 'USD')}</strong>
+            </div>
+            <div>
+              <span>أجور (مسبق)</span>
+              <strong>{formatCurrency(selectedTotals.prepaidAmount, 'USD')}</strong>
+            </div>
+            <div>
+              <span>حوالات</span>
+              <strong>{formatCurrency(selectedTotals.hawalaAmount, 'USD')}</strong>
+            </div>
+            <div>
+              <span>أجور حوالات</span>
+              <strong>{formatCurrency(selectedTotals.transferServiceFee, 'USD')}</strong>
             </div>
             <div>
               <span>من الدفتر السريع</span>
-              <strong>{selectedRows.filter((r) => r.fromQuickLedger).length}</strong>
-            </div>
-            <div>
-              <span>الإجمالي</span>
-              <strong>
-                {formatCurrency(
-                  selectedRows.reduce((sum, row) => sum + Number(row.totalAmount || 0), 0),
-                  'USD',
-                )}
-              </strong>
+              <strong>{selectedRows.filter((r) => r.fromQuickLedger).length.toLocaleString()}</strong>
             </div>
           </section>
 
@@ -340,6 +400,21 @@ export default function Centers() {
                     );
                   })}
               </tbody>
+              {!loading && selectedRows.length > 0 && (
+                <tfoot>
+                  <tr className="centers-totals-row">
+                    <td colSpan={5}><strong>المجاميع</strong></td>
+                    <td><strong>{selectedTotals.parcelCount.toLocaleString()}</strong></td>
+                    <td><strong>{formatWeightTotal(selectedTotals.weightKg)}</strong></td>
+                    <td colSpan={2} />
+                    <td><strong>{selectedTotals.collectAmount.toLocaleString()}</strong></td>
+                    <td><strong>{selectedTotals.prepaidAmount.toLocaleString()}</strong></td>
+                    <td><strong>{selectedTotals.hawalaAmount.toLocaleString()}</strong></td>
+                    <td><strong>{selectedTotals.transferServiceFee.toLocaleString()}</strong></td>
+                    <td colSpan={2} />
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </main>

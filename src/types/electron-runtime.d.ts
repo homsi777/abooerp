@@ -153,6 +153,29 @@ declare global {
         selected: boolean;
         filePath: string | null;
       }>;
+      selectSavePath: (payload?: { defaultFileName?: string }) => Promise<{
+        selected: boolean;
+        filePath: string | null;
+      }>;
+      copyFile: (payload: { sourcePath: string; destPath: string }) => Promise<{
+        success: boolean;
+        message: string;
+        destPath?: string;
+      }>;
+      downloadToPath: (payload: {
+        downloadUrl: string;
+        destPath: string;
+        authToken?: string | null;
+      }) => Promise<{
+        success: boolean;
+        message: string;
+        destPath?: string;
+      }>;
+      writeFile: (payload: { destPath: string; dataBase64: string }) => Promise<{
+        success: boolean;
+        message: string;
+        destPath?: string;
+      }>;
     };
   }
 }

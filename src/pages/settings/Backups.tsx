@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useToast } from '../../components/Toast';
 import { httpClient } from '../../lib/api/httpClient';
+import { createBackupAndSave, pickBackupSavePath, saveBackupRecordToUser } from '../../lib/backup/backupExport';
 
 type BackupRecord = {
   id: string;
@@ -9,6 +10,7 @@ type BackupRecord = {
   scope: string;
   status: 'creating' | 'ready' | 'verifying' | 'failed' | 'restoring' | 'restored';
   file_name: string;
+  file_path?: string;
   size_bytes: number;
   is_stub: boolean;
   error_message: string | null;
@@ -121,17 +123,44 @@ export default function BackupsSettingsPage() {
   const createBackup = async () => {
     setCreatingBackup(true);
     try {
-      await httpClient.post('/backups', {
-        backupType: 'manual',
-        scope: 'company',
+      const record = await createBackupAndSave({
         notes: 'من لوحة إعدادات النسخ الاحتياطي',
+        askSaveLocation: true,
       });
-      showToast('تم إنشاء نسخة احتياطية جديدة', 'success');
+      if (record.is_stub) {
+        showToast('تحذير: النسخة وهمية — pg_dump غير متوفر', 'error');
+      } else {
+        showToast(`تم إنشاء النسخة ${record.backup_code} وحفظها في المكان الذي اخترته`, 'success');
+      }
       await load();
     } catch (error) {
+      if (error instanceof Error && error.message === 'BACKUP_SAVE_CANCELLED') {
+        showToast('تم إلغاء حفظ النسخة', 'info');
+        return;
+      }
       showToast(error instanceof Error ? error.message : 'تعذر إنشاء النسخة الاحتياطية', 'error');
     } finally {
       setCreatingBackup(false);
+    }
+  };
+
+  const exportBackupCopy = async (record: BackupRecord) => {
+    setWorkingId(record.id);
+    try {
+      const destPath = await pickBackupSavePath(record.backup_code);
+      if (!destPath) {
+        showToast('تم إلغاء اختيار مكان الحفظ', 'info');
+        return;
+      }
+      const result = await saveBackupRecordToUser(record, destPath);
+      showToast(
+        result.path ? `تم حفظ نسخة في: ${result.path}` : 'تم تنزيل النسخة',
+        'success',
+      );
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر حفظ النسخة', 'error');
+    } finally {
+      setWorkingId(null);
     }
   };
 
@@ -226,7 +255,7 @@ export default function BackupsSettingsPage() {
         </div>
         <div className="flex gap-2 mt-3">
           <button className="toolbar-btn primary" onClick={() => void createBackup()} disabled={creatingBackup}>
-            {creatingBackup ? 'جاري الإنشاء...' : 'إنشاء نسخة الآن'}
+            {creatingBackup ? 'جاري الإنشاء...' : 'إنشاء نسخة وحفظها...'}
           </button>
           <button className="toolbar-btn" onClick={() => void savePolicy()} disabled={savingPolicy}>
             حفظ السياسة
@@ -252,7 +281,10 @@ export default function BackupsSettingsPage() {
           <div>آخر نسخة: {diagnostics.latestBackupCode ?? '-'} ({diagnostics.latestBackupStatus})</div>
           <div>وقت آخر نسخة: {diagnostics.latestBackupAt ?? '-'}</div>
           <div>مجلد النسخ: {diagnostics.backupDirectory}</div>
-          <div>أداة pg_dump: {diagnostics.pgDumpAvailable ? 'متوفرة' : 'غير متوفرة (وضع بديل)'}</div>
+          <div>أداة pg_dump: {diagnostics.pgDumpAvailable ? 'متوفرة ✓' : 'غير متوفرة — ستُنشأ نسخة وهمية!'}</div>
+          <div className="text-gray-600 mt-1">
+            عند «إنشاء نسخة وحفظها» يُطلب منك اختيار مجلد/ملف الحفظ (سطح المكتب أو USB). تحقق أن عمود «بديل» = لا.
+          </div>
           <div>مجلد تشغيل التطبيق: {runtimeDirectory ?? '-'}</div>
         </div>
       )}
@@ -286,8 +318,15 @@ export default function BackupsSettingsPage() {
                 <td>{record.is_stub ? 'نعم' : 'لا'}</td>
                 <td>{record.created_at}</td>
                 <td>
-                  <div className="flex gap-1">
+                  <div className="flex gap-1 flex-wrap">
                     <button className="toolbar-btn" onClick={() => void verifyBackup(record.id)} disabled={workingId === record.id}>تحقق</button>
+                    <button
+                      className="toolbar-btn"
+                      onClick={() => void exportBackupCopy(record)}
+                      disabled={workingId === record.id || record.is_stub}
+                    >
+                      حفظ في...
+                    </button>
                     <button
                       className="toolbar-btn"
                       onClick={() => {

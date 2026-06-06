@@ -80,7 +80,7 @@ type RemoteDailyLedgerRow = {
   vehicle_id?: string | null;
 };
 
-type SuggestedAgent = { id: number; code: string; name: string; city?: string; area?: string };
+type SuggestedAgent = { id: number; code: string; name: string; governorate?: string; city?: string; area?: string };
 
 const fallbackDestinations = ['دمشق', 'حلب', 'حمص', 'حماة', 'اللاذقية', 'طرطوس', 'إدلب'];
 
@@ -470,6 +470,19 @@ function resolveOriginByQuickCode(raw: string, branchList: Branch[]): string | n
   return b ? b.name : null;
 }
 
+function resolveAgentDestinationLabel(agent: {
+  governorate?: string;
+  city?: string;
+  area?: string;
+  name: string;
+}): string {
+  const governorate = normalizeName(agent.governorate);
+  if (governorate) return governorate;
+  const location = [agent.city, agent.area].map((part) => normalizeName(part)).filter(Boolean).join(' / ');
+  if (location) return location;
+  return normalizeName(agent.name);
+}
+
 function resolveDestinationByQuickCode(raw: string, cityList: City[], branchList: Branch[]): string | null {
   if (!isDigitsOnlyQuickCode(raw)) return null;
   const city = matchByEntityCode(cityList, raw);
@@ -782,13 +795,16 @@ export default function ShipmentQuickLedger() {
           }
         } else if (user?.userType !== 'agent') {
           try {
-            const list = await httpClient.get<Array<{ id: string; code: string; name: string; is_active?: boolean }>>('/agents');
+            const list = await httpClient.get<
+              Array<{ id: string; code: string; name: string; governorate?: string | null; is_active?: boolean }>
+            >('/agents');
             const mapped = list
               .filter((a) => a.is_active !== false)
               .map((a) => ({
                 id: syntheticEntityId(a.id),
                 code: a.code,
                 name: a.name,
+                governorate: typeof a.governorate === 'string' ? a.governorate : undefined,
                 city: typeof (a as { city?: string }).city === 'string' ? (a as { city?: string }).city : undefined,
                 area: typeof (a as { area?: string }).area === 'string' ? (a as { area?: string }).area : undefined,
               }));
@@ -1053,15 +1069,32 @@ export default function ShipmentQuickLedger() {
     try {
       const agents = await phase15Gateway.agents.lookupByDestination(destination);
       const mapped: SuggestedAgent[] = agents.map((a) => ({
-        id: a.id,
+        id: syntheticEntityId(a.id),
         code: a.code,
         name: a.name,
+        governorate:
+          typeof (a as { governorate?: unknown }).governorate === 'string'
+            ? (a as { governorate?: string }).governorate
+            : undefined,
         city: typeof (a as { city?: unknown }).city === 'string' ? (a as { city?: string }).city : undefined,
         area: typeof (a as { area?: unknown }).area === 'string' ? (a as { area?: string }).area : undefined,
       }));
       setAgentSuggestions((prev) => ({ ...prev, [rowId]: mapped }));
       if (mapped.length === 1) {
-        setRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, agentId: mapped[0].id, agentName: mapped[0].name } : row)));
+        const destinationLabel = resolveAgentDestinationLabel(mapped[0]);
+        setRows((prev) =>
+          prev.map((row) =>
+            row.id === rowId
+              ? {
+                  ...row,
+                  agentId: mapped[0].id,
+                  agentName: mapped[0].name,
+                  destination: destinationLabel || row.destination,
+                }
+              : row,
+          ),
+        );
+        if (destinationLabel) queueRowSave(rowId);
       }
     } catch {
       /* ignore */
@@ -1124,15 +1157,14 @@ export default function ShipmentQuickLedger() {
       next = cityResolved;
       agentId = undefined;
       agentName = '';
-    } else if (isDigitsOnlyQuickCode(raw)) {
+    } else {
       const unique = dedupeAgentsList([...(agentSuggestions[row.id] || []), ...catalogAgents]);
       const agent = matchByEntityCode(unique, raw);
       if (agent) {
-        const loc = [agent.city, agent.area].filter(Boolean).join(' / ');
-        next = loc || agent.name;
+        next = resolveAgentDestinationLabel(agent);
         agentId = agent.id;
         agentName = agent.name;
-      } else if (raw) {
+      } else if (isDigitsOnlyQuickCode(raw) && raw) {
         showToast(`لا يوجد فرع/مدينة/وكيل بالكود «${raw}»`, 'info');
       }
     }
