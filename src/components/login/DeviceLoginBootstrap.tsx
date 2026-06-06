@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { clearLanConnection, CLOUD_API_PORT, getLanPort, saveLanConnection } from '../../lib/api/httpClient';
+import { registerDesktopDevice } from '../../lib/deviceRegistration';
 
 export const DEVICE_BOOTSTRAP_STORAGE_KEY = 'erp.deviceBootstrap.v1';
 
@@ -125,6 +126,7 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
 
   const saveBranchAndFinish = async () => {
     const fsApi = (window as any)?.fs;
+    const apiBase = `http://${ip.trim()}:${port}/api/v1`;
     saveLanConnection(ip.trim(), port);
     if (fsApi?.writeConfig) {
       await fsApi.writeConfig({
@@ -133,6 +135,7 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
         backendPort: port,
       });
     }
+    await registerDesktopDevice(apiBase);
     localStorage.setItem(DEVICE_BOOTSTRAP_STORAGE_KEY, 'branch');
     window.location.reload();
   };

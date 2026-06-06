@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { CLOUD_API_PORT, getLanPort, getLanState, saveLanConnection } from '../../lib/api/httpClient';
+import { registerDesktopDevice } from '../../lib/deviceRegistration';
 
 type TestStatus = 'idle' | 'testing' | 'success' | 'fail';
 
@@ -89,6 +90,7 @@ export default function LanConnectionModal({ onClose, onConnected }: Props) {
   };
 
   const handleSave = async () => {
+    const apiBase = buildApiUrl(ip.trim());
     saveLanConnection(ip.trim(), port);
     const fsApi = (window as any)?.fs;
     if (fsApi?.writeConfig) {
@@ -98,6 +100,7 @@ export default function LanConnectionModal({ onClose, onConnected }: Props) {
         backendPort: port,
       });
     }
+    await registerDesktopDevice(apiBase);
     onConnected(ip.trim(), testedBranches);
     onClose();
   };

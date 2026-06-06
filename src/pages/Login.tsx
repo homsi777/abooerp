@@ -5,6 +5,7 @@ import { getLanState, httpClient } from '../lib/api/httpClient';
 import ActivationModal, { getStoredLicense } from '../components/login/ActivationModal';
 import LanConnectionModal from '../components/login/LanConnectionModal';
 import DeviceLoginBootstrap, { resolveLoginBootstrapOverlay } from '../components/login/DeviceLoginBootstrap';
+import { registerDesktopDeviceFromLogin, type DeviceRegistrationStatus } from '../lib/deviceRegistration';
 
 type LoginBranch = {
   id: string;
@@ -40,41 +41,10 @@ const features = [
 ];
 
 // ─── Device status returned from registration handshake ───────────────────────
-type DeviceCheckStatus = 'ok' | 'pending' | 'blocked' | 'unknown';
+type DeviceCheckStatus = DeviceRegistrationStatus;
 
 async function performDeviceHandshake(): Promise<DeviceCheckStatus> {
-  try {
-    const runtime = (window as any)?.runtime;
-    let machineId = '';
-    let deviceName = navigator.platform || 'Web Client';
-    let osType = navigator.platform || '';
-
-    if (runtime?.getMachineId) {
-      machineId = (await runtime.getMachineId()) ?? '';
-    }
-    if (!machineId) return 'ok'; // no machineId = likely local/dev browser
-
-    const resp = await httpClient.post<{ status?: string; deviceId?: string }>(
-      '/system/register-device',
-      {
-        machineId,
-        deviceName,
-        osType,
-      },
-    ).catch((err: Error) => {
-      // parse error codes from the error message
-      if (err.message?.includes('DEVICE_BLOCKED')) return { _err: 'blocked' } as any;
-      if (err.message?.includes('DEVICE_PENDING_APPROVAL')) return { _err: 'pending' } as any;
-      return null;
-    });
-
-    if (!resp) return 'unknown';
-    if ((resp as any)._err === 'blocked') return 'blocked';
-    if ((resp as any)._err === 'pending') return 'pending';
-    return 'ok';
-  } catch {
-    return 'ok'; // fail open for local environments
-  }
+  return registerDesktopDeviceFromLogin();
 }
 
 export default function Login() {
