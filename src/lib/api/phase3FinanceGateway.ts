@@ -761,6 +761,22 @@ export const phase3FinanceGateway = {
     },
   },
 
+  profitLoss: {
+    getReport: async (filters: {
+      fromAt: string;
+      toAt: string;
+      branchId?: string;
+      currencyCode?: string;
+    }): Promise<ProfitLossReport> => {
+      const q = new URLSearchParams();
+      q.set('fromAt', filters.fromAt);
+      q.set('toAt', filters.toAt);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+      return httpClient.get<ProfitLossReport>(`/financial-reports/profit-loss?${q.toString()}`);
+    },
+  },
+
   deliveryReports: {
     pendingTransfers: async (filters: {
       dateFrom?: string;
@@ -855,8 +871,10 @@ export type AgentCodRow = {
   freightPaymentType: 'PREPAID' | 'COLLECTION';
   agentCommissionPercentageSnapshot: number;
   agentCommissionAmount: number;
+  agentRemittanceDue: number;
   agentOwesCompany: number;
   companyOwesAgent: number;
+  hawalaAmount: number;
   transferServiceFee: number;
   transferServiceFeeCurrency: string;
 };
@@ -871,8 +889,13 @@ export type AgentCodSummary = {
   totalPaidToSenders: number;
   totalRemainingToSenders: number;
   totalAgentCommission: number;
+  totalAgentRemittanceDue: number;
   totalAgentOwesCompany: number;
   totalCompanyOwesAgent: number;
+  totalHawalaAmount: number;
+  totalTransferServiceFees: number;
+  totalConfirmedReceiptsFromAgent: number;
+  agentBalanceDue: number;
   shipmentCount: number;
 };
 
@@ -931,4 +954,49 @@ export type DeliveryAgentCommissionReviewRow = {
   expected_commission_amount: number;
   base_type: string;
   status: string;
+};
+
+export type ProfitLossLine = {
+  section: 'revenue' | 'direct_cost' | 'operating_expense' | 'agent_liability' | 'customer_liability';
+  category: string;
+  at: string;
+  referenceNo: string;
+  description: string;
+  partyName: string | null;
+  amount: number;
+  currencyCode: string;
+  amountUsd: number;
+  notes: string | null;
+  sourceType: string;
+  sourceId: string;
+};
+
+export type ProfitLossSection = {
+  id: ProfitLossLine['section'];
+  label: string;
+  total: number;
+  totalUsd: number;
+  currencyCode: string;
+  lines: ProfitLossLine[];
+};
+
+export type ProfitLossReport = {
+  generatedAt: string;
+  filters: {
+    fromAt: string;
+    toAt: string;
+    branchId?: string;
+    currencyCode?: string;
+  };
+  summary: {
+    totalRevenue: number;
+    totalDirectCosts: number;
+    grossProfit: number;
+    totalOperatingExpenses: number;
+    netProfit: number;
+    totalAgentLiabilities: number;
+    totalCustomerLiabilities: number;
+    currencyCode: string;
+  };
+  sections: ProfitLossSection[];
 };

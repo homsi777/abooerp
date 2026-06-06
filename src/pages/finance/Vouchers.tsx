@@ -197,17 +197,29 @@ export default function FinanceVouchers() {
     const preCashbox = searchParams.get('cashboxId');
     const kind = searchParams.get('kind');
     const newKind = searchParams.get('new');
+    const agentId = searchParams.get('agentId');
+    const agentName = searchParams.get('agentName');
+    const amount = searchParams.get('amount');
+    const currency = searchParams.get('currency');
+    const notes = searchParams.get('notes');
+    const status = searchParams.get('status');
     const voucherTypeFromLink =
       kind === 'payment' || newKind === 'payment'
         ? 'سند دفع'
         : kind === 'receipt' || newKind === 'receipt'
           ? 'سند قبض'
           : null;
-    if (preCashbox || voucherTypeFromLink) {
+    if (preCashbox || voucherTypeFromLink || agentId || amount || notes) {
       setFormData((prev) => ({
         ...prev,
         ...(preCashbox ? { cashboxId: preCashbox } : {}),
         ...(voucherTypeFromLink ? { voucherType: voucherTypeFromLink } : {}),
+        ...(agentId ? { agentId, customerId: null } : {}),
+        ...(agentName ? { relatedParty: agentName } : {}),
+        ...(amount ? { amount: parseDecimalAmount(amount) } : {}),
+        ...(currency ? { currency: currency as CurrencyCode } : {}),
+        ...(notes ? { description: notes } : {}),
+        ...(status === 'confirmed' || status === 'draft' || status === 'cancelled' ? { status } : {}),
       }));
       setShowForm(true);
     }

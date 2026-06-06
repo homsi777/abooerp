@@ -276,7 +276,7 @@ export default function Transfers() {
       )}
 
       <div className="flex justify-between items-center">
-        <h2>قسم الحوالات</h2>
+        <h3 className="font-semibold">قائمة الحوالات</h3>
         <form onSubmit={handleSearch} className="flex gap-2">
           <input
             type="text"

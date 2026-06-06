@@ -85,6 +85,7 @@ import { TransfersService } from './services/transfersService.js';
 import { createTransfersRouter } from './routes/transfers.js';
 import { DailyLedgerRepository } from './repositories/dailyLedgerRepository.js';
 import { DailyLedgerService } from './services/dailyLedgerService.js';
+import { DailyLedgerShipmentPostingService } from './services/dailyLedgerShipmentPostingService.js';
 import { createDailyLedgerRouter } from './routes/dailyLedgerRoutes.js';
 import { pool } from './db/pool.js';
 import customerRouter from './routes/customerRoutes.js';
@@ -139,9 +140,21 @@ const shipmentRepository = new ShipmentRepository();
 const financeRepository = new FinanceRepository();
 const shipmentFinancialPostingService = new ShipmentFinancialPostingService(shipmentRepository, financeRepository);
 const transfersService = new TransfersService(new TransfersRepository(pool), financeRepository);
-const dailyLedgerService = new DailyLedgerService(new DailyLedgerRepository());
 const agentRepository = new AgentRepository();
-const shipmentService = new ShipmentService(shipmentRepository, inventoryService, shipmentFinancialPostingService, transfersService, agentRepository);
+const shipmentService = new ShipmentService(
+  shipmentRepository,
+  inventoryService,
+  shipmentFinancialPostingService,
+  transfersService,
+  agentRepository,
+);
+const dailyLedgerRepository = new DailyLedgerRepository();
+const dailyLedgerShipmentPostingService = new DailyLedgerShipmentPostingService(
+  dailyLedgerRepository,
+  shipmentService,
+  agentRepository,
+);
+const dailyLedgerService = new DailyLedgerService(dailyLedgerRepository, dailyLedgerShipmentPostingService);
 const manifestService = new ManifestService(new ManifestRepository());
 const financeService = new FinanceService(financeRepository);
 const authService = new AuthService();

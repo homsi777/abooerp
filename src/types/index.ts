@@ -54,6 +54,8 @@ export interface Vehicle {
   capacity: number;
   isActive: boolean;
   notes: string;
+  driverId?: number;
+  driverName?: string;
 }
 
 export interface Shipment {
@@ -237,8 +239,8 @@ export interface Tariff {
   fromCityName: string;
   toCityId: number;
   toCityName: string;
-  goodsTypeId: number;
-  goodsTypeName: string;
+  goodsTypeId?: number;
+  goodsTypeName?: string;
   pricePerKg: number;
   minimumCharge: number;
   validFrom: string;

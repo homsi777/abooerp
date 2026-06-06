@@ -46,6 +46,16 @@ const cancelTransferSchema = z.object({
   reason: z.string().min(1).optional(),
 });
 
+const transferReportQuerySchema = z.object({
+  dateFrom: z.string().datetime({ offset: true }).optional(),
+  dateTo: z.string().datetime({ offset: true }).optional(),
+  branchId: z.string().uuid().optional(),
+  status: z.enum(['PENDING', 'COMPLETED', 'CANCELLED']).optional(),
+  originAgentId: z.string().uuid().optional(),
+  destinationAgentId: z.string().uuid().optional(),
+  destinationCity: z.string().min(1).optional(),
+});
+
 export function createTransfersRouter(transfersService: TransfersService) {
   const router = Router();
   const auditService = new AuditService();
@@ -68,6 +78,30 @@ export function createTransfersRouter(transfersService: TransfersService) {
     });
     
     res.json({ success: true, data: transfers });
+  }));
+
+  router.get('/reports/statement', requirePermissions(['transfers.read']), asyncHandler(async (req, res) => {
+    const scope = parseDataScope(req);
+    const q = transferReportQuerySchema.parse(req.query);
+
+    if (!scope.companyId) {
+      res.status(403).json({ success: false, error: 'Company scope required' });
+      return;
+    }
+
+    const report = await transfersService.getTransferReport({
+      company_id: String(scope.companyId),
+      branch_id: q.branchId ?? scope.branchId,
+      agent_id: scope.agentId,
+      dateFrom: q.dateFrom,
+      dateTo: q.dateTo,
+      status: q.status,
+      originAgentId: q.originAgentId,
+      destinationAgentId: q.destinationAgentId,
+      destinationCity: q.destinationCity,
+    });
+
+    res.json({ success: true, data: report });
   }));
 
   router.post('/', requirePermissions(['transfers.write']), asyncHandler(async (req, res) => {

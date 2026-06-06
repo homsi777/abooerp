@@ -35,6 +35,30 @@ export function createManifestRouter(service: ManifestService) {
   );
 
   router.get(
+    '/loadable-shipments',
+    requirePermissions(['manifests.read']),
+    asyncHandler(async (req, res) => {
+      const scope = parseDataScope(req);
+      const querySchema = z.object({
+        dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        destination: z.string().optional(),
+        loadStatus: z.enum(['all', 'pending', 'loaded']).optional(),
+        manifestId: z.string().uuid().optional(),
+      });
+      const q = querySchema.parse(req.query);
+      const rows = await service.listLoadableShipments(scope, {
+        dateFrom: q.dateFrom,
+        dateTo: q.dateTo,
+        destination: q.destination,
+        loadStatus: q.loadStatus ?? 'all',
+        manifestId: q.manifestId,
+      });
+      res.json({ success: true, data: { rows } });
+    }),
+  );
+
+  router.get(
     '/:id',
     requirePermissions(['manifests.read']),
     asyncHandler(async (req, res) => {

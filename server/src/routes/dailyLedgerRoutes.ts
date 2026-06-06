@@ -27,6 +27,7 @@ export function createDailyLedgerRouter(service: DailyLedgerService) {
         branchId: uuid.optional(),
         ledgerDate: z.string().optional(),
         lineLabel: z.string().optional(),
+        driverId: uuid.optional(),
         includeLoaded: z.coerce.boolean().optional(),
         q: z.string().optional(),
         limit: z.coerce.number().min(1).max(500).optional(),
@@ -51,6 +52,7 @@ export function createDailyLedgerRouter(service: DailyLedgerService) {
         branchId: effectiveBranchId,
         ledgerDate: q.ledgerDate,
         lineLabel: q.lineLabel,
+        driverId: q.driverId,
         includeLoaded: q.includeLoaded ?? false,
         q: q.q,
         limit: q.limit ?? 250,
@@ -82,6 +84,8 @@ export function createDailyLedgerRouter(service: DailyLedgerService) {
         tripNo: z.string().nullable().optional(),
         vehicleLabel: z.string().nullable().optional(),
         driverLabel: z.string().nullable().optional(),
+        driverId: uuid.nullable().optional(),
+        vehicleId: uuid.nullable().optional(),
         rowNo: z.coerce.number().int().min(1),
         receiptNo: z.string().nullable().optional(),
         destination: z.string().optional(),
@@ -139,6 +143,41 @@ export function createDailyLedgerRouter(service: DailyLedgerService) {
         allowedBranchIds,
       );
       res.json({ success: true, data: { ok } });
+    },
+  );
+
+  router.post(
+    '/rows/post-shipments',
+    requirePermissions(['shipments.write']),
+    async (req, res) => {
+      const userContext = (req as any).requestUserContext as any;
+      const allowedBranchIds: string[] = Array.isArray(userContext?.allowedBranchIds) ? userContext.allowedBranchIds : [];
+      const roleCode = String(userContext?.roleCode ?? '').toLowerCase();
+      const userType = String(userContext?.userType ?? '').toLowerCase();
+      const lockedBranchId =
+        (typeof userContext?.activeBranchId === 'string' ? userContext.activeBranchId : undefined) ??
+        (typeof userContext?.scope?.branchId === 'string' ? userContext.scope.branchId : undefined) ??
+        allowedBranchIds[0] ??
+        null;
+      const scope = parseDataScope(req);
+      const bodySchema = z.object({
+        branchId: uuid,
+        ledgerDate: z.string().min(1),
+        lineLabel: z.string().min(1),
+        rowIds: z.array(uuid).optional(),
+      });
+      const input = bodySchema.parse(req.body);
+      if (allowedBranchIds.length && !allowedBranchIds.includes(input.branchId) && roleCode !== 'admin' && userType !== 'admin') {
+        res.status(403).json({ success: false, error: 'Requested branch scope is not allowed for this user.' });
+        return;
+      }
+      if (roleCode === 'data_entry' && lockedBranchId && input.branchId !== lockedBranchId) {
+        res.status(403).json({ success: false, error: 'لا يمكن لمدخل البيانات الحفظ على فرع مختلف عن الفرع التابع له.' });
+        return;
+      }
+
+      const result = await service.postPendingShipments(scope, input, allowedBranchIds);
+      res.json({ success: true, data: result });
     },
   );
 

@@ -436,16 +436,13 @@ export default function AgentCodStatement() {
               <span className="font-semibold text-blue-800">{s.currencyCode}</span>
               <span className="text-gray-700">الشحنات: <b>{s.shipmentCount}</b></span>
               <span className="text-gray-700">أجور الشحن: <b>{fmt(s.totalShippingFees)}</b></span>
-              <span className="text-gray-700">تحصيل المرسل: <b>{fmt(s.totalSenderCollections)}</b></span>
-              <span className="text-gray-700">عمولة الوكيل: <b>{fmt(s.totalAgentCommission)}</b></span>
-              <span className="text-amber-700">مدين للشركة: <b>{fmt(s.totalAgentOwesCompany)}</b></span>
-              <span className="text-emerald-700">دائن على الشركة: <b>{fmt(s.totalCompanyOwesAgent)}</b></span>
-              <span className="text-blue-800 font-semibold">إجمالي المطلوب: <b>{fmt(s.totalDueOnDelivery)}</b></span>
-              <span className="text-green-700">المقبوض: <b>{fmt(s.totalCollected)}</b></span>
-              <span className="text-red-700">المتبقي: <b>{fmt(s.totalRemainingToCollect)}</b></span>
-              {s.totalSenderCollections > 0 && (
-                <span className="text-amber-700">متبقي للمرسل: <b>{fmt(s.totalRemainingToSenders)}</b></span>
-              )}
+              <span className="text-gray-700">تحصيل: <b>{fmt(s.totalSenderCollections)}</b></span>
+              <span className="text-gray-700">حوالات: <b>{fmt(s.totalHawalaAmount)}</b></span>
+              <span className="text-gray-700">أجور حوالات: <b>{fmt(s.totalTransferServiceFees)}</b></span>
+              <span className="text-gray-700">عمولة الشحن: <b>{fmt(s.totalAgentCommission)}</b></span>
+              <span className="text-amber-800 font-semibold">مطلوب من الوكيل: <b>{fmt(s.totalAgentRemittanceDue ?? s.totalAgentOwesCompany)}</b></span>
+              <span className="text-green-700">سندات قبض (مسدّد): <b>{fmt(s.totalConfirmedReceiptsFromAgent ?? 0)}</b></span>
+              <span className="text-red-700 font-bold">ذمة على الوكيل: <b>{fmt(s.agentBalanceDue ?? 0)}</b></span>
             </div>
           ))}
         </div>
@@ -464,8 +461,8 @@ export default function AgentCodStatement() {
                 ...(isAgentUser ? [] : ['الوكيل']),
                 'الفرع', 'المرسل', 'المستلم', 'الوجهة',
                 'حالة الشحنة', 'العملة',
-                'أجور الشحن', 'تحصيل لصالح المرسل', 'مستحقات إضافية',
-                'دفع مسبق', 'نوع دفع الأجور', 'عمولة الوكيل', 'مدين للشركة', 'دائن على الشركة', 'أجرة الحوالة (ربح الشركة)',
+                'أجور الشحن', 'تحصيل', 'حوالة', 'أجور حوالة', 'مستحقات إضافية',
+                'دفع مسبق', 'نوع دفع الأجور', 'عمولة الشحن', 'مطلوب من الوكيل', 'عمولة مسبق (للشركة)',
                 'إجمالي المطلوب', 'المقبوض فعلياً', 'المتبقي للتحصيل',
                 'المسدد للمرسل', 'المتبقي للمرسل',
                 'صندوق التحصيل', 'آخر سند قبض', 'ملاحظات',
@@ -510,7 +507,12 @@ export default function AgentCodStatement() {
                   <td className="px-2 py-1 text-left font-mono text-indigo-700 font-semibold">
                     {row.senderCollectionAmount > 0 ? fmt(row.senderCollectionAmount) : '—'}
                   </td>
-                  {/* Loading/extra dues */}
+                  <td className="px-2 py-1 text-left font-mono">
+                    {row.hawalaAmount > 0 ? fmt(row.hawalaAmount) : '—'}
+                  </td>
+                  <td className="px-2 py-1 text-left font-mono">
+                    {row.transferServiceFee > 0 ? fmt(row.transferServiceFee, row.transferServiceFeeCurrency) : '—'}
+                  </td>
                   <td className="px-2 py-1 text-left font-mono">
                     {row.loadingDuesAmount > 0 ? fmt(row.loadingDuesAmount) : '—'}
                   </td>
@@ -525,15 +527,11 @@ export default function AgentCodStatement() {
                     {row.agentCommissionAmount > 0 ? fmt(row.agentCommissionAmount) : '—'}
                   </td>
                   <td className="px-2 py-1 text-left font-mono text-amber-700 font-semibold">
-                    {row.agentOwesCompany > 0 ? fmt(row.agentOwesCompany) : '—'}
+                    {(row.agentRemittanceDue ?? row.agentOwesCompany) > 0 ? fmt(row.agentRemittanceDue ?? row.agentOwesCompany) : '—'}
                   </td>
                   <td className="px-2 py-1 text-left font-mono text-emerald-700 font-semibold">
                     {row.companyOwesAgent > 0 ? fmt(row.companyOwesAgent) : '—'}
                   </td>
-                  <td className="px-2 py-1 text-left font-mono">
-                    {row.transferServiceFee > 0 ? fmt(row.transferServiceFee, row.transferServiceFeeCurrency) : '—'}
-                  </td>
-                  {/* Total due on delivery — highlighted */}
                   <td className="px-2 py-1 text-left font-mono font-bold text-blue-800">
                     {fmt(row.totalDueOnDelivery)}
                   </td>

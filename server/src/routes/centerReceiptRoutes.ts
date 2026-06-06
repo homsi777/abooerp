@@ -29,6 +29,28 @@ export function createCenterReceiptRouter(service: CenterReceiptService) {
     }),
   );
 
+  router.get(
+    '/provincial-inbound',
+    requirePermissions(['deliveries.read']),
+    asyncHandler(async (req, res) => {
+      const scope = parseDataScope(req);
+      const querySchema = z.object({
+        center: z.string().optional(),
+        dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        receiptStatus: z.enum(['all', 'pending', 'received']).optional(),
+      });
+      const q = querySchema.parse(req.query);
+      const rows = await service.listProvincialInbound(scope, {
+        center: q.center,
+        dateFrom: q.dateFrom,
+        dateTo: q.dateTo,
+        receiptStatus: q.receiptStatus ?? 'all',
+      });
+      res.json({ success: true, data: { rows } });
+    }),
+  );
+
   router.post(
     '/',
     requirePermissions(['deliveries.write']),

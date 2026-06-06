@@ -10,6 +10,7 @@ import { AuditService } from '../services/auditService.js';
 import { requireIdempotencyKey } from '../middleware/idempotency.js';
 import { licenseGuard } from '../middleware/licenseGuard.js';
 import { calculateShipmentFinancialBreakdown } from '../utils/shipmentFinancialBreakdown.js';
+import { computeAgentRemittanceDue } from '../utils/agentShipmentSettlement.js';
 
 const voucherBaseSchema = z.object({
   voucherNo: z.string().min(1),
@@ -100,6 +101,14 @@ const partyLedgerQuerySchema = partyStatementQuerySchema.extend({
   page: z.coerce.number().int().min(1).optional(),
   pageSize: z.coerce.number().int().min(1).max(200).optional(),
 });
+
+const profitLossQuerySchema = z.object({
+  fromAt: z.string().datetime({ offset: true }),
+  toAt: z.string().datetime({ offset: true }),
+  branchId: z.string().uuid().optional(),
+  currencyCode: currencyCodeSchema.optional(),
+});
+
 const partyComparisonQuerySchema = z.object({
   partyType: z.enum(['customer', 'sender_receiver', 'agent']).optional(),
   partyId: z.string().uuid().optional(),
@@ -606,6 +615,33 @@ export function createFinanceRouter(service: FinanceService) {
   );
 
   router.get(
+    '/financial-reports/profit-loss',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'تقرير الأرباح والخسائر غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = profitLossQuerySchema.parse(req.query);
+      const data = await service.getProfitLossReport(parseDataScope(req), {
+        fromAt: query.fromAt,
+        toAt: query.toAt,
+        branchId: query.branchId,
+        currencyCode: query.currencyCode,
+      });
+      auditService.logAsync({
+        req,
+        action: 'PROFIT_LOSS_REPORT_GENERATED',
+        entityType: 'financial_report',
+        metadata: {
+          fromAt: query.fromAt,
+          toAt: query.toAt,
+          branchId: query.branchId,
+          currencyCode: query.currencyCode,
+        },
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
     '/account-statement',
     requireAnyPermissions(['finance.account_statement.view', 'finance.read', 'finance.view']),
     forbidUserTypes(['agent'], 'كشف الحساب التفصيلي غير متاح لمستخدم الوكيل.'),
@@ -940,6 +976,10 @@ export function createFinanceRouter(service: FinanceService) {
           s.description                                    as notes,
           s.financial_status,
           s.payment_status,
+          coalesce(s.freight_charge, 0) as freight_charge,
+          coalesce(s.transfer_fee, 0) as transfer_fee,
+          coalesce(s.hawala_amount, 0) as hawala_amount,
+          coalesce(s.transfer_service_fee, tr.transfer_service_fee, 0) as shipment_transfer_service_fee,
           coalesce(s.agent_commission_percentage_snapshot, 0) as agent_commission_percentage_snapshot,
           coalesce(s.agent_commission_amount_snapshot, 0)     as agent_commission_amount_snapshot,
           coalesce(tr.transfer_service_fee, 0)                as transfer_service_fee,
@@ -969,7 +1009,19 @@ export function createFinanceRouter(service: FinanceService) {
       );
 
       const total = dataResult.rows.length ? Number(dataResult.rows[0].total_count ?? 0) : 0;
-      const rows = dataResult.rows.map(({ total_count, ...r }) => ({
+      const rows = dataResult.rows.map(({ total_count, ...r }) => {
+        const shippingPrice = Number(r.freight_charge ?? 0) + Number(r.transfer_fee ?? 0);
+        const commission = Number(r.agent_commission_amount_snapshot ?? 0);
+        const prepaid = Number(r.prepaid_amount ?? 0);
+        const hawalaAmount = Number(r.hawala_amount ?? 0);
+        const transferServiceFee = Number(r.shipment_transfer_service_fee ?? r.transfer_service_fee ?? 0);
+        const agentRemittanceDue = computeAgentRemittanceDue({
+          transferFee: r.transfer_fee,
+          hawalaAmount,
+          transferServiceFee,
+          agentCommissionAmount: commission,
+        });
+        return {
         shipmentId: r.shipment_id,
         shipmentNo: r.shipment_no,
         shipmentDate: r.shipment_date,
@@ -982,10 +1034,11 @@ export function createFinanceRouter(service: FinanceService) {
         destination: r.destination ?? '—',
         shipmentStatus: r.shipment_status,
         currencyCode: r.currency_code,
-        shippingFeeAmount: Number(r.shipping_fee_amount ?? 0),
+        shippingFeeAmount: shippingPrice > 0 ? shippingPrice : Number(r.shipping_fee_amount ?? 0),
         senderCollectionAmount: Number(r.sender_collection_amount ?? 0),
         loadingDuesAmount: Number(r.loading_dues_amount ?? 0),
-        prepaidAmount: Number(r.prepaid_amount ?? 0),
+        prepaidAmount: prepaid,
+        hawalaAmount,
         totalDueOnDelivery: Number(r.total_due_on_delivery ?? 0),
         collectedAmount: Number(r.collected_amount ?? 0),
         remainingToCollect: Number(r.remaining_to_collect ?? 0),
@@ -996,20 +1049,16 @@ export function createFinanceRouter(service: FinanceService) {
         notes: r.notes ?? '',
         financialStatus: r.financial_status,
         paymentStatus: r.payment_status,
-        freightPaymentType: Number(r.prepaid_amount ?? 0) > 0 ? 'PREPAID' : 'COLLECTION',
+        freightPaymentType: prepaid > 0 ? 'PREPAID' : 'COLLECTION',
         agentCommissionPercentageSnapshot: Number(r.agent_commission_percentage_snapshot ?? 0),
-        agentCommissionAmount: Number(r.agent_commission_amount_snapshot ?? 0),
-        agentOwesCompany:
-          Number(r.prepaid_amount ?? 0) > 0
-            ? 0
-            : Math.max(Number(r.shipping_fee_amount ?? 0) - Number(r.agent_commission_amount_snapshot ?? 0), 0),
-        companyOwesAgent:
-          Number(r.prepaid_amount ?? 0) > 0
-            ? Number(r.agent_commission_amount_snapshot ?? 0)
-            : 0,
-        transferServiceFee: Number(r.transfer_service_fee ?? 0),
+        agentCommissionAmount: commission,
+        agentRemittanceDue,
+        agentOwesCompany: agentRemittanceDue,
+        companyOwesAgent: prepaid > 0 ? commission : 0,
+        transferServiceFee,
         transferServiceFeeCurrency: String(r.transfer_service_fee_currency ?? 'USD'),
-      }));
+      };
+      });
 
       // Summary totals
       const sumResult = await pool.query(
@@ -1079,30 +1128,26 @@ export function createFinanceRouter(service: FinanceService) {
           coalesce(sum(coalesce(s.transfer_fee, 0)), 0)                           as total_remaining_to_senders,
           coalesce(sum(coalesce(s.agent_commission_amount_snapshot, 0)), 0)       as total_agent_commission,
           coalesce(sum(
+            greatest(
+              coalesce(s.transfer_fee, 0)
+              + coalesce(s.hawala_amount, 0)
+              + coalesce(s.transfer_service_fee, 0)
+              - coalesce(s.agent_commission_amount_snapshot, 0),
+              0
+            )
+          ), 0)                                                                  as total_agent_remittance_due,
+          coalesce(sum(
             case
               when coalesce(s.prepaid_amount, 0) > 0 then 0
               else greatest(
-                (
-                  case
-                    when coalesce(s.transfer_fee, 0) <> 0
-                      or coalesce(s.additional_charges, 0) <> 0
-                      or coalesce(s.prepaid_amount, 0) <> 0
-                      or coalesce(s.discount_amount, 0) <> 0
-                    then greatest(
-                      coalesce(s.original_amount, 0)
-                      - coalesce(s.transfer_fee, 0)
-                      - coalesce(s.additional_charges, 0)
-                      + coalesce(s.prepaid_amount, 0)
-                      + coalesce(s.discount_amount, 0),
-                      0
-                    )
-                    else coalesce(s.freight_charge, s.original_amount, 0)
-                  end
-                ) - coalesce(s.agent_commission_amount_snapshot, 0),
+                greatest(coalesce(s.freight_charge, 0) + coalesce(s.transfer_fee, 0), 0)
+                - coalesce(s.agent_commission_amount_snapshot, 0),
                 0
               )
             end
           ), 0)                                                                  as total_agent_owes_company,
+          coalesce(sum(coalesce(s.hawala_amount, 0)), 0)                         as total_hawala_amount,
+          coalesce(sum(coalesce(s.transfer_service_fee, 0)), 0)                   as total_transfer_service_fees,
           coalesce(sum(
             case
               when coalesce(s.prepaid_amount, 0) > 0 then coalesce(s.agent_commission_amount_snapshot, 0)
@@ -1121,7 +1166,35 @@ export function createFinanceRouter(service: FinanceService) {
         values,
       );
 
-      const summary = sumResult.rows.map((r) => ({
+      let totalConfirmedReceiptsFromAgent = 0;
+      if (forcedAgentId || q.agentId) {
+        const receiptAgentId = forcedAgentId ?? q.agentId;
+        const receiptValues: unknown[] = [];
+        const receiptConditions: string[] = [`rv.status = 'confirmed'`];
+        if (scope.companyId) {
+          receiptValues.push(scope.companyId);
+          receiptConditions.push(`rv.company_id = $${receiptValues.length}`);
+        }
+        receiptValues.push(receiptAgentId);
+        receiptConditions.push(`rv.agent_id = $${receiptValues.length}::uuid`);
+        if (q.currencyCode) {
+          receiptValues.push(q.currencyCode.toUpperCase());
+          receiptConditions.push(`upper(rv.original_currency) = $${receiptValues.length}`);
+        }
+        const receiptSumResult = await pool.query(
+          `
+          select coalesce(sum(rv.original_amount), 0)::numeric as total_confirmed_receipts
+          from receipt_vouchers rv
+          where ${receiptConditions.join(' and ')}
+          `,
+          receiptValues,
+        );
+        totalConfirmedReceiptsFromAgent = Number(receiptSumResult.rows[0]?.total_confirmed_receipts ?? 0);
+      }
+
+      const summary = sumResult.rows.map((r) => {
+        const totalAgentRemittanceDue = Number(r.total_agent_remittance_due ?? 0);
+        return {
         currencyCode: r.currency_code,
         totalShippingFees: Number(r.total_shipping_fees),
         totalSenderCollections: Number(r.total_sender_collections),
@@ -1131,10 +1204,16 @@ export function createFinanceRouter(service: FinanceService) {
         totalPaidToSenders: 0,
         totalRemainingToSenders: Number(r.total_remaining_to_senders),
         totalAgentCommission: Number(r.total_agent_commission ?? 0),
-        totalAgentOwesCompany: Number(r.total_agent_owes_company ?? 0),
+        totalAgentRemittanceDue,
+        totalAgentOwesCompany: totalAgentRemittanceDue,
         totalCompanyOwesAgent: Number(r.total_company_owes_agent ?? 0),
+        totalHawalaAmount: Number(r.total_hawala_amount ?? 0),
+        totalTransferServiceFees: Number(r.total_transfer_service_fees ?? 0),
+        totalConfirmedReceiptsFromAgent,
+        agentBalanceDue: Math.max(totalAgentRemittanceDue - totalConfirmedReceiptsFromAgent, 0),
         shipmentCount: Number(r.shipment_count),
-      }));
+      };
+      });
 
       res.json({ success: true, data: { rows, summary, page, pageSize, total } });
     }),
@@ -1420,7 +1499,11 @@ export function createFinanceRouter(service: FinanceService) {
           coalesce(s.agent_commission_amount_snapshot, 0) as commission_amount_snapshot,
           coalesce(s.agent_commission_base_type, 'FREIGHT_CHARGE') as base_type,
           s.status,
-          round((coalesce(s.freight_charge, 0) * coalesce(s.agent_commission_percentage_snapshot, 0)) / 100.0, 4) as expected_commission_amount
+          round(
+            (greatest(coalesce(s.freight_charge, 0) + coalesce(s.transfer_fee, 0), 0)
+              * coalesce(s.agent_commission_percentage_snapshot, 0)) / 100.0,
+            4
+          ) as expected_commission_amount
         from shipments s
         join agents a on a.id = s.agent_id
         where ${conditions.join(' and ')}

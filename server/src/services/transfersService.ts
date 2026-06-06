@@ -284,6 +284,20 @@ export class TransfersService {
     return this.repo.list(filters);
   }
 
+  async getTransferReport(filters: {
+    company_id: string;
+    branch_id?: string;
+    agent_id?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    status?: string;
+    originAgentId?: string;
+    destinationAgentId?: string;
+    destinationCity?: string;
+  }) {
+    return this.repo.getReport(filters);
+  }
+
   async listAgentPortalTransfers(input: {
     companyId: string;
     agentId: string;

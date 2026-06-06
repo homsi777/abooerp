@@ -1,31 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { getBackendIdFromSynthetic, phase15Gateway } from '../lib/api/phase15Gateway';
 import { httpClient } from '../lib/api/httpClient';
+import { centersGateway, type ProvincialInboundRow } from '../lib/api/centersGateway';
+import { downloadCsv } from '../lib/export/csvDownload';
 import { formatCurrency } from '../lib/currency/currency';
-import { normalizeShipmentStatus } from '../lib/shipments/shipmentStatus';
-import type { City, Shipment } from '../types';
-import { SHIPMENT_STATUS_LABELS } from '../types';
+import { normalizeShipmentStatus, shipmentStatusLabelAr } from '../lib/shipments/shipmentStatus';
 import { useToast } from '../components/Toast';
-
-type AgentRecord = {
-  id: string;
-  code: string;
-  name: string;
-  governorate?: string | null;
-  branch_id?: string | null;
-  is_active: boolean;
-};
-
-type CenterReceiptRecord = {
-  id: string;
-  shipment_id: string;
-  branch_id?: string | null;
-  agent_id?: string | null;
-  center_name: string;
-  status: 'received' | 'cancelled';
-  received_at: string;
-  notes?: string | null;
-};
 
 const SYRIAN_GOVERNORATES = [
   'دمشق',
@@ -45,15 +24,6 @@ const SYRIAN_GOVERNORATES = [
   'القامشلي',
 ];
 
-/** شحنات ما زالت ضمن مسار التشغيل (قبل التسليم النهائي / الإغلاق) — تشمل الحالات الكنسية والقديمة. */
-const CENTER_PIPELINE_TERMINAL = new Set([
-  'DELIVERED',
-  'FINANCIALLY_CLOSED',
-  'CANCELLED',
-  'RETURNED',
-  'UNKNOWN',
-]);
-
 function normalizeArabic(value: string) {
   return value
     .trim()
@@ -64,173 +34,213 @@ function normalizeArabic(value: string) {
     .toLowerCase();
 }
 
-function resolveLocationCenter(raw: string | undefined, cities: City[]): string {
-  const trimmed = raw?.trim() ?? '';
-  if (!trimmed) return 'غير محدد';
-  const normalized = normalizeArabic(trimmed);
-  const city = cities.find((item) => normalizeArabic(item.name) === normalized);
-  // أسماء المدن في البذرة تطابق المحافظة التشغيلية — لا نستخدم region (مثل «شمال سوريا») لئلا تختفي الأعداد عن أسماء المحافظات.
-  if (city) return city.name;
-
-  const governorate = SYRIAN_GOVERNORATES.find((item) => {
-    const normalizedGovernorate = normalizeArabic(item);
-    return normalized === normalizedGovernorate || normalized.includes(normalizedGovernorate);
-  });
-
-  return governorate || trimmed || 'غير محدد';
+function matchesCenter(rowCenter: string, selectedCenter: string) {
+  const a = normalizeArabic(rowCenter);
+  const b = normalizeArabic(selectedCenter);
+  return a === b || a.includes(b) || b.includes(a);
 }
 
-function isOpenForCentersPipeline(status: Shipment['status']): boolean {
-  const n = normalizeShipmentStatus(status);
-  return !CENTER_PIPELINE_TERMINAL.has(n);
+function defaultDateFrom() {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  return d.toISOString().split('T')[0];
 }
 
 export default function Centers() {
   const { showToast } = useToast();
-  const [shipments, setShipments] = useState<Shipment[]>([]);
-  const [centerReceipts, setCenterReceipts] = useState<CenterReceiptRecord[]>([]);
-  const [cities, setCities] = useState<City[]>([]);
-  const [agents, setAgents] = useState<AgentRecord[]>([]);
+  const [rows, setRows] = useState<ProvincialInboundRow[]>([]);
   const [selectedCenter, setSelectedCenter] = useState(SYRIAN_GOVERNORATES[0]);
+  const [dateFrom, setDateFrom] = useState(defaultDateFrom);
+  const [dateTo, setDateTo] = useState(new Date().toISOString().split('T')[0]);
+  const [receiptStatus, setReceiptStatus] = useState<'all' | 'pending' | 'received'>('all');
   const [loading, setLoading] = useState(true);
-  const [processingId, setProcessingId] = useState<number | null>(null);
-  const [confirmShipment, setConfirmShipment] = useState<Shipment | null>(null);
+  const [processingId, setProcessingId] = useState<string | null>(null);
+  const [confirmRow, setConfirmRow] = useState<ProvincialInboundRow | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [shipmentRows, receiptRows, cityRows] = await Promise.all([
-        phase15Gateway.shipments.getAll(),
-        httpClient.get<CenterReceiptRecord[]>('/center-receipts'),
-        phase15Gateway.cities.getAll(),
-      ]);
-      setShipments(shipmentRows);
-      setCenterReceipts(receiptRows);
-      setCities(cityRows);
-
-      try {
-        const agentRows = await httpClient.get<AgentRecord[]>('/agents?includeInactive=false');
-        setAgents(agentRows);
-      } catch {
-        setAgents([]);
-      }
+      const data = await centersGateway.listProvincialInbound({
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+        receiptStatus,
+      });
+      setRows(data);
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'تعذر تحميل بيانات المراكز', 'error');
+      showToast(error instanceof Error ? error.message : 'تعذر تحميل شحنات المحافظات', 'error');
     } finally {
       setLoading(false);
     }
-  }, [showToast]);
+  }, [dateFrom, dateTo, receiptStatus, showToast]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
 
-  const receiptByShipmentId = useMemo(() => {
-    const map = new Map<string, CenterReceiptRecord>();
-    centerReceipts.forEach((receipt) => {
-      const previous = map.get(receipt.shipment_id);
-      if (!previous || receipt.received_at > previous.received_at) map.set(receipt.shipment_id, receipt);
-    });
-    return map;
-  }, [centerReceipts]);
-
-  const openShipments = useMemo(
-    () => shipments.filter((shipment) => isOpenForCentersPipeline(shipment.status)),
-    [shipments],
-  );
-
   const centerCards = useMemo(() => {
     const inbound = new Map<string, number>();
-    const outbound = new Map<string, number>();
-    openShipments.forEach((shipment) => {
-      const dest = resolveLocationCenter(shipment.destinationName, cities);
-      inbound.set(dest, (inbound.get(dest) || 0) + 1);
-      const origin = resolveLocationCenter(shipment.originName, cities);
-      if (origin !== 'غير محدد') {
-        outbound.set(origin, (outbound.get(origin) || 0) + 1);
+    const received = new Map<string, number>();
+    rows.forEach((row) => {
+      const name = row.operationalCenter || 'غير محدد';
+      inbound.set(name, (inbound.get(name) || 0) + 1);
+      if (row.centerReceived) {
+        received.set(name, (received.get(name) || 0) + 1);
       }
     });
 
-    const nameSet = new Set<string>([...SYRIAN_GOVERNORATES, ...inbound.keys(), ...outbound.keys()]);
-    const rows = Array.from(nameSet).map((name) => {
-      const inC = inbound.get(name) || 0;
-      const outC = outbound.get(name) || 0;
-      return { name, inbound: inC, outbound: outC, total: inC + outC };
-    });
+    const names = new Set<string>([...SYRIAN_GOVERNORATES, ...inbound.keys()]);
+    return Array.from(names)
+      .map((name) => ({
+        name,
+        inbound: inbound.get(name) || 0,
+        received: received.get(name) || 0,
+      }))
+      .sort((a, b) => b.inbound - a.inbound || a.name.localeCompare(b.name, 'ar'));
+  }, [rows]);
 
-    return rows.sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, 'ar'));
-  }, [cities, openShipments]);
-
-  const selectedShipments = useMemo(
-    () => openShipments.filter((shipment) => resolveLocationCenter(shipment.destinationName, cities) === selectedCenter),
-    [cities, openShipments, selectedCenter],
+  const selectedRows = useMemo(
+    () => rows.filter((row) => matchesCenter(row.operationalCenter, selectedCenter)),
+    [rows, selectedCenter],
   );
 
-  const centerAgents = useMemo(
-    () => agents.filter((agent) => normalizeArabic(agent.governorate || '') === normalizeArabic(selectedCenter)),
-    [agents, selectedCenter],
-  );
-
-  const completeCenterReceive = async (shipment: Shipment) => {
-    setProcessingId(shipment.id);
+  const completeCenterReceive = async (row: ProvincialInboundRow) => {
+    setProcessingId(row.shipmentId);
     try {
-      const shipmentBackendId = getBackendIdFromSynthetic(shipment.id);
-      if (!shipmentBackendId) {
-        throw new Error('تعذر تحديد معرف الشحنة الخلفي. حدث الصفحة وحاول مجدداً.');
-      }
-
-      if (receiptByShipmentId.get(shipmentBackendId)) {
+      if (row.centerReceived) {
         showToast('تم تسجيل استلام هذه الشحنة في المركز مسبقاً.', 'success');
-        setConfirmShipment(null);
+        setConfirmRow(null);
         await loadData();
         return;
       }
 
-      await httpClient.post<CenterReceiptRecord>('/center-receipts', {
-        shipmentId: shipmentBackendId,
-        branchId: shipment.branchId ? getBackendIdFromSynthetic(shipment.branchId) : undefined,
+      await httpClient.post('/center-receipts', {
+        shipmentId: row.shipmentId,
         centerName: selectedCenter,
-        notes: `Center received shipment ${shipment.shipmentNo}`,
+        notes: `استلام مركز ${selectedCenter} — ${row.shipmentNo}`,
       });
 
-      showToast('تم تثبيت استلام الشحنة في المركز. التسليم المالي النهائي يتم من قسم التسليم.', 'success');
-      setConfirmShipment(null);
+      showToast('تم تثبيت استلام الشحنة في المركز.', 'success');
+      setConfirmRow(null);
       await loadData();
     } catch (error) {
-      if (error instanceof Error && error.message.includes('Duplicate')) {
-        showToast('تم تسجيل استلام هذه الشحنة مسبقاً. تم تحديث البيانات.', 'success');
-        await loadData();
-      } else {
-        showToast(error instanceof Error ? error.message : 'تعذر تثبيت استلام المركز', 'error');
-      }
+      showToast(error instanceof Error ? error.message : 'تعذر تثبيت استلام المركز', 'error');
     } finally {
       setProcessingId(null);
     }
   };
 
+  const exportCsv = () => {
+    if (!selectedRows.length) {
+      showToast('لا توجد بيانات للتصدير', 'info');
+      return;
+    }
+    downloadCsv(
+      `provincial-inbound-${selectedCenter}-${dateFrom}_${dateTo}.csv`,
+      [
+        'تاريخ الدفتر',
+        'رقم الوصل',
+        'رقم الشحنة',
+        'الوجهة (دفتر)',
+        'المحافظة',
+        'الوكيل',
+        'نوع الطرد',
+        'العدد',
+        'الوزن',
+        'المرسل',
+        'المستلم',
+        'تحصيل',
+        'دفع مسبق',
+        'حوالة',
+        'أجرة حوالة',
+        'الإجمالي',
+        'الحالة',
+        'استلام المركز',
+      ],
+      selectedRows.map((row) => [
+        row.ledgerDate ?? String(row.shipmentCreatedAt).split('T')[0],
+        row.ledgerReceiptNo ?? row.shipmentNo,
+        row.shipmentNo,
+        row.ledgerDestination ?? '—',
+        row.operationalCenter,
+        row.agentName ?? '—',
+        row.parcelType ?? '—',
+        row.parcelCount ?? '',
+        row.weightKg ?? '',
+        row.senderName ?? '—',
+        row.receiverName ?? '—',
+        row.collectAmount,
+        row.prepaidAmount,
+        row.hawalaAmount,
+        row.transferServiceFee,
+        row.totalAmount,
+        shipmentStatusLabelAr(normalizeShipmentStatus(row.shipmentStatus)),
+        row.centerReceived ? 'مستلم' : 'بانتظار الاستلام',
+      ]),
+    );
+    showToast('تم تنزيل CSV', 'success');
+  };
+
   return (
     <div className="centers-page" dir="rtl">
-      <div className="centers-header">
+      <div className="centers-header no-print">
         <div>
           <p className="centers-eyebrow">المراكز</p>
           <h2>استلام شحنات المحافظات</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            شحنات منشأة من دفتر الإدخال السريع — مرتبطة بالوجهة/الوكيل وتظهر بنفس بيانات الدفتر
+          </p>
         </div>
-        <button className="toolbar-btn" onClick={() => void loadData()} disabled={loading}>
-          تحديث
-        </button>
+        <div className="flex gap-2 flex-wrap">
+          <button className="toolbar-btn" type="button" onClick={() => void loadData()} disabled={loading}>
+            تحديث
+          </button>
+          <button className="toolbar-btn" type="button" onClick={exportCsv} disabled={!selectedRows.length}>
+            تصدير Excel (CSV)
+          </button>
+          <button className="toolbar-btn" type="button" onClick={() => window.print()} disabled={!selectedRows.length}>
+            طباعة
+          </button>
+        </div>
+      </div>
+
+      <div className="card mb-4 p-4 no-print">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
+          <div className="form-group">
+            <label className="form-label">من تاريخ</label>
+            <input className="form-input" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">إلى تاريخ</label>
+            <input className="form-input" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">حالة الاستلام</label>
+            <select className="form-select" value={receiptStatus} onChange={(e) => setReceiptStatus(e.target.value as typeof receiptStatus)}>
+              <option value="all">الكل</option>
+              <option value="pending">بانتظار استلام المركز</option>
+              <option value="received">مستلمة في المركز</option>
+            </select>
+          </div>
+          <div>
+            <button className="toolbar-btn primary" type="button" onClick={() => void loadData()} disabled={loading}>
+              {loading ? 'جارٍ التحميل...' : 'عرض الشحنات'}
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="centers-layout">
-        <aside className="centers-sidebar">
+        <aside className="centers-sidebar no-print">
           {centerCards.map((center) => (
             <button
               key={center.name}
+              type="button"
               className={center.name === selectedCenter ? 'active' : ''}
               onClick={() => setSelectedCenter(center.name)}
             >
               <span>{center.name}</span>
-              <strong title="وارد إلى المحافظة / صادر من المحافظة">
-                {center.inbound}/{center.outbound}
+              <strong title="وارد / مستلم في المركز">
+                {center.inbound}/{center.received}
               </strong>
             </button>
           ))}
@@ -243,86 +253,88 @@ export default function Centers() {
               <strong>{selectedCenter}</strong>
             </div>
             <div>
-              <span>الشحنات المرحلة</span>
-              <strong>{selectedShipments.length}</strong>
+              <span>الشحنات</span>
+              <strong>{selectedRows.length}</strong>
             </div>
             <div>
-              <span>الوكلاء النشطون</span>
-              <strong>{centerAgents.length}</strong>
+              <span>من الدفتر السريع</span>
+              <strong>{selectedRows.filter((r) => r.fromQuickLedger).length}</strong>
             </div>
             <div>
-              <span>الإجمالي المفتوح</span>
+              <span>الإجمالي</span>
               <strong>
                 {formatCurrency(
-                  selectedShipments.reduce((sum, shipment) => sum + Number(shipment.total || 0), 0),
+                  selectedRows.reduce((sum, row) => sum + Number(row.totalAmount || 0), 0),
                   'USD',
                 )}
               </strong>
             </div>
           </section>
 
-          {centerAgents.length > 0 && (
-            <section className="centers-agents">
-              {centerAgents.map((agent) => (
-                <span key={agent.id}>
-                  {agent.code} - {agent.name}
-                </span>
-              ))}
-            </section>
-          )}
-
           <div className="card overflow-auto">
             <table className="data-grid">
               <thead>
                 <tr>
-                  <th>رقم الشحنة</th>
+                  <th>تاريخ</th>
+                  <th>رقم الوصل</th>
+                  <th>الوجهة</th>
+                  <th>الوكيل</th>
+                  <th>نوع الطرد</th>
+                  <th>عدد</th>
+                  <th>وزن</th>
                   <th>المرسل</th>
                   <th>المستلم</th>
-                  <th>الوجهة</th>
+                  <th>تحصيل</th>
+                  <th>مسبق</th>
+                  <th>حوالة</th>
+                  <th>أجرة حوالة</th>
                   <th>الحالة</th>
-                  <th>المبلغ</th>
-                  <th>إجراء المركز</th>
+                  <th className="no-print">استلام</th>
                 </tr>
               </thead>
               <tbody>
                 {loading && (
                   <tr>
-                    <td colSpan={7}>جاري تحميل البيانات...</td>
+                    <td colSpan={15}>جاري تحميل البيانات...</td>
                   </tr>
                 )}
-                {!loading && selectedShipments.length === 0 && (
+                {!loading && selectedRows.length === 0 && (
                   <tr>
-                    <td colSpan={7}>لا توجد شحنات مفتوحة لهذه المحافظة حالياً.</td>
+                    <td colSpan={15}>لا توجد شحنات لهذه المحافظة ضمن الفترة المحددة.</td>
                   </tr>
                 )}
                 {!loading &&
-                  selectedShipments.map((shipment) => {
-                    const shipmentBackendId = getBackendIdFromSynthetic(shipment.id);
-                    const receipt = shipmentBackendId ? receiptByShipmentId.get(shipmentBackendId) : undefined;
-                    const disabled = processingId === shipment.id;
+                  selectedRows.map((row) => {
+                    const disabled = processingId === row.shipmentId;
                     return (
-                      <tr key={shipment.id}>
-                        <td>{shipment.shipmentNo}</td>
-                        <td>{shipment.senderName}</td>
-                        <td>{shipment.receiverName}</td>
-                        <td>{shipment.destinationName}</td>
-                        <td>
-                          <span className="status-badge bg-blue-100">
-                            {SHIPMENT_STATUS_LABELS[shipment.status]}
-                          </span>
-                        </td>
-                        <td className="text-left">{formatCurrency(shipment.total || 0, shipment.currency || 'USD')}</td>
-                        <td>
-                          {!receipt && (
+                      <tr key={row.shipmentId}>
+                        <td>{row.ledgerDate ?? String(row.shipmentCreatedAt).split('T')[0]}</td>
+                        <td>{row.ledgerReceiptNo ?? row.shipmentNo}</td>
+                        <td>{row.ledgerDestination ?? row.operationalCenter}</td>
+                        <td>{row.agentName ?? '—'}</td>
+                        <td>{row.parcelType ?? '—'}</td>
+                        <td>{row.parcelCount ?? '—'}</td>
+                        <td>{row.weightKg ?? '—'}</td>
+                        <td>{row.senderName ?? '—'}</td>
+                        <td>{row.receiverName ?? '—'}</td>
+                        <td>{row.collectAmount.toLocaleString()}</td>
+                        <td>{row.prepaidAmount.toLocaleString()}</td>
+                        <td>{row.hawalaAmount.toLocaleString()}</td>
+                        <td>{row.transferServiceFee.toLocaleString()}</td>
+                        <td>{shipmentStatusLabelAr(normalizeShipmentStatus(row.shipmentStatus))}</td>
+                        <td className="no-print">
+                          {!row.centerReceived ? (
                             <button
+                              type="button"
                               className="toolbar-btn primary"
-                              onClick={() => setConfirmShipment(shipment)}
+                              onClick={() => setConfirmRow(row)}
                               disabled={disabled}
                             >
                               استلام مركز
                             </button>
+                          ) : (
+                            <span className="status-badge bg-green-100">مستلم</span>
                           )}
-                          {receipt && <span className="status-badge bg-green-100">مستلم في المركز</span>}
                         </td>
                       </tr>
                     );
@@ -333,19 +345,28 @@ export default function Centers() {
         </main>
       </div>
 
-      {confirmShipment && (
-        <div className="quick-ledger-confirm">
+      {confirmRow && (
+        <div className="quick-ledger-confirm no-print">
           <div className="quick-ledger-confirm-panel">
-            <h3>تأكيد استلام المركز</h3>
+            <h3>تأكيد استلام المركز — {selectedCenter}</h3>
             <p>
-              هذا الإجراء يثبت وصول الشحنة إلى مركز المحافظة فقط. لا يتم إنشاء سند قبض هنا؛ سند القبض وحركة الصندوق
-              يتمان عند التسليم النهائي للزبون من قسم التسليم.
+              الشحنة {confirmRow.shipmentNo} — {confirmRow.senderName} → {confirmRow.receiverName}
+              <br />
+              تحصيل {confirmRow.collectAmount} | مسبق {confirmRow.prepaidAmount} | حوالة {confirmRow.hawalaAmount}
+            </p>
+            <p className="text-xs text-gray-500">
+              يثبت وصول الشحنة إلى مركز المحافظة فقط. السند المالي يتم لاحقاً من قسم التسليم.
             </p>
             <div>
-              <button className="danger" onClick={() => void completeCenterReceive(confirmShipment)} disabled={processingId !== null}>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => void completeCenterReceive(confirmRow)}
+                disabled={processingId !== null}
+              >
                 تأكيد استلام المركز
               </button>
-              <button onClick={() => setConfirmShipment(null)}>إلغاء</button>
+              <button type="button" onClick={() => setConfirmRow(null)}>إلغاء</button>
             </div>
           </div>
         </div>

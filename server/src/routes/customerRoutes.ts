@@ -8,9 +8,21 @@ import { HttpError } from '../utils/errors.js';
 
 const router = Router();
 
+const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function emptyToUndefined(value: unknown) {
+  if (value === '' || value === null || value === undefined) return undefined;
+  return value;
+}
+
+const optionalUuid = z.preprocess(
+  emptyToUndefined,
+  z.string().uuid({ message: 'معرّف غير صالح' }).optional(),
+);
+
 // ── Validation schemas ────────────────────────────────────────────────────────
 
-const customerCreateSchema = z.object({
+const customerBaseSchema = z.object({
   code: z.string().min(1).optional(),
   name: z.string().min(1, 'اسم العميل مطلوب'),
   phone: z.string().optional(),
@@ -25,12 +37,37 @@ const customerCreateSchema = z.object({
   address: z.string().optional(),
   tax_number: z.string().optional(),
   notes: z.string().optional(),
-  branch_id: z.string().uuid().optional(),
-  agent_id: z.string().uuid().optional(),
+  branch_id: optionalUuid,
+  agent_id: optionalUuid,
   status: z.enum(['active', 'inactive']).default('active'),
 });
 
-const customerUpdateSchema = customerCreateSchema.partial();
+const customerCreateSchema = customerBaseSchema.superRefine((data, ctx) => {
+  if (data.is_account_customer && !String(data.phone ?? '').trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['phone'],
+      message: 'الهاتف مطلوب للعميل الحسابي لربطه بالذمم والكشوفات.',
+    });
+  }
+});
+
+const customerUpdateSchema = customerBaseSchema.partial();
+
+function assertAccountCustomerPhone(isAccountCustomer: boolean, phone?: string | null) {
+  if (isAccountCustomer && !String(phone ?? '').trim()) {
+    throw new HttpError(400, 'الهاتف مطلوب للعميل الحسابي لربطه بالذمم والكشوفات.');
+  }
+}
+
+function parseCustomerBody(body: unknown, mode: 'create' | 'update') {
+  const schema = mode === 'create' ? customerCreateSchema : customerUpdateSchema;
+  const parsed = schema.safeParse(body);
+  if (parsed.success) return parsed.data;
+  const first = parsed.error.issues[0];
+  const field = first?.path?.join('.') || 'body';
+  throw new HttpError(400, first?.message || `بيانات غير صالحة (${field})`);
+}
 
 // ── Helper: resolve company_id for request ────────────────────────────────────
 function getCompanyId(req: any): string | undefined {
@@ -157,6 +194,50 @@ router.get(
   }),
 );
 
+// ── Search customers (for smart picker) ──────────────────────────────────────
+router.get(
+  '/search',
+  requirePermissions(['customers.view']),
+  asyncHandler(async (req, res) => {
+    const scope = parseDataScope(req);
+    const companyId = getCompanyId(req);
+    const userType = getUserType(req);
+    const { q = '' } = req.query as Record<string, string>;
+
+    const conditions: string[] = ['c.status = \'active\''];
+    const values: unknown[] = [];
+
+    if (companyId) {
+      conditions.push(`(c.company_id = $${values.length + 1} or c.company_id is null)`);
+      values.push(companyId);
+    }
+
+    if (userType === 'agent' && scope.agentId) {
+      conditions.push(`c.agent_id = $${values.length + 1}`);
+      values.push(scope.agentId);
+    }
+
+    if (q) {
+      values.push(`%${q}%`);
+      const idx = values.length;
+      conditions.push(`(c.name ilike $${idx} or c.phone ilike $${idx} or c.code ilike $${idx})`);
+    }
+
+    const result = await pool.query(
+      `
+      select id, code, name, phone, city, is_account_customer, customer_type, agent_id
+      from customers c
+      where ${conditions.join(' and ')}
+      order by c.name
+      limit 20
+      `,
+      values,
+    );
+
+    res.json({ success: true, data: result.rows });
+  }),
+);
+
 // ── Get single customer ───────────────────────────────────────────────────────
 router.get(
   '/:id',
@@ -193,32 +274,132 @@ router.get(
   }),
 );
 
+// ── Get customer financial summary ────────────────────────────────────────────
+router.get(
+  '/:id/financial-summary',
+  requirePermissions(['customers.view', 'customers.account.view']),
+  asyncHandler(async (req, res) => {
+    const id = String(req.params.id);
+    if (!uuidRegex.test(id)) throw new HttpError(400, 'معرّف العميل غير صالح');
+
+    const customerResult = await pool.query(
+      `select id, name, is_account_customer, default_currency_code from customers where id = $1`,
+      [id],
+    );
+    if (!customerResult.rows[0]) throw new HttpError(404, 'العميل غير موجود');
+    const customer = customerResult.rows[0] as {
+      id: string;
+      name: string;
+      is_account_customer: boolean;
+      default_currency_code: string;
+    };
+
+    if (!customer.is_account_customer) {
+      res.json({
+        success: true,
+        data: {
+          isAccountCustomer: false,
+          currencyCode: customer.default_currency_code,
+          totalDebit: 0,
+          totalCredit: 0,
+          balance: 0,
+          movementCount: 0,
+          shipmentCount: 0,
+        },
+      });
+      return;
+    }
+
+    const movementResult = await pool.query(
+      `
+      select
+        pfm.original_currency as currency_code,
+        coalesce(sum(case when pfm.direction in ('debit', 'inflow') then coalesce(nullif(pfm.debit_amount, 0), pfm.original_amount) else 0 end), 0)::numeric as total_debit,
+        coalesce(sum(case when pfm.direction in ('credit', 'outflow') then coalesce(nullif(pfm.credit_amount, 0), pfm.original_amount) else 0 end), 0)::numeric as total_credit,
+        count(*)::int as movement_count
+      from party_financial_movements pfm
+      where pfm.party_type = 'customer'
+        and pfm.party_id = $1::uuid
+        and pfm.is_reversal = false
+      group by pfm.original_currency
+      order by movement_count desc
+      limit 1
+      `,
+      [id],
+    );
+
+    const shipmentCountResult = await pool.query<{ count: string }>(
+      `
+      select count(*)::text as count
+      from shipments s
+      left join senders_receivers sr_s on sr_s.id = s.sender_id
+      where s.deleted_at is null
+        and (
+          s.customer_id = $1::uuid
+          or (s.financial_responsibility_type = 'ACCOUNT_CUSTOMER' and s.financial_responsibility_id = $1::uuid)
+          or lower(trim(coalesce(sr_s.full_name, ''))) = lower(trim((select name from customers where id = $1::uuid)))
+        )
+      `,
+      [id],
+    );
+
+    const row = movementResult.rows[0] as {
+      currency_code?: string;
+      total_debit?: string | number;
+      total_credit?: string | number;
+      movement_count?: string | number;
+    } | undefined;
+
+    const totalDebit = Number(row?.total_debit ?? 0);
+    const totalCredit = Number(row?.total_credit ?? 0);
+
+    res.json({
+      success: true,
+      data: {
+        isAccountCustomer: true,
+        currencyCode: row?.currency_code ?? customer.default_currency_code,
+        totalDebit,
+        totalCredit,
+        balance: totalDebit - totalCredit,
+        movementCount: Number(row?.movement_count ?? 0),
+        shipmentCount: Number(shipmentCountResult.rows[0]?.count ?? 0),
+      },
+    });
+  }),
+);
+
 // ── Get customer shipments ─────────────────────────────────────────────────────
 router.get(
   '/:id/shipments',
   requirePermissions(['customers.view', 'shipments.read']),
   asyncHandler(async (req, res) => {
-    const { id } = req.params;
+    const id = String(req.params.id);
+    if (!uuidRegex.test(id)) throw new HttpError(400, 'معرّف العميل غير صالح');
     const { page = '1', limit: limitStr = '20' } = req.query as Record<string, string>;
 
     const offset = (Math.max(1, parseInt(page, 10)) - 1) * parseInt(limitStr, 10);
 
-    // Shipments linked to this customer (via sender/receiver who is the customer, or direct customer_id if present)
     const result = await pool.query(
       `
-      select s.id, s.tracking_number, s.status, s.original_amount, s.currency_code,
-             s.created_at, s.destination_city,
-             sr_s.full_name as sender_name, sr_r.full_name as receiver_name
+      select
+        s.id,
+        s.shipment_no,
+        s.status,
+        s.financial_status,
+        s.original_amount,
+        s.original_currency as currency_code,
+        s.created_at,
+        s.destination_city,
+        sr_s.full_name as sender_name,
+        sr_r.full_name as receiver_name
       from shipments s
       left join senders_receivers sr_s on sr_s.id = s.sender_id
       left join senders_receivers sr_r on sr_r.id = s.receiver_id
       where s.deleted_at is null
         and (
-          exists (
-            select 1 from senders_receivers sr
-            where sr.id in (s.sender_id, s.receiver_id)
-              and sr.phone = (select phone from customers where id = $1 limit 1)
-          )
+          s.customer_id = $1::uuid
+          or (s.financial_responsibility_type = 'ACCOUNT_CUSTOMER' and s.financial_responsibility_id = $1::uuid)
+          or lower(trim(coalesce(sr_s.full_name, ''))) = lower(trim((select name from customers where id = $1::uuid)))
         )
       order by s.created_at desc
       limit $2 offset $3
@@ -235,7 +416,7 @@ router.post(
   '/',
   requirePermissions(['customers.manage']),
   asyncHandler(async (req, res) => {
-    const body = customerCreateSchema.parse(req.body);
+    const body = parseCustomerBody(req.body, 'create');
     const companyId = getCompanyId(req);
     const userId = getUserId(req);
     const scope = parseDataScope(req);
@@ -294,8 +475,9 @@ router.put(
   '/:id',
   requirePermissions(['customers.manage']),
   asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const body = customerUpdateSchema.parse(req.body);
+    const id = String(req.params.id);
+    if (!uuidRegex.test(id)) throw new HttpError(400, 'معرّف العميل غير صالح');
+    const body = parseCustomerBody(req.body, 'update');
     const scope = parseDataScope(req);
     const userType = getUserType(req);
 
@@ -309,6 +491,10 @@ router.put(
     if (userType === 'agent' && scope.agentId && customer.agent_id !== scope.agentId) {
       throw new HttpError(403, 'غير مصرح لك بتعديل هذا العميل');
     }
+
+    const nextIsAccountCustomer = body.is_account_customer ?? Boolean(customer.is_account_customer);
+    const nextPhone = body.phone !== undefined ? body.phone : customer.phone;
+    assertAccountCustomerPhone(nextIsAccountCustomer, nextPhone);
 
     const setClauses: string[] = [];
     const values: unknown[] = [];
@@ -363,50 +549,6 @@ router.patch(
     );
 
     res.json({ success: true, data: result.rows[0] });
-  }),
-);
-
-// ── Search customers (for smart picker) ──────────────────────────────────────
-router.get(
-  '/search',
-  requirePermissions(['customers.view']),
-  asyncHandler(async (req, res) => {
-    const scope = parseDataScope(req);
-    const companyId = getCompanyId(req);
-    const userType = getUserType(req);
-    const { q = '' } = req.query as Record<string, string>;
-
-    const conditions: string[] = ['c.status = \'active\''];
-    const values: unknown[] = [];
-
-    if (companyId) {
-      conditions.push(`(c.company_id = $${values.length + 1} or c.company_id is null)`);
-      values.push(companyId);
-    }
-
-    if (userType === 'agent' && scope.agentId) {
-      conditions.push(`c.agent_id = $${values.length + 1}`);
-      values.push(scope.agentId);
-    }
-
-    if (q) {
-      values.push(`%${q}%`);
-      const idx = values.length;
-      conditions.push(`(c.name ilike $${idx} or c.phone ilike $${idx} or c.code ilike $${idx})`);
-    }
-
-    const result = await pool.query(
-      `
-      select id, code, name, phone, city, is_account_customer, customer_type, agent_id
-      from customers c
-      where ${conditions.join(' and ')}
-      order by c.name
-      limit 20
-      `,
-      values,
-    );
-
-    res.json({ success: true, data: result.rows });
   }),
 );
 

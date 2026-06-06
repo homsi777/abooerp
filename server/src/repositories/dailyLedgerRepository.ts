@@ -11,6 +11,8 @@ export type DailyLedgerSession = {
   trip_no: string | null;
   vehicle_label: string | null;
   driver_label: string | null;
+  driver_id: string | null;
+  vehicle_id: string | null;
   created_by: string | null;
   updated_by: string | null;
   created_at: string;
@@ -54,12 +56,15 @@ export type DailyLedgerRowWithSession = DailyLedgerRow & {
   trip_no: string | null;
   vehicle_label: string | null;
   driver_label: string | null;
+  driver_id: string | null;
+  vehicle_id: string | null;
 };
 
 export interface DailyLedgerRowListFilters {
   branchId?: string;
   ledgerDate?: string;
   lineLabel?: string;
+  driverId?: string;
   includeLoaded?: boolean;
   q?: string;
   limit: number;
@@ -74,6 +79,8 @@ export interface DailyLedgerUpsertInput {
   tripNo?: string | null;
   vehicleLabel?: string | null;
   driverLabel?: string | null;
+  driverId?: string | null;
+  vehicleId?: string | null;
   rowNo: number;
   receiptNo?: string | null;
   destination?: string;
@@ -111,6 +118,10 @@ export class DailyLedgerRepository {
     if (filters.lineLabel) {
       values.push(filters.lineLabel);
       conditions.push(`s.line_label = $${values.length}`);
+    }
+    if (filters.driverId) {
+      values.push(filters.driverId);
+      conditions.push(`s.driver_id = $${values.length}::uuid`);
     }
     if (!filters.includeLoaded) {
       conditions.push('r.loaded_at is null');
@@ -170,16 +181,24 @@ export class DailyLedgerRepository {
         `
         insert into daily_ledger_sessions(
           company_id, branch_id, ledger_date, line_label, origin_label,
-          trip_no, vehicle_label, driver_label,
+          trip_no, vehicle_label, driver_label, driver_id, vehicle_id,
           created_by, updated_by
         )
-        values($1,$2,$3::date,$4,$5,$6,$7,$8,$9,$9)
-        on conflict (company_id, branch_id, ledger_date, line_label) where deleted_at is null
+        values($1,$2,$3::date,$4,$5,$6,$7,$8,$9,$10,$11,$11)
+        on conflict (
+          company_id,
+          branch_id,
+          ledger_date,
+          line_label,
+          (coalesce(driver_id, '00000000-0000-0000-0000-000000000000'::uuid))
+        ) where deleted_at is null
         do update set
           origin_label = excluded.origin_label,
           trip_no = coalesce(excluded.trip_no, daily_ledger_sessions.trip_no),
           vehicle_label = coalesce(excluded.vehicle_label, daily_ledger_sessions.vehicle_label),
           driver_label = coalesce(excluded.driver_label, daily_ledger_sessions.driver_label),
+          driver_id = coalesce(excluded.driver_id, daily_ledger_sessions.driver_id),
+          vehicle_id = coalesce(excluded.vehicle_id, daily_ledger_sessions.vehicle_id),
           updated_by = excluded.updated_by,
           updated_at = now()
         returning *
@@ -193,6 +212,8 @@ export class DailyLedgerRepository {
           input.tripNo ?? null,
           input.vehicleLabel ?? null,
           input.driverLabel ?? null,
+          input.driverId ?? null,
+          input.vehicleId ?? null,
           input.userId ?? scope.userId ?? null,
         ],
       );

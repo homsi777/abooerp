@@ -60,6 +60,7 @@ const NAV_MODULES: NavModule[] = [
       { label: 'كشف حساب تفصيلي', path: '/finance/account-statement', icon: '≣', permission: 'finance.read' },
       { label: 'كشف مبالغ التسليم', path: '/finance/agent-cod-statement', icon: '◈', permission: 'finance.read' },
       { label: 'التقارير المالية', path: '/finance/reports', icon: '📈', permission: 'finance.read' },
+      { label: 'أرباح وخسائر', path: '/finance/reports/profit-loss', icon: '📊', permission: 'finance.read' },
       { label: 'تقارير قبل التسليم', path: '/finance/delivery-reports', icon: '✅', permission: 'finance.read' },
     ],
   },

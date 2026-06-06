@@ -19,6 +19,7 @@ type BackendRefRecord = {
   capacity_kg?: number;
   plate_number?: string;
   license_number?: string;
+  driver_id?: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -124,7 +125,7 @@ type BackendTariffRecord = {
   code: string;
   from_city_id: string;
   to_city_id: string;
-  goods_type_id: string;
+  goods_type_id: string | null;
   price_per_kg: number;
   minimum_charge: number;
   valid_from: string;
@@ -237,6 +238,7 @@ function mapDriver(record: BackendRefRecord): Driver {
 }
 
 function mapVehicle(record: BackendRefRecord): Vehicle {
+  const driverId = record.driver_id ? toSyntheticId(record.driver_id) : undefined;
   const mapped: Vehicle = {
     id: toSyntheticId(record.id),
     plateNumber: record.plate_number ?? '',
@@ -245,6 +247,8 @@ function mapVehicle(record: BackendRefRecord): Vehicle {
     capacity: Number(record.capacity_kg ?? 0),
     isActive: record.status !== 'inactive',
     notes: '',
+    driverId,
+    driverName: driverId ? driverLookup.get(driverId)?.name : undefined,
   };
   vehicleLookup.set(mapped.id, mapped);
   return mapped;
@@ -289,7 +293,7 @@ function mapGoodsType(record: BackendGoodsTypeRecord): GoodsType {
 function mapTariff(record: BackendTariffRecord): Tariff {
   const fromCityId = toSyntheticId(record.from_city_id);
   const toCityId = toSyntheticId(record.to_city_id);
-  const goodsTypeId = toSyntheticId(record.goods_type_id);
+  const goodsTypeId = record.goods_type_id ? toSyntheticId(record.goods_type_id) : undefined;
 
   return {
     id: toSyntheticId(record.id),
@@ -298,7 +302,7 @@ function mapTariff(record: BackendTariffRecord): Tariff {
     toCityId,
     toCityName: cityLookup.get(toCityId)?.name || '',
     goodsTypeId,
-    goodsTypeName: goodsTypeLookup.get(goodsTypeId)?.name || '',
+    goodsTypeName: goodsTypeId ? goodsTypeLookup.get(goodsTypeId)?.name || '' : '',
     pricePerKg: Number(record.price_per_kg),
     minimumCharge: Number(record.minimum_charge),
     validFrom: record.valid_from?.split('T')[0] || record.valid_from,
@@ -532,7 +536,7 @@ export const phase15Gateway = {
       const updated = await httpClient.put<BackendTariffRecord>(`/tariffs/${backendId}`, {
         from_city_id: data.fromCityId ? toBackendId(data.fromCityId) : undefined,
         to_city_id: data.toCityId ? toBackendId(data.toCityId) : undefined,
-        goods_type_id: data.goodsTypeId ? toBackendId(data.goodsTypeId) : undefined,
+        goods_type_id: data.goodsTypeId ? toBackendId(data.goodsTypeId) : data.goodsTypeId === undefined ? undefined : null,
         price_per_kg: data.pricePerKg,
         minimum_charge: data.minimumCharge,
         valid_from: data.validFrom,
@@ -653,6 +657,7 @@ export const phase15Gateway = {
   },
   vehicles: {
     getAll: async (): Promise<Vehicle[]> => {
+      await phase15Gateway.drivers.getAll().catch(() => []);
       const rows = await httpClient.get<BackendRefRecord[]>('/vehicles');
       return rows.map(mapVehicle);
     },
@@ -662,6 +667,7 @@ export const phase15Gateway = {
         plate_number: data.plateNumber || '',
         model: data.model || '',
         capacity_kg: data.capacity || 0,
+        driver_id: data.driverId ? toBackendId(data.driverId) ?? null : null,
         status: data.isActive === false ? 'inactive' : 'active',
       });
       return mapVehicle(created);
@@ -673,6 +679,7 @@ export const phase15Gateway = {
         plate_number: data.plateNumber,
         model: data.model,
         capacity_kg: data.capacity,
+        driver_id: data.driverId ? toBackendId(data.driverId) ?? null : null,
         status: data.isActive === false ? 'inactive' : 'active',
       });
       return mapVehicle(updated);

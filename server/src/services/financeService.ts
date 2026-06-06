@@ -3,6 +3,7 @@ import type { DataScope } from '../utils/scope.js';
 import { computeBaseAmountUsd } from '../utils/money.js';
 import { env } from '../config/env.js';
 import { ExchangeRateRepository } from '../repositories/exchangeRateRepository.js';
+import { ProfitLossReportService, type ProfitLossReportFilters } from './profitLossReportService.js';
 import type {
   CashboxInput,
   CashboxListFilters,
@@ -57,6 +58,7 @@ interface DashboardCacheResetAuditEntry {
 
 export class FinanceService {
   private readonly dashboardPackageCache = new Map<string, DashboardCacheEntry>();
+  private readonly profitLossReportService = new ProfitLossReportService();
 
   private readonly dashboardPackageInFlight = new Map<string, Promise<any>>();
 
@@ -508,6 +510,13 @@ export class FinanceService {
 
   getDetailedAccountStatement(scope?: DataScope, filters?: AccountStatementFilters) {
     return this.repository.getDetailedAccountStatement(scope, filters);
+  }
+
+  getProfitLossReport(scope?: DataScope, filters?: ProfitLossReportFilters) {
+    if (!filters?.fromAt || !filters?.toAt) {
+      throw new HttpError(400, 'fromAt and toAt are required for profit and loss report.');
+    }
+    return this.profitLossReportService.buildReport(scope, filters);
   }
 
   async getPartyStatementPackage(

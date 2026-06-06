@@ -26,6 +26,8 @@ import FinanceVouchers from './pages/finance/Vouchers';
 import FinanceRecords from './pages/finance/Records';
 import DailyJournal from './pages/finance/DailyJournal';
 import FinanceReports from './pages/finance/Reports';
+import FinanceReportsShell from './pages/finance/reports/FinanceReportsShell';
+import ProfitLossReport from './pages/finance/reports/ProfitLossReport';
 import FinanceDeliveryReports from './pages/finance/DeliveryReports';
 import DebitCreditCenter from './pages/finance/DebitCreditCenter';
 import AccountStatement from './pages/finance/AccountStatement';
@@ -38,6 +40,8 @@ import CustomersModule from './pages/customers/CustomersModule';
 import CustomerProfile from './pages/customers/CustomerProfile';
 import AccessDenied from './pages/AccessDenied';
 import Transfers from './pages/Transfers';
+import TransfersShell from './pages/transfers/TransfersShell';
+import TransferReports from './pages/transfers/TransferReports';
 import PermissionsCenter from './pages/PermissionsCenter';
 import AdminEvents from './pages/admin/AdminEvents';
 import AgentPortal from './pages/AgentPortal';
@@ -203,10 +207,13 @@ export default function App() {
                     path="/transfers"
                     element={
                       <RequirePermission permission="transfers.read">
-                        <Transfers />
+                        <TransfersShell />
                       </RequirePermission>
                     }
-                  />
+                  >
+                    <Route index element={<Transfers />} />
+                    <Route path="reports" element={<TransferReports />} />
+                  </Route>
                   <Route
                     path="/permissions"
                     element={
@@ -357,11 +364,14 @@ export default function App() {
                         <Navigate to="/agent-portal" replace />
                       ) : (
                         <RequirePermission permission="finance.read">
-                          <FinanceReports />
+                          <FinanceReportsShell />
                         </RequirePermission>
                       )
                     }
-                  />
+                  >
+                    <Route index element={<FinanceReports />} />
+                    <Route path="profit-loss" element={<ProfitLossReport />} />
+                  </Route>
                   <Route
                     path="/finance/delivery-reports"
                     element={

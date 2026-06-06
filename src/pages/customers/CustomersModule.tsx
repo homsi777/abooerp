@@ -5,8 +5,19 @@ import { useToast } from '../../components/Toast';
 import { EscapeModalScrim } from '../../context/EscapeRegistryContext';
 import { useAuth } from '../../context/AuthProvider';
 import { customersGateway, type CustomerCreateInput, type CustomerRecord } from '../../lib/api/customersGateway';
-import { phase15Gateway } from '../../lib/api/phase15Gateway';
+import { getBackendIdFromSynthetic, phase15Gateway } from '../../lib/api/phase15Gateway';
 import type { Branch } from '../../types';
+
+type BranchOption = { id: string; name: string };
+
+function mapBranchOptions(branches: Branch[]): BranchOption[] {
+  return branches
+    .map((branch) => {
+      const backendId = getBackendIdFromSynthetic(branch.id);
+      return backendId ? { id: backendId, name: branch.name } : null;
+    })
+    .filter((row): row is BranchOption => Boolean(row));
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -51,13 +62,13 @@ const emptyForm = (): FormState => ({
 
 function CustomerForm({
   initial,
-  branches,
+  branchOptions,
   onSave,
   onCancel,
   saving,
 }: {
   initial?: CustomerRecord;
-  branches: Branch[];
+  branchOptions: BranchOption[];
   onSave: (data: CustomerCreateInput) => Promise<void>;
   onCancel: () => void;
   saving: boolean;
@@ -136,8 +147,17 @@ function CustomerForm({
 
         {/* الهاتف */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">الهاتف</label>
-          <input className="form-input w-full" value={f.phone} onChange={(e) => upd('phone', e.target.value)} dir="ltr" placeholder="09XXXXXXXX" />
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            الهاتف{f.is_account_customer ? ' *' : ''}
+          </label>
+          <input
+            className="form-input w-full"
+            value={f.phone}
+            onChange={(e) => upd('phone', e.target.value)}
+            dir="ltr"
+            placeholder="09XXXXXXXX"
+            required={f.is_account_customer}
+          />
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">هاتف إضافي</label>
@@ -165,7 +185,7 @@ function CustomerForm({
           <label className="block text-sm font-medium text-gray-700 mb-1">الفرع</label>
           <select className="form-input w-full" value={f.branch_id} onChange={(e) => upd('branch_id', e.target.value)}>
             <option value="">— لا فرع —</option>
-            {branches.map((b) => (
+            {branchOptions.map((b) => (
               <option key={b.id} value={b.id}>{b.name}</option>
             ))}
           </select>
@@ -189,7 +209,8 @@ function CustomerForm({
             <span className="font-semibold text-amber-800">عميل حسابي (يظهر في الذمم المالية)</span>
           </label>
           <p className="text-xs text-amber-700 mt-1 mr-7">
-            العميل الحسابي يمكن ربطه بمسؤولية مالية للشحنات ويظهر في مركز الدائن والمدين عند اختياره صراحةً.
+            العميل الحسابي يمكن ربطه بمسؤولية مالية للشحنات ويظهر في مركز الدائن والمدين وكشف الحساب عند اختياره في الشحنة.
+            الهاتف مطلوب لتمييزه عن الزبون السريع.
           </p>
         </div>
 
@@ -229,7 +250,11 @@ function CustomerForm({
 
       {/* Divider notice */}
       <div className="text-xs text-gray-500 bg-gray-50 rounded p-2">
-        الزبون السريع يستخدم كمرسل/مستلم فقط. العميل الحسابي يمكن ربطه بالذمم المالية عند الحاجة.
+        <strong>زبون سريع:</strong> يُنشأ تلقائياً من خانة المرسل/المستلم في الشحنة (جدول جهات الاتصال).
+        {' '}
+        <strong>عميل دائم:</strong> يسجّل هنا ويظهر في البحث الذكي.
+        {' '}
+        <strong>عميل حسابي:</strong> عميل دائم + ذمم مالية وكشوفات (بدون عمولة وكيل).
       </div>
 
       <div className="flex gap-3 justify-end pt-2">
@@ -271,6 +296,7 @@ export default function CustomersModule() {
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const branchOptions = useMemo(() => mapBranchOptions(branches), [branches]);
 
   const [showForm, setShowForm] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<CustomerRecord | undefined>();
@@ -457,7 +483,7 @@ export default function CustomersModule() {
             <select className="form-input w-full" value={filters.branch_id}
               onChange={(e) => setFilters((p) => ({ ...p, branch_id: e.target.value }))}>
               <option value="">كل الفروع</option>
-              {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              {branchOptions.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </div>
           <div>
@@ -614,7 +640,7 @@ export default function CustomersModule() {
             <div className="p-5">
               <CustomerForm
                 initial={editingCustomer}
-                branches={branches}
+                branchOptions={branchOptions}
                 onSave={handleSave}
                 onCancel={() => { setShowForm(false); setEditingCustomer(undefined); }}
                 saving={saving}

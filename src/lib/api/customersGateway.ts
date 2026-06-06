@@ -66,6 +66,29 @@ export type CustomerListResponse = {
   limit: number;
 };
 
+export type CustomerFinancialSummary = {
+  isAccountCustomer: boolean;
+  currencyCode: string;
+  totalDebit: number;
+  totalCredit: number;
+  balance: number;
+  movementCount: number;
+  shipmentCount: number;
+};
+
+export type CustomerShipmentRow = {
+  id: string;
+  shipment_no: string;
+  status: string;
+  financial_status: string | null;
+  original_amount: number;
+  currency_code: string;
+  created_at: string;
+  destination_city: string | null;
+  sender_name: string | null;
+  receiver_name: string | null;
+};
+
 export type CustomerFilters = {
   search?: string;
   customer_type?: 'INDIVIDUAL' | 'COMPANY' | '';
@@ -120,6 +143,14 @@ export const customersGateway = {
 
   search: async (q: string): Promise<CustomerRecord[]> => {
     return httpClient.get<CustomerRecord[]>(`/customers/search?q=${encodeURIComponent(q)}`);
+  },
+
+  getFinancialSummary: async (id: string): Promise<CustomerFinancialSummary> => {
+    return httpClient.get<CustomerFinancialSummary>(`/customers/${id}/financial-summary`);
+  },
+
+  getShipments: async (id: string): Promise<CustomerShipmentRow[]> => {
+    return httpClient.get<CustomerShipmentRow[]>(`/customers/${id}/shipments`);
   },
 
   smartSearch: async (query: string): Promise<SmartPartyResult[]> => {

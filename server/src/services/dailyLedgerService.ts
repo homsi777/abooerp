@@ -1,9 +1,13 @@
 import type { DataScope } from '../utils/scope.js';
 import type { DailyLedgerRowListFilters, DailyLedgerUpsertInput } from '../repositories/dailyLedgerRepository.js';
 import { DailyLedgerRepository } from '../repositories/dailyLedgerRepository.js';
+import type { DailyLedgerShipmentPostingService } from './dailyLedgerShipmentPostingService.js';
 
 export class DailyLedgerService {
-  constructor(private repo: DailyLedgerRepository) {}
+  constructor(
+    private repo: DailyLedgerRepository,
+    private shipmentPosting?: DailyLedgerShipmentPostingService,
+  ) {}
 
   listRows(scope: DataScope, filters: DailyLedgerRowListFilters) {
     return this.repo.listRows(scope, filters);
@@ -23,5 +27,16 @@ export class DailyLedgerService {
 
   markLoadedByShipmentIds(input: { manifestId: string; shipmentIds: string[] }) {
     return this.repo.markLoadedByShipmentIds(input);
+  }
+
+  postPendingShipments(
+    scope: DataScope,
+    filters: { branchId: string; ledgerDate: string; lineLabel: string; rowIds?: string[] },
+    allowedBranchIds: string[],
+  ) {
+    if (!this.shipmentPosting) {
+      throw new Error('Daily ledger shipment posting is not configured.');
+    }
+    return this.shipmentPosting.postPendingShipments(scope, filters, allowedBranchIds);
   }
 }

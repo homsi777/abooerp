@@ -1157,6 +1157,27 @@ body {
   width: 165px;
 }
 
+/* نوع الطرود: تفصيل طويل (مثال: 1كيس+لفة اطارات+5كرتونة) — عدد الطرود: رقم قصير فقط */
+.quick-ledger-table th.col-parcel-type,
+.quick-ledger-table td.col-parcel-type,
+.quick-ledger-table td.quick-ledger-parcel-cell {
+  width: 15%;
+  min-width: 150px;
+}
+
+.quick-ledger-table th.col-parcel-count,
+.quick-ledger-table td.col-parcel-count {
+  width: 40px;
+  max-width: 44px;
+  min-width: 36px;
+  text-align: center;
+}
+
+.quick-ledger-table td.col-parcel-count input {
+  text-align: center;
+  padding: 0 2px;
+}
+
 .quick-ledger-table th.notes {
   width: 180px;
 }
@@ -1878,7 +1899,40 @@ body {
   }
 
   .quick-ledger-table {
-    font-size: 10px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    font-size: 9px !important;
+    table-layout: fixed !important;
+  }
+
+  /* طباعة A4 عرضي — نوع الطرود أوسع، عدد الطرود أضيق، أرقام المبالغ/الوزن مضغوطة */
+  .quick-ledger-table th:nth-child(3),
+  .quick-ledger-table td:nth-child(3) {
+    width: auto !important;
+    min-width: 108px !important;
+    max-width: none !important;
+  }
+
+  .quick-ledger-table th:nth-child(4),
+  .quick-ledger-table td:nth-child(4) {
+    width: 26px !important;
+    max-width: 26px !important;
+    text-align: center !important;
+  }
+
+  .quick-ledger-table th:nth-child(5),
+  .quick-ledger-table td:nth-child(5),
+  .quick-ledger-table th:nth-child(n + 8),
+  .quick-ledger-table td:nth-child(n + 8) {
+    width: 36px !important;
+    max-width: 36px !important;
+    text-align: center !important;
+  }
+
+  .quick-ledger-table th:nth-child(n + 8) {
+    font-size: 8px !important;
+    line-height: 1.1 !important;
+    padding: 1px !important;
   }
 
   .quick-ledger-table input,

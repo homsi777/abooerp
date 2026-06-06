@@ -13,6 +13,7 @@ import {
 } from '../domain/shipmentStatus.js';
 import type { ShipmentFinancialInput, ShipmentFinancialPostingService } from './shipmentFinancialPostingService.js';
 import { AgentRepository } from '../repositories/agentRepository.js';
+import { computeAgentCommissionSnapshot } from '../utils/shipmentAgentCommission.js';
 import { TransfersService } from './transfersService.js';
 
 export class ShipmentService {
@@ -72,18 +73,23 @@ export class ShipmentService {
     if (payload.agentId && this.agentRepository && effectiveCompanyId) {
       try {
         const agent = await this.agentRepository.getAgentById(payload.agentId, effectiveCompanyId);
-        const commissionPercentage = Number(agent?.commission_percentage ?? 0);
-        const baseAmount = Number(payload.freightCharge ?? 0);
-        payload.agentCommissionBaseType = 'FREIGHT_CHARGE';
-        payload.agentCommissionBaseAmount = baseAmount;
-        payload.agentCommissionPercentageSnapshot = commissionPercentage;
-        payload.agentCommissionAmountSnapshot = (baseAmount * commissionPercentage) / 100;
+        Object.assign(
+          payload,
+          computeAgentCommissionSnapshot({
+            freightCharge: payload.freightCharge,
+            transferFee: payload.transferFee,
+            commissionPercentage: agent?.commission_percentage ?? 0,
+          }),
+        );
       } catch {
-        const baseAmount = Number(payload.freightCharge ?? 0);
-        payload.agentCommissionBaseType = 'FREIGHT_CHARGE';
-        payload.agentCommissionBaseAmount = baseAmount;
-        payload.agentCommissionPercentageSnapshot = 0;
-        payload.agentCommissionAmountSnapshot = 0;
+        Object.assign(
+          payload,
+          computeAgentCommissionSnapshot({
+            freightCharge: payload.freightCharge,
+            transferFee: payload.transferFee,
+            commissionPercentage: 0,
+          }),
+        );
       }
     }
 
@@ -242,6 +248,7 @@ export class ShipmentService {
     const nextAgentId = payload.agentId ?? (existing as any)?.agent_id ?? undefined;
     const needsCommissionRefresh =
       typeof payload.freightCharge === 'number'
+      || typeof payload.transferFee === 'number'
       || typeof payload.agentId === 'string'
       || (existing as any)?.agent_commission_amount_snapshot == null;
 
@@ -250,26 +257,23 @@ export class ShipmentService {
       if (companyId) {
         try {
           const agent = await this.agentRepository.getAgentById(nextAgentId, companyId);
-          const commissionPercentage = Number(agent?.commission_percentage ?? 0);
-          const baseAmount = Number(
-            payload.freightCharge
-              ?? (existing as any)?.freight_charge
-              ?? 0,
+          Object.assign(
+            payload,
+            computeAgentCommissionSnapshot({
+              freightCharge: payload.freightCharge ?? (existing as any)?.freight_charge,
+              transferFee: payload.transferFee ?? (existing as any)?.transfer_fee,
+              commissionPercentage: agent?.commission_percentage ?? 0,
+            }),
           );
-          payload.agentCommissionBaseType = 'FREIGHT_CHARGE';
-          payload.agentCommissionBaseAmount = baseAmount;
-          payload.agentCommissionPercentageSnapshot = commissionPercentage;
-          payload.agentCommissionAmountSnapshot = (baseAmount * commissionPercentage) / 100;
         } catch {
-          const baseAmount = Number(
-            payload.freightCharge
-              ?? (existing as any)?.freight_charge
-              ?? 0,
+          Object.assign(
+            payload,
+            computeAgentCommissionSnapshot({
+              freightCharge: payload.freightCharge ?? (existing as any)?.freight_charge,
+              transferFee: payload.transferFee ?? (existing as any)?.transfer_fee,
+              commissionPercentage: 0,
+            }),
           );
-          payload.agentCommissionBaseType = 'FREIGHT_CHARGE';
-          payload.agentCommissionBaseAmount = baseAmount;
-          payload.agentCommissionPercentageSnapshot = 0;
-          payload.agentCommissionAmountSnapshot = 0;
         }
       }
     }

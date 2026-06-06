@@ -4,6 +4,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
@@ -103,7 +105,7 @@ private fun CreateShipmentDialog(onDismiss: () -> Unit, onConfirm: (CreateShipme
         onDismissRequest = onDismiss,
         title = { Text("إنشاء شحنة جديدة") },
         text = {
-            Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                 OutlinedTextField(shipmentNo, { shipmentNo = it }, label = { Text("رقم الشحنة") })
                 OutlinedTextField(sender, { sender = it }, label = { Text("اسم المرسل") })
                 OutlinedTextField(senderPhone, { senderPhone = it }, label = { Text("هاتف المرسل") })

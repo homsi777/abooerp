@@ -1780,10 +1780,16 @@ export class FinanceRepository {
     },
   ) {
     const metadata = buildShipmentBreakdownMetadata(input.breakdown);
+    const skipPrepaidShippingFeeOnAgent =
+      input.partyType === 'agent' &&
+      input.breakdown.prepaidAmount > 0 &&
+      input.breakdown.companyShippingFee > 0 &&
+      input.breakdown.prepaidAmount >= input.breakdown.companyShippingFee - 0.0001;
+    const agentShippingFee = skipPrepaidShippingFeeOnAgent ? 0 : input.breakdown.companyShippingFee;
     const components = [
       {
         movementType: 'shipment_shipping_fee' as ShipmentComponentMovementType,
-        amount: input.breakdown.companyShippingFee,
+        amount: agentShippingFee,
         notes: `أجور شحن للشركة — الشحنة رقم ${input.shipmentNo}`,
       },
       {

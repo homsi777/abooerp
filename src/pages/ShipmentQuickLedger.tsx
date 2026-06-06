@@ -7,7 +7,14 @@ import { httpClient } from '../lib/api/httpClient';
 import { useAuth } from '../context/AuthProvider';
 import SmartPartyInput from '../components/SmartPartyInput';
 import AutocompleteInput from '../components/AutocompleteInput';
-import type { Branch, City, Customer, GoodsType, Shipment, Tariff } from '../types';
+import {
+  ledgerRowTotalUsd,
+  mergeLedgerRowWithAutoTariff,
+  parseUsd,
+  parseWeightKg,
+  resolveCityId,
+} from '../lib/shipping/ledgerTariffPricing';
+import type { Branch, City, Customer, Driver, GoodsType, Shipment, Tariff, Vehicle } from '../types';
 
 type LedgerRow = {
   id: number;
@@ -27,13 +34,15 @@ type LedgerRow = {
   prepaidAmount: string;
   receiverCollect: string;
   transferServiceFee: string;
-  fees: string;
-  /** عند true ووجود قيمة في fees لا يُعاد حساب الأجور من التعريف تلقائياً */
-  feesManual?: boolean;
+  /** عند true لا يُستبدل تحصيل $ تلقائياً من تعريف الأسعار */
+  collectManual?: boolean;
   agentId?: number;
   agentName?: string;
   notes: string;
 };
+
+const DEFAULT_LEDGER_ROW_COUNT = 200;
+const LEDGER_ROWS_ADD_INCREMENT = 100;
 
 type RemoteDailyLedgerRow = {
   id: string;
@@ -89,11 +98,27 @@ function createEmptyRow(id: number): LedgerRow {
     prepaidAmount: '',
     receiverCollect: '',
     transferServiceFee: '',
-    fees: '',
-    feesManual: false,
+    collectManual: false,
     agentId: undefined,
     agentName: '',
     notes: '',
+  };
+}
+
+function shipmentAmountsFromLedgerRow(row: LedgerRow) {
+  const collect = parseUsd(row.collectAmount);
+  const prepaid = parseUsd(row.prepaidAmount);
+  const hawalaAmount = parseUsd(row.receiverCollect);
+  const transferServiceFee = parseUsd(row.transferServiceFee);
+  return {
+    /** أجور الشحن للشركة — عند الدفع المسبق فقط */
+    freightCharge: prepaid > 0 ? prepaid : 0,
+    /** تحصيل من المستلم على عهدة الوكيل — عند COD */
+    transferFee: collect > 0 ? collect : 0,
+    prepaidAmount: prepaid,
+    hawalaAmount,
+    transferServiceFee,
+    total: collect + prepaid + hawalaAmount + transferServiceFee,
   };
 }
 
@@ -101,19 +126,12 @@ function normalizeName(value: string) {
   return value.trim().replace(/\s+/g, ' ');
 }
 
-function parseUsd(value: string) {
-  const clean = value.trim().replace(/,/g, '');
-  if (!clean) return 0;
-  const parsed = Number(clean);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 function isRowStarted(row: LedgerRow) {
   return Object.entries(row).some(
     ([key, value]) =>
       key !== 'id' &&
       key !== 'origin' &&
-      key !== 'feesManual' &&
+      key !== 'collectManual' &&
       typeof value !== 'boolean' &&
       typeof value !== 'number' &&
       String(value).trim() !== '',
@@ -132,128 +150,194 @@ function isRowComplete(row: LedgerRow) {
 }
 
 function rowAmountUsd(row: LedgerRow) {
-  return Math.max(parseUsd(row.collectAmount) + parseUsd(row.receiverCollect) + parseUsd(row.fees) + parseUsd(row.transferServiceFee) - parseUsd(row.prepaidAmount), 0);
+  return ledgerRowTotalUsd(row);
 }
 
-function parseWeightKg(value: string) {
-  const clean = value.trim().replace(/,/g, '');
-  if (!clean) return undefined;
-  const parsed = Number(clean);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+function tripFleetPayload(trip: {
+  driver: string;
+  vehicle: string;
+  driverId: number;
+  vehicleId: number;
+}) {
+  return {
+    driverLabel: trip.driver || null,
+    vehicleLabel: trip.vehicle || null,
+    driverId: trip.driverId ? getBackendIdFromSynthetic(trip.driverId) ?? null : null,
+    vehicleId: trip.vehicleId ? getBackendIdFromSynthetic(trip.vehicleId) ?? null : null,
+  };
 }
 
-function resolveCityId(label: string, cities: City[], branches: Branch[]): number | undefined {
-  const n = normalizeName(label);
-  if (!n) return undefined;
-  const direct = cities.find((c) => normalizeName(c.name) === n);
-  if (direct) return direct.id;
-  const br = branches.find((b) => normalizeName(b.name) === n);
-  if (br) {
-    const hint = cities.find(
-      (c) =>
-        normalizeName(br.name).includes(normalizeName(c.name)) ||
-        normalizeName(c.name).includes(normalizeName(br.name)),
-    );
-    return hint?.id;
-  }
-  return undefined;
-}
-
-function pickTariff(
-  tariffs: Tariff[],
-  fromCityId: number,
-  toCityId: number,
-  goodsTypeId: number,
-  asOf: string,
-): Tariff | undefined {
-  const day = (asOf.split('T')[0] ?? asOf).trim();
-  const candidates = tariffs.filter(
-    (t) =>
-      t.fromCityId === fromCityId &&
-      t.toCityId === toCityId &&
-      t.goodsTypeId === goodsTypeId &&
-      (!t.validFrom || t.validFrom <= day) &&
-      (!t.validTo || t.validTo >= day),
+function isRemoteRowPrintable(remote: RemoteDailyLedgerRow) {
+  return Boolean(
+    remote.receipt_no?.trim() ||
+      remote.destination?.trim() ||
+      remote.sender_name?.trim() ||
+      remote.receiver_name?.trim() ||
+      remote.parcel_type?.trim() ||
+      (remote.parcel_count != null && Number(remote.parcel_count) > 0) ||
+      (remote.weight_kg != null && Number(remote.weight_kg) > 0) ||
+      parseUsd(String(remote.collect_amount_usd ?? '')) > 0 ||
+      parseUsd(String(remote.prepaid_amount_usd ?? '')) > 0 ||
+      parseUsd(String(remote.hawala_amount_usd ?? '')) > 0 ||
+      parseUsd(String(remote.transfer_service_fee_usd ?? '')) > 0 ||
+      parseUsd(String(remote.fees_amount_usd ?? '')) > 0,
   );
-  if (!candidates.length) return undefined;
-  return [...candidates].sort((a, b) => (a.validFrom < b.validFrom ? 1 : -1))[0];
 }
 
-function formatUsdAmount(n: number): string {
-  return String(Math.round(n * 100) / 100);
+type QuickLedgerPrintRow = {
+  receiptNo: string;
+  destination: string;
+  parcelType: string;
+  parcelCount: string;
+  weightKg: string;
+  sender: string;
+  receiver: string;
+  collectAmount: string;
+  prepaidAmount: string;
+  hawalaAmount: string;
+  transferServiceFee: string;
+};
+
+function localRowToPrint(row: LedgerRow): QuickLedgerPrintRow {
+  return {
+    receiptNo: row.receiptNo,
+    destination: row.destination,
+    parcelType: row.parcelType,
+    parcelCount: row.parcelCount,
+    weightKg: row.weightKg,
+    sender: row.sender,
+    receiver: row.receiver,
+    collectAmount: row.collectAmount,
+    prepaidAmount: row.prepaidAmount,
+    hawalaAmount: row.receiverCollect,
+    transferServiceFee: row.transferServiceFee,
+  };
 }
 
-/** أجور USD من «تعريف الأسعار»: max(الحد الأدنى × عدد الطرود، السعر للكغ × الوزن الكلي). */
-function computeTariffFeesString(
-  row: LedgerRow,
-  tariffs: Tariff[],
-  cities: City[],
-  branches: Branch[],
-  goodsTypes: GoodsType[],
-  asOf: string,
-): string | null {
-  const origin = normalizeName(row.origin);
-  const dest = normalizeName(row.destination);
-  const gtn = normalizeName(row.parcelType);
-  if (!origin || !dest || !gtn) return null;
-  const fromId = resolveCityId(origin, cities, branches);
-  const toId = resolveCityId(dest, cities, branches);
-  const gt = goodsTypes.find((g) => normalizeName(g.name) === gtn);
-  if (!fromId || !toId || !gt) return null;
-  const t = pickTariff(tariffs, fromId, toId, gt.id, asOf);
-  if (!t) return null;
-  const w = parseWeightKg(row.weightKg);
-  const rawPcs = Number(String(row.parcelCount).trim().replace(/,/g, ''));
-  const pcs = Number.isFinite(rawPcs) && rawPcs > 0 ? Math.floor(rawPcs) : 1;
-  const weightComponent = t.pricePerKg > 0 && w != null ? t.pricePerKg * w : null;
-  const minPart = t.minimumCharge > 0 ? t.minimumCharge * pcs : null;
-  if (weightComponent == null && minPart == null) return null;
-  const amount = Math.max(weightComponent ?? 0, minPart ?? 0);
-  return formatUsdAmount(amount);
+function remoteRowToPrint(row: RemoteDailyLedgerRow): QuickLedgerPrintRow {
+  const collect =
+    parseUsd(String(row.collect_amount_usd ?? '')) + parseUsd(String(row.fees_amount_usd ?? ''));
+  return {
+    receiptNo: row.receipt_no ?? '',
+    destination: row.destination ?? '',
+    parcelType: row.parcel_type ?? '',
+    parcelCount: row.parcel_count == null ? '' : String(row.parcel_count),
+    weightKg: row.weight_kg == null ? '' : String(row.weight_kg),
+    sender: row.sender_name ?? '',
+    receiver: row.receiver_name ?? '',
+    collectAmount: collect > 0 ? String(collect) : String(row.collect_amount_usd ?? ''),
+    prepaidAmount: String(row.prepaid_amount_usd ?? ''),
+    hawalaAmount: String(row.hawala_amount_usd ?? ''),
+    transferServiceFee: String(row.transfer_service_fee_usd ?? ''),
+  };
 }
 
-function goodsTypeItemsForRow(
-  row: LedgerRow,
-  tariffs: Tariff[],
-  cities: City[],
-  branches: Branch[],
-  goodsTypes: GoodsType[],
-  asOf: string,
-): Array<{ id: number; name: string }> {
-  const origin = normalizeName(row.origin);
-  const dest = normalizeName(row.destination);
-  if (!origin || !dest) return goodsTypes.map((g) => ({ id: g.id, name: g.name }));
-  const fromId = resolveCityId(origin, cities, branches);
-  const toId = resolveCityId(dest, cities, branches);
-  if (!fromId || !toId) return goodsTypes.map((g) => ({ id: g.id, name: g.name }));
-  const day = (asOf.split('T')[0] ?? asOf).trim();
-  const goodsTypeIds = new Set(
-    tariffs
-      .filter(
-        (t) =>
-          t.fromCityId === fromId &&
-          t.toCityId === toId &&
-          (!t.validFrom || t.validFrom <= day) &&
-          (!t.validTo || t.validTo >= day),
-      )
-      .map((t) => t.goodsTypeId),
-  );
-  if (!goodsTypeIds.size) return goodsTypes.map((g) => ({ id: g.id, name: g.name }));
-  return goodsTypes.filter((g) => goodsTypeIds.has(g.id)).map((g) => ({ id: g.id, name: g.name }));
+function escapePrintHtml(value: string) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function buildQuickLedgerPrintHtml(
+  rows: QuickLedgerPrintRow[],
+  meta: {
+    title: string;
+    date: string;
+    driverName: string;
+    vehicleLabel: string;
+    lineLabel?: string;
+    tripNo?: string;
+  },
+) {
+  const bodyRows = rows
+    .map(
+      (row) => `<tr>
+<td class="col-receipt">${escapePrintHtml(row.receiptNo)}</td>
+<td class="col-dest">${escapePrintHtml(row.destination)}</td>
+<td class="col-type">${escapePrintHtml(row.parcelType)}</td>
+<td class="col-count">${escapePrintHtml(row.parcelCount)}</td>
+<td class="col-weight">${escapePrintHtml(row.weightKg)}</td>
+<td class="col-party">${escapePrintHtml(row.sender)}</td>
+<td class="col-party">${escapePrintHtml(row.receiver)}</td>
+<td class="col-money">${escapePrintHtml(row.collectAmount)}</td>
+<td class="col-money">${escapePrintHtml(row.prepaidAmount)}</td>
+<td class="col-money">${escapePrintHtml(row.hawalaAmount)}</td>
+<td class="col-money">${escapePrintHtml(row.transferServiceFee)}</td>
+</tr>`,
+    )
+    .join('');
+
+  return `<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapePrintHtml(meta.title)}</title>
+  <style>
+    @page { size: A4 portrait; margin: 12mm 8mm; }
+    html, body { margin: 0; padding: 0; background: white; font-family: Tahoma, Arial, sans-serif; color: #10251f; }
+    .meta { margin-bottom: 10px; font-size: 11px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; }
+    .meta div { border: 1px solid #c5d0dc; padding: 4px 6px; background: #f8fafc; }
+    .meta strong { font-weight: 800; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10px; }
+    th, td { border: 1px solid #7f93a7; padding: 3px 2px; vertical-align: middle; word-break: break-word; }
+    th { background: #dce8e5; font-weight: 800; text-align: center; height: 32px; line-height: 1.25; }
+    td { text-align: center; height: 28px; background: #fff; }
+    .col-receipt { width: 8%; }
+    .col-dest { width: 10%; }
+    .col-type { width: 14%; }
+    .col-count { width: 5%; }
+    .col-weight { width: 6%; }
+    .col-party { width: 13%; text-align: right; }
+    .col-money { width: 6.5%; direction: ltr; font-size: 9px; }
+    th.col-money { font-size: 8px; line-height: 1.15; padding: 2px 1px; }
+  </style>
+</head>
+<body>
+  <div class="meta">
+    <div><strong>التاريخ:</strong> ${escapePrintHtml(meta.date)}</div>
+    <div><strong>السائق:</strong> ${escapePrintHtml(meta.driverName)}</div>
+    <div><strong>المركبة:</strong> ${escapePrintHtml(meta.vehicleLabel)}</div>
+    <div><strong>عدد الأسطر:</strong> ${rows.length}</div>
+    ${meta.lineLabel ? `<div><strong>الخط:</strong> ${escapePrintHtml(meta.lineLabel)}</div>` : ''}
+    ${meta.tripNo ? `<div><strong>رقم الرحلة:</strong> ${escapePrintHtml(meta.tripNo)}</div>` : ''}
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th class="col-receipt">رقم الإيصال</th>
+        <th class="col-dest">الجهة</th>
+        <th class="col-type">نوع الطرود</th>
+        <th class="col-count">عدد الطرود</th>
+        <th class="col-weight">الوزن كغ</th>
+        <th class="col-party">المرسل</th>
+        <th class="col-party">المرسل إليه</th>
+        <th class="col-money">تحصيل $</th>
+        <th class="col-money">دفع مسبق $</th>
+        <th class="col-money">حوالة</th>
+        <th class="col-money">أجرة الحوالة</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${bodyRows}
+    </tbody>
+  </table>
+</body>
+</html>`;
 }
 
 function mergeRowWithAutoTariff(
   row: LedgerRow,
-  tariffs: Tariff[],
-  cities: City[],
-  branches: Branch[],
-  goodsTypes: GoodsType[],
+  tariffList: Tariff[],
+  cityList: City[],
+  branchList: Branch[],
+  goodsTypeList: GoodsType[],
   asOf: string,
 ): LedgerRow {
-  if (row.feesManual && String(row.fees ?? '').trim() !== '') return row;
-  const nf = computeTariffFeesString(row, tariffs, cities, branches, goodsTypes, asOf);
-  if (nf == null) return row;
-  return { ...row, fees: nf, feesManual: false };
+  return mergeLedgerRowWithAutoTariff(row, tariffList, cityList, branchList, goodsTypeList, asOf);
 }
 
 function mergeUniqueKeepOrder(base: string[], extra: string[]) {
@@ -308,13 +392,21 @@ export default function ShipmentQuickLedger() {
   const navigate = useNavigate();
   const { showToast } = useToast();
   const { user, activeBranchId, setActiveBranch } = useAuth();
-  const [rows, setRows] = useState<LedgerRow[]>(() => Array.from({ length: 25 }, (_, index) => createEmptyRow(index + 1)));
+  const [rows, setRows] = useState<LedgerRow[]>(() =>
+    Array.from({ length: DEFAULT_LEDGER_ROW_COUNT }, (_, index) => createEmptyRow(index + 1)),
+  );
   const [branches, setBranches] = useState<Branch[]>([]);
   const [cities, setCities] = useState<City[]>([]);
   const [goodsTypes, setGoodsTypes] = useState<GoodsType[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [activeRowId, setActiveRowId] = useState(1);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printDriverId, setPrintDriverId] = useState(0);
+  const [printDate, setPrintDate] = useState(new Date().toISOString().split('T')[0]);
+  const [printLoading, setPrintLoading] = useState(false);
   const [loadingRefs, setLoadingRefs] = useState(false);
   const [saving, setSaving] = useState(false);
   const [destinationOptions, setDestinationOptions] = useState<string[]>([]);
@@ -332,6 +424,8 @@ export default function ShipmentQuickLedger() {
     date: new Date().toISOString().split('T')[0],
     vehicle: '',
     driver: '',
+    driverId: 0,
+    vehicleId: 0,
   });
   const [searchQuick, setSearchQuick] = useState('');
 
@@ -457,12 +551,12 @@ export default function ShipmentQuickLedger() {
     weightKg: remote.weight_kg == null ? '' : String(remote.weight_kg),
     sender: remote.sender_name ?? '',
     receiver: remote.receiver_name ?? '',
-    collectAmount: String(remote.collect_amount_usd ?? ''),
+    collectAmount: String(parseUsd(String(remote.collect_amount_usd ?? '')) + parseUsd(String(remote.fees_amount_usd ?? '')) || ''),
     prepaidAmount: String(remote.prepaid_amount_usd ?? ''),
     receiverCollect: String(remote.hawala_amount_usd ?? ''),
     transferServiceFee: String(remote.transfer_service_fee_usd ?? ''),
-    fees: String(remote.fees_amount_usd ?? ''),
-    feesManual: String(remote.fees_amount_usd ?? '').trim() !== '',
+    collectManual:
+      parseUsd(String(remote.collect_amount_usd ?? '')) > 0 || parseUsd(String(remote.fees_amount_usd ?? '')) > 0,
     agentId: undefined,
     agentName: '',
     notes: remote.notes ?? '',
@@ -480,12 +574,16 @@ export default function ShipmentQuickLedger() {
       params.set('branchId', branchId);
       params.set('ledgerDate', currentTrip.date);
       params.set('lineLabel', currentTrip.line);
+      if (currentTrip.driverId) {
+        const driverBackendId = getBackendIdFromSynthetic(currentTrip.driverId);
+        if (driverBackendId) params.set('driverId', driverBackendId);
+      }
       params.set('includeLoaded', includeLoaded ? 'true' : 'false');
       params.set('limit', '500');
       params.set('offset', '0');
       const data = await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${params.toString()}`);
       const mapped = data.map(mapRemoteRowToLocal);
-      const maxRowNo = Math.max(25, ...mapped.map((r) => r.id));
+      const maxRowNo = Math.max(DEFAULT_LEDGER_ROW_COUNT, ...mapped.map((r) => r.id));
       const byNo = new Map<number, LedgerRow>(mapped.map((r) => [r.id, r]));
       const origin = resolveTripOrigin(currentTrip.line);
       const nextRows = Array.from({ length: maxRowNo }, (_, idx) => {
@@ -506,24 +604,28 @@ export default function ShipmentQuickLedger() {
     if (!loadingRefs) {
       void loadRemoteRows();
     }
-  }, [activeBranchId, trip.date, trip.line, includeLoaded, loadingRefs]);
+  }, [activeBranchId, trip.date, trip.line, trip.driverId, includeLoaded, loadingRefs]);
 
   useEffect(() => {
     let cancelled = false;
     const loadRefs = async () => {
       setLoadingRefs(true);
       try {
-        const [branchesData, citiesData, goodsTypesData, customersData] = await Promise.all([
+        const [branchesData, citiesData, goodsTypesData, customersData, driversData, vehiclesData] = await Promise.all([
           phase15Gateway.branches.getAll(),
           phase15Gateway.cities.getAll(),
           phase15Gateway.goodsTypes.getAll(),
           phase15Gateway.sendersReceivers.getAll(),
+          phase15Gateway.drivers.getAll().catch(() => [] as Driver[]),
+          phase15Gateway.vehicles.getAll().catch(() => [] as Vehicle[]),
         ]);
         if (cancelled) return;
         setBranches(branchesData);
         setCities(citiesData);
         setGoodsTypes(goodsTypesData);
         setCustomers(customersData);
+        setDrivers(driversData.filter((d) => d.isActive));
+        setVehicles(vehiclesData.filter((v) => v.isActive));
         let tariffsData: Tariff[] = [];
         try {
           tariffsData = await phase15Gateway.tariffs.getAll();
@@ -617,15 +719,27 @@ export default function ShipmentQuickLedger() {
     setRows((prev) =>
       prev.map((row) => {
         if (row.id !== id) return row;
-        if (field === 'fees') {
-          return { ...row, fees: value, feesManual: value.trim() !== '' };
-        }
         if (field === 'parcelType') {
-          return { ...row, parcelType: value };
+          const next = { ...row, parcelType: value, collectManual: false };
+          return mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
+        }
+        if (field === 'collectAmount') {
+          return { ...row, collectAmount: value, collectManual: value.trim() !== '' };
+        }
+        if (field === 'prepaidAmount') {
+          const prepaid = parseUsd(value);
+          let next: LedgerRow = { ...row, prepaidAmount: value };
+          if (prepaid > 0) {
+            next = { ...next, collectAmount: '', collectManual: true };
+          } else {
+            next = { ...next, collectManual: false };
+            next = mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
+          }
+          return next;
         }
         let next: LedgerRow = { ...row, [field]: value };
-        if (field === 'origin' || field === 'parcelCount' || field === 'weightKg') {
-          next = { ...next, feesManual: false };
+        if (field === 'origin' || field === 'destination' || field === 'weightKg') {
+          next = { ...next, collectManual: false };
           next = mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
         }
         return next;
@@ -651,8 +765,7 @@ export default function ShipmentQuickLedger() {
         lineLabel: currentTrip.line,
         originLabel: origin,
         tripNo: currentTrip.tripNo || null,
-        vehicleLabel: currentTrip.vehicle || null,
-        driverLabel: currentTrip.driver || null,
+        ...tripFleetPayload(currentTrip),
         rowNo: row.id,
         receiptNo: row.receiptNo || null,
         destination: row.destination,
@@ -664,7 +777,8 @@ export default function ShipmentQuickLedger() {
         collectAmountUsd: parseUsd(row.collectAmount),
         prepaidAmountUsd: parseUsd(row.prepaidAmount),
         hawalaAmountUsd: parseUsd(row.receiverCollect),
-        feesAmountUsd: parseUsd(row.fees),
+        feesAmountUsd: 0,
+        transferServiceFeeUsd: parseUsd(row.transferServiceFee),
         notes: row.notes || null,
       });
       setRows((prev) =>
@@ -724,7 +838,7 @@ export default function ShipmentQuickLedger() {
           const receiverResult = await resolveCustomer(row.receiver, 'receiver');
           const goodsResult = await resolveGoodsType(row.parcelType);
 
-          const total = rowAmountUsd(row);
+          const amounts = shipmentAmountsFromLedgerRow(row);
           await phase15Gateway.shipments.update(shipmentSyntheticId, {
             shipmentNo: normalizeName(row.receiptNo),
             date: currentTrip.date,
@@ -743,12 +857,13 @@ export default function ShipmentQuickLedger() {
             goodsTypeName: goodsResult.goodsType.name,
             quantity: Number(row.parcelCount) || 1,
             weight: parseWeightKg(row.weightKg),
-            freightCharge: parseUsd(row.fees),
-            transferFee: parseUsd(row.collectAmount),
-            hawalaAmount: parseUsd(row.receiverCollect),
-            prepaidAmount: parseUsd(row.prepaidAmount),
+            freightCharge: amounts.freightCharge,
+            transferFee: amounts.transferFee,
+            hawalaAmount: amounts.hawalaAmount,
+            transferServiceFee: amounts.transferServiceFee,
+            prepaidAmount: amounts.prepaidAmount,
             discount: 0,
-            total,
+            total: amounts.total,
             currency: 'USD',
             notes: [row.notes, currentTrip.tripNo ? `رقم الرحلة: ${currentTrip.tripNo}` : '', currentTrip.vehicle ? `المركبة: ${currentTrip.vehicle}` : '', currentTrip.driver ? `السائق: ${currentTrip.driver}` : '']
               .filter(Boolean)
@@ -786,7 +901,7 @@ export default function ShipmentQuickLedger() {
     setRows((prev) =>
       prev.map((row) => {
         if (row.postedShipmentId) return row;
-        const next = { ...row, origin, feesManual: false };
+        const next = { ...row, origin, collectManual: false };
         return mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
       }),
     );
@@ -828,7 +943,7 @@ export default function ShipmentQuickLedger() {
     const origin = resolveTripOrigin(trip.line);
     setRows((prev) => {
       const start = prev.length + 1;
-      const nextRows = Array.from({ length: 10 }, (_, index) => {
+      const nextRows = Array.from({ length: LEDGER_ROWS_ADD_INCREMENT }, (_, index) => {
         const base = createEmptyRow(start + index);
         const merged = {
           ...base,
@@ -840,14 +955,14 @@ export default function ShipmentQuickLedger() {
     });
   };
 
-  /** إعادة حساب الأجور من التعريف بعد تعديل العدد أو الوزن (لا يُستبدل إن كان المستخدم عدّل الأجور يدوياً). */
-  const recalcTariffFeesForRowId = (rowId: number) => {
+  /** إعادة حساب تحصيل $ من التعريف بعد تعديل الوزن أو الجهة (لا يُستبدل إن كان المستخدم عدّل التحصيل يدوياً). */
+  const recalcTariffCollectForRowId = (rowId: number) => {
     let changed = false;
     setRows((prev) =>
       prev.map((r) => {
         if (r.id !== rowId) return r;
         changed = true;
-        return mergeRowWithAutoTariff({ ...r, feesManual: false }, tariffs, cities, branches, goodsTypes, trip.date);
+        return mergeRowWithAutoTariff({ ...r, collectManual: false }, tariffs, cities, branches, goodsTypes, trip.date);
       }),
     );
     if (changed) queueRowSave(rowId);
@@ -902,7 +1017,7 @@ export default function ShipmentQuickLedger() {
           destination: norm || r.destination,
           agentId,
           agentName,
-          feesManual: false,
+          collectManual: false,
         };
         return mergeRowWithAutoTariff(merged, tariffs, cities, branches, goodsTypes, trip.date);
       }),
@@ -945,87 +1060,108 @@ export default function ShipmentQuickLedger() {
     navigate('/shipments');
   };
 
-  const handlePrint = async () => {
+  const openPrintDialog = () => {
+    setPrintDriverId(trip.driverId || 0);
+    setPrintDate(trip.date);
+    setPrintDialogOpen(true);
+  };
+
+  const handleDriverSelect = (driverId: number) => {
+    const driver = drivers.find((d) => d.id === driverId);
+    const linkedVehicle = driverId ? vehicles.find((v) => v.driverId === driverId) : undefined;
+    setTrip((prev) => ({
+      ...prev,
+      driverId: driverId || 0,
+      driver: driver?.name ?? '',
+      ...(linkedVehicle
+        ? {
+            vehicleId: linkedVehicle.id,
+            vehicle: `${linkedVehicle.plateNumber}${linkedVehicle.model ? ` — ${linkedVehicle.model}` : ''}`,
+          }
+        : { vehicleId: 0, vehicle: '' }),
+    }));
+  };
+
+  const handleVehicleSelect = (vehicleId: number) => {
+    const vehicle = vehicles.find((v) => v.id === vehicleId);
+    const linkedDriver = vehicle?.driverId ? drivers.find((d) => d.id === vehicle.driverId) : undefined;
+    setTrip((prev) => ({
+      ...prev,
+      vehicleId,
+      vehicle: vehicle ? `${vehicle.plateNumber}${vehicle.model ? ` — ${vehicle.model}` : ''}` : '',
+      ...(linkedDriver
+        ? { driverId: linkedDriver.id, driver: linkedDriver.name }
+        : vehicle?.driverId
+          ? { driverId: vehicle.driverId, driver: vehicle.driverName ?? prev.driver }
+          : {}),
+    }));
+  };
+
+  const executeDriverPrint = async () => {
+    const branchId = activeBranchIdRef.current;
+    if (!branchId) {
+      showToast('يرجى اختيار الفرع قبل الطباعة', 'error');
+      return;
+    }
+    if (!printDriverId) {
+      showToast('يرجى اختيار السائق', 'error');
+      return;
+    }
+    if (!printDate) {
+      showToast('يرجى اختيار التاريخ', 'error');
+      return;
+    }
+
+    const driverBackendId = getBackendIdFromSynthetic(printDriverId);
+    if (!driverBackendId) {
+      showToast('تعذر تحديد السائق', 'error');
+      return;
+    }
+
+    const selectedDriver = drivers.find((d) => d.id === printDriverId);
+    const linkedVehicle = vehicles.find((v) => v.driverId === printDriverId);
+    const selectedVehicle = linkedVehicle ?? vehicles.find((v) => v.id === trip.vehicleId);
+
+    setPrintLoading(true);
     try {
-      const escapeHtml = (value: string) =>
-        String(value)
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&#039;');
+      const useCurrentLedger =
+        printDriverId === trip.driverId && printDate === trip.date && Boolean(trip.line);
 
-      const rowsToPrint = visibleRows.filter(isRowStarted);
-      const buildHtml = () => {
-        const bodyRows = rowsToPrint
-          .map(
-            (row) => `<tr>
-<td class="c-no">${escapeHtml(String(row.id))}</td>
-<td class="c-receipt">${escapeHtml(row.receiptNo)}</td>
-<td class="c-dest">${escapeHtml(row.destination)}</td>
-<td class="c-type">${escapeHtml(row.parcelType)}</td>
-<td class="c-pcs">${escapeHtml(row.parcelCount)}</td>
-<td class="c-w">${escapeHtml(row.weightKg)}</td>
-<td class="c-party">${escapeHtml(row.sender)}</td>
-<td class="c-party">${escapeHtml(row.receiver)}</td>
-<td class="c-money">${escapeHtml(row.collectAmount)}</td>
-<td class="c-money">${escapeHtml(row.prepaidAmount)}</td>
-<td class="c-money">${escapeHtml(row.receiverCollect)}</td>
-<td class="c-money">${escapeHtml(row.transferServiceFee)}</td>
-<td class="c-money">${escapeHtml(row.fees)}</td>
-</tr>`,
-          )
-          .join('');
+      let rowsToPrint: QuickLedgerPrintRow[] = [];
 
-        return `<!doctype html>
-<html lang="ar" dir="rtl">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>دفتر الشحن اليومي</title>
-  <style>
-    @page { size: A4 landscape; margin: 10mm; }
-    html, body { margin: 0; padding: 0; background: white; font-family: Tahoma, Arial, sans-serif; }
-    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-    th, td { border: 1px solid #111827; padding: 2px 3px; font-size: 9.5px; line-height: 1.25; vertical-align: top; }
-    th { background: #f1f5f9; font-weight: 800; text-align: center; }
-    td { word-break: break-word; white-space: normal; }
-    .c-no { width: 32px; text-align: center; }
-    .c-receipt { width: 70px; text-align: center; }
-    .c-dest { width: 120px; }
-    .c-type { width: 80px; }
-    .c-pcs { width: 42px; text-align: center; }
-    .c-w { width: 46px; text-align: center; }
-    .c-party { width: 130px; }
-    .c-money { width: 62px; text-align: center; direction: ltr; }
-  </style>
-</head>
-<body>
-  <table>
-    <thead>
-      <tr>
-        <th class="c-no">#</th>
-        <th class="c-receipt">رقم الإيصال</th>
-        <th class="c-dest">الجهة</th>
-        <th class="c-type">نوع الطرود</th>
-        <th class="c-pcs">عدد الطرود</th>
-        <th class="c-w">الوزن كغ</th>
-        <th class="c-party">المرسل</th>
-        <th class="c-party">المرسل إليه</th>
-        <th class="c-money">تحصيل $</th>
-        <th class="c-money">دفع مسبق $</th>
-        <th class="c-money">حوالة</th>
-        <th class="c-money">أجرة الحوالة</th>
-        <th class="c-money">الأجور $</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${bodyRows || ''}
-    </tbody>
-  </table>
-</body>
-</html>`;
-      };
+      if (useCurrentLedger) {
+        rowsToPrint = rows.filter(isRowStarted).map(localRowToPrint);
+      } else {
+        const params = new URLSearchParams();
+        params.set('branchId', branchId);
+        params.set('ledgerDate', printDate);
+        params.set('driverId', driverBackendId);
+        params.set('includeLoaded', includeLoaded ? 'true' : 'false');
+        params.set('limit', '500');
+        params.set('offset', '0');
+        const data = await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${params.toString()}`);
+        rowsToPrint = data.filter(isRemoteRowPrintable).map(remoteRowToPrint);
+      }
+
+      if (!rowsToPrint.length) {
+        showToast('لا توجد أسطر ببيانات لهذا السائق في التاريخ المحدد', 'info');
+        return;
+      }
+
+      const vehicleLabel = selectedVehicle
+        ? `${selectedVehicle.plateNumber}${selectedVehicle.model ? ` — ${selectedVehicle.model}` : ''}`
+        : trip.vehicle || '—';
+
+      const html = buildQuickLedgerPrintHtml(rowsToPrint, {
+        title: `دفتر الشحن — ${selectedDriver?.name ?? ''}`,
+        date: printDate,
+        driverName: selectedDriver?.name ?? '',
+        vehicleLabel,
+        lineLabel: useCurrentLedger ? trip.line : undefined,
+        tripNo: useCurrentLedger ? trip.tripNo : undefined,
+      });
+
+      setPrintDialogOpen(false);
 
       if (window.printer?.getDefault && window.printer?.print) {
         const defaultPrinter = await window.printer.getDefault();
@@ -1035,50 +1171,30 @@ export default function ShipmentQuickLedger() {
             printerTarget: defaultPrinter.printer.name,
             copies: 1,
             payloadType: 'html',
-            content: buildHtml(),
+            content: html,
           });
-          showToast(result.message || 'تم إرسال دفتر الشحن اليومي للطباعة', result.queued ? 'success' : 'info');
+          showToast(result.message || 'تم إرسال دفتر الشحن للطباعة', result.queued ? 'success' : 'info');
           if (result.queued) return;
         }
       }
-      window.print();
+
+      const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=900,height=1100');
+      if (printWindow) {
+        printWindow.document.open();
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.print();
+      } else {
+        showToast('تعذر فتح نافذة الطباعة', 'error');
+      }
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'تعذر تنفيذ الطباعة', 'error');
-      window.print();
+    } finally {
+      setPrintLoading(false);
     }
   };
 
-  const findCustomer = (name: string, list: Customer[]) => {
-    const normalized = normalizeName(name);
-    return list.find((customer) => normalizeName(customer.name) === normalized);
-  };
-
-  const ensureCustomer = async (name: string, type: 'sender' | 'receiver', list: Customer[]) => {
-    const existing = findCustomer(name, list);
-    if (existing) return { customer: existing, list };
-    const created = await phase15Gateway.sendersReceivers.create({
-      name: normalizeName(name),
-      phone: '',
-      customerType: type,
-      address: '',
-      balance: 0,
-      creditLimit: 0,
-      notes: '',
-    });
-    return { customer: created, list: [...list, created] };
-  };
-
-  const ensureGoodsType = async (name: string, list: GoodsType[]) => {
-    const normalized = normalizeName(name);
-    const existing = list.find((item) => normalizeName(item.name) === normalized);
-    if (existing) return { goodsType: existing, list };
-    const created = await phase15Gateway.goodsTypes.create({
-      code: `GT-${Date.now()}`,
-      name: normalized,
-      description: '',
-    });
-    return { goodsType: created, list: [...list, created] };
-  };
 
   const saveRows = async () => {
     const rowsToSave = rows.filter((row) => isRowComplete(row) && !row.postedShipmentId);
@@ -1086,8 +1202,8 @@ export default function ShipmentQuickLedger() {
       showToast('لا توجد أسطر مكتملة جديدة للحفظ', 'info');
       return;
     }
-    if (!branches.length) {
-      showToast('لا يوجد فرع متاح للحفظ', 'error');
+    if (!activeBranchId) {
+      showToast('يرجى اختيار الفرع قبل حفظ الشحنات', 'error');
       return;
     }
     const origin = resolveTripOrigin(trip.line);
@@ -1095,98 +1211,77 @@ export default function ShipmentQuickLedger() {
       showToast('يرجى اختيار الخط / المصدر أولاً', 'error');
       return;
     }
+    if (!trip.driverId) {
+      showToast('يرجى اختيار السائق من المركبات والسائقون', 'error');
+      return;
+    }
 
     setSaving(true);
-    let customerList = customers;
-    let goodsList = goodsTypes;
     try {
       for (const row of rowsToSave) {
-        const branchForRow = branchForOriginRow(origin)!;
-
-        const senderResult = await ensureCustomer(row.sender, 'sender', customerList);
-        customerList = senderResult.list;
-        const receiverResult = await ensureCustomer(row.receiver, 'receiver', customerList);
-        customerList = receiverResult.list;
-        const goodsResult = await ensureGoodsType(row.parcelType, goodsList);
-        goodsList = goodsResult.list;
-
-        const total = rowAmountUsd(row);
-        const payload: Partial<Shipment> = {
-          shipmentNo: normalizeName(row.receiptNo),
-          date: trip.date,
-          branchId: branchForRow.id,
-          branchName: branchForRow.name,
-          agentId: row.agentId,
-          agentName: row.agentName,
-          originName: normalizeName(origin),
-          status: 'confirmed',
-          senderId: senderResult.customer.id,
-          senderName: senderResult.customer.name,
-          receiverId: receiverResult.customer.id,
-          receiverName: receiverResult.customer.name,
-          destinationName: normalizeName(row.destination),
-          goodsTypeId: goodsResult.goodsType.id,
-          goodsTypeName: goodsResult.goodsType.name,
-          quantity: Number(row.parcelCount) || 1,
-          weight: parseWeightKg(row.weightKg),
-          freightCharge: parseUsd(row.fees),
-          transferFee: parseUsd(row.collectAmount),
-          hawalaAmount: parseUsd(row.receiverCollect),
-          transferServiceFee: parseUsd(row.transferServiceFee),
-          discount: 0,
-          total,
-          currency: 'USD',
-          paymentMethod: parseUsd(row.prepaidAmount) > 0 ? 'prepaid' : 'cash',
-          deliveryType: 'branch',
-          notes: [row.notes, trip.tripNo ? `رقم الرحلة: ${trip.tripNo}` : '', trip.vehicle ? `المركبة: ${trip.vehicle}` : '', trip.driver ? `السائق: ${trip.driver}` : '']
-            .filter(Boolean)
-            .join(' | '),
-        };
-
-        if (activeBranchId) {
-          try {
-            const ensured = await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
-              branchId: activeBranchId,
-              ledgerDate: trip.date,
-              lineLabel: trip.line,
-              originLabel: origin,
-              tripNo: trip.tripNo || null,
-              vehicleLabel: trip.vehicle || null,
-              driverLabel: trip.driver || null,
-              rowNo: row.id,
-              receiptNo: row.receiptNo || null,
-              destination: row.destination,
-              parcelType: row.parcelType,
-              parcelCount: Number(row.parcelCount) || null,
-              weightKg: parseWeightKg(row.weightKg) ?? null,
-              senderName: row.sender,
-              receiverName: row.receiver,
-              collectAmountUsd: parseUsd(row.collectAmount),
-              prepaidAmountUsd: parseUsd(row.prepaidAmount),
-              hawalaAmountUsd: parseUsd(row.receiverCollect),
-              feesAmountUsd: parseUsd(row.fees),
-              transferServiceFeeUsd: parseUsd(row.transferServiceFee),
-              notes: row.notes || null,
-            });
-            setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, dbId: ensured.id, updatedAt: ensured.updated_at, postedShipmentId: ensured.posted_shipment_id, loadedAt: ensured.loaded_at } : r)));
-          } catch {}
-        }
-
-        const created = await phase15Gateway.shipments.create(payload);
-        const shipmentUuid = getBackendIdFromSynthetic(created.id);
-        if (row.dbId && shipmentUuid) {
-          await httpClient.post<{ ok: boolean }>(`/daily-ledger/rows/${row.dbId}/post`, { shipmentId: shipmentUuid });
-          setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, postedShipmentId: shipmentUuid } : r)));
-        }
+        await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
+          branchId: activeBranchId,
+          ledgerDate: trip.date,
+          lineLabel: trip.line,
+          originLabel: origin,
+          tripNo: trip.tripNo || null,
+          ...tripFleetPayload(trip),
+          rowNo: row.id,
+          receiptNo: row.receiptNo || null,
+          destination: row.destination,
+          parcelType: row.parcelType,
+          parcelCount: Number(row.parcelCount) || null,
+          weightKg: parseWeightKg(row.weightKg) ?? null,
+          senderName: row.sender,
+          receiverName: row.receiver,
+          collectAmountUsd: parseUsd(row.collectAmount),
+          prepaidAmountUsd: parseUsd(row.prepaidAmount),
+          hawalaAmountUsd: parseUsd(row.receiverCollect),
+          feesAmountUsd: 0,
+          transferServiceFeeUsd: parseUsd(row.transferServiceFee),
+          notes: row.notes || null,
+        });
       }
 
-      setCustomers(customerList);
-      setGoodsTypes(goodsList);
-      showToast(`تم حفظ ${rowsToSave.length} شحنة بنجاح`, 'success');
+      const result = await httpClient.post<{
+        posted: Array<{ rowId: string; rowNo: number; shipmentId: string; shipmentNo: string; agentId: string | null }>;
+        skipped: Array<{ rowId: string; rowNo: number; reason: string }>;
+        errors: Array<{ rowId: string; rowNo: number; message: string }>;
+      }>('/daily-ledger/rows/post-shipments', {
+        branchId: activeBranchId,
+        ledgerDate: trip.date,
+        lineLabel: trip.line,
+      });
+
+      const postedByRowNo = new Map(result.posted.map((item) => [item.rowNo, item]));
+      setRows((prev) =>
+        prev.map((row) => {
+          const posted = postedByRowNo.get(row.id);
+          if (!posted) return row;
+          return {
+            ...row,
+            dbId: posted.rowId,
+            postedShipmentId: posted.shipmentId,
+            agentId: posted.agentId ? syntheticEntityId(posted.agentId) : row.agentId,
+          };
+        }),
+      );
+
+      if (result.posted.length) {
+        showToast(`تم حفظ ${result.posted.length} شحنة وربطها بالوكيل بنجاح`, 'success');
+      }
+      if (result.errors.length) {
+        showToast(
+          result.errors.map((item) => `السطر ${item.rowNo}: ${item.message}`).join(' | '),
+          'error',
+        );
+      } else if (!result.posted.length) {
+        showToast('لا توجد أسطر صالحة للترحيل. تأكد من اكتمال البيانات وربط الوكيل بالوجهة.', 'info');
+      }
+
+      await loadRemoteRows();
     } catch (error) {
-      setCustomers(customerList);
-      setGoodsTypes(goodsList);
-      showToast(error instanceof Error ? error.message : 'تعذر حفظ بعض الشحنات', 'error');
+      showToast(error instanceof Error ? error.message : 'تعذر حفظ الشحنات', 'error');
     } finally {
       setSaving(false);
     }
@@ -1199,7 +1294,7 @@ export default function ShipmentQuickLedger() {
           <div className="quick-ledger-eyebrow">إدخال سريع للشحنات</div>
           <h2>دفتر الشحن اليومي</h2>
           <p className="quick-ledger-hint">
-            اختر <strong>الخط</strong> من الأعلى ثم أدخل بيانات الشحنات في الجدول. عمود <strong>الأجور</strong> يُحسب تلقائياً من <strong>مالية → تعريف الأسعار</strong> عند تطابق المسار ونوع الطرود والتاريخ (يمكنك التعديل يدوياً).
+            اختر <strong>الخط</strong> من الأعلى ثم أدخل بيانات الشحنات في الجدول. عمود <strong>تحصيل $</strong> يُملأ تلقائياً من <strong>مالية → تعريف الأسعار</strong> عند تطابق <strong>المسار + نوع الطرد + الوزن</strong> والتاريخ (يمكنك التعديل يدوياً أو نقل المبلغ إلى <strong>دفع مسبق $</strong>).
           </p>
         </div>
         <div className="quick-ledger-actions">
@@ -1245,7 +1340,7 @@ export default function ShipmentQuickLedger() {
           </div>
           <button type="button" onClick={addRows}>
             <Plus size={16} />
-            إضافة 10 أسطر
+            إضافة 100 سطر
           </button>
           <button type="button" onClick={() => void loadRemoteRows()} disabled={remoteLoading}>
             {remoteLoading ? 'جاري التحديث...' : 'تحديث'}
@@ -1254,7 +1349,7 @@ export default function ShipmentQuickLedger() {
             <input type="checkbox" checked={includeLoaded} onChange={(e) => setIncludeLoaded(e.target.checked)} />
             إظهار المحمّلة
           </label>
-          <button type="button" onClick={() => void handlePrint()}>
+          <button type="button" onClick={openPrintDialog}>
             <Printer size={16} />
             طباعة
           </button>
@@ -1288,11 +1383,25 @@ export default function ShipmentQuickLedger() {
         </label>
         <label>
           <span>المركبة</span>
-          <input value={trip.vehicle} onChange={(e) => setTrip({ ...trip, vehicle: e.target.value })} placeholder="اسم المركبة / اللوحة" />
+          <select value={trip.vehicleId || ''} onChange={(e) => handleVehicleSelect(Number(e.target.value))}>
+            <option value="">اختر المركبة...</option>
+            {vehicles.map((vehicle) => (
+              <option key={vehicle.id} value={vehicle.id}>
+                {vehicle.plateNumber}{vehicle.model ? ` — ${vehicle.model}` : ''}{vehicle.type ? ` (${vehicle.type})` : ''}
+              </option>
+            ))}
+          </select>
         </label>
         <label>
           <span>السائق</span>
-          <input value={trip.driver} onChange={(e) => setTrip({ ...trip, driver: e.target.value })} placeholder="اسم السائق" />
+          <select value={trip.driverId || ''} onChange={(e) => handleDriverSelect(Number(e.target.value))}>
+            <option value="">اختر السائق...</option>
+            {drivers.map((driver) => (
+              <option key={driver.id} value={driver.id}>
+                {driver.code ? `${driver.code} — ` : ''}{driver.name}
+              </option>
+            ))}
+          </select>
         </label>
       </section>
 
@@ -1310,16 +1419,15 @@ export default function ShipmentQuickLedger() {
             <tr>
               <th>رقم الإيصال</th>
               <th>الجهة</th>
-              <th>نوع الطرود</th>
-              <th>عدد الطرود</th>
+              <th className="col-parcel-type">نوع الطرود</th>
+              <th className="col-parcel-count">عدد الطرود</th>
               <th>الوزن كغ</th>
               <th className="wide">المرسل</th>
               <th className="wide">المرسل إليه</th>
-              <th>تحصيل $</th>
+              <th title="يُملأ تلقائياً من تعريف الأسعار (مسار + نوع الطرد + وزن)؛ يمكنك التعديل يدوياً">تحصيل $</th>
               <th>دفع مسبق $</th>
               <th>حوالة</th>
               <th>أجرة الحوالة</th>
-              <th title="يُملأ تلقائياً من تعريف الأسعار عند تطابق المسار ونوع الطرود والتاريخ؛ يمكنك التعديل يدوياً">الأجور $</th>
             </tr>
           </thead>
           <tbody>
@@ -1327,7 +1435,7 @@ export default function ShipmentQuickLedger() {
               const started = isRowStarted(row);
               const locked = Boolean(row.loadedAt);
               const posted = Boolean(row.postedShipmentId);
-              const goodsTypeItems = goodsTypeItemsForRow(row, tariffs, cities, branches, goodsTypes, trip.date);
+              const goodsTypeItems = goodsTypes.map((g) => ({ id: g.id, name: g.name }));
               return (
                 <tr key={row.id} className={locked ? 'saved' : posted ? 'started' : activeRowId === row.id ? 'active' : started ? 'started' : ''}>
                   <td><input data-ledger-field="true" value={row.receiptNo} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onChange={(e) => updateRow(row.id, 'receiptNo', e.target.value)} /></td>
@@ -1344,7 +1452,7 @@ export default function ShipmentQuickLedger() {
                       onChange={(e) => updateRow(row.id, 'destination', e.target.value)}
                     />
                   </td>
-                  <td className="quick-ledger-parcel-cell">
+                  <td className="quick-ledger-parcel-cell col-parcel-type">
                     <AutocompleteInput
                       value={row.parcelType}
                       onChange={(v) => updateRow(row.id, 'parcelType', v)}
@@ -1352,10 +1460,18 @@ export default function ShipmentQuickLedger() {
                         setRows((prev) =>
                           prev.map((r) =>
                             r.id === row.id
-                              ? mergeRowWithAutoTariff({ ...r, parcelType: item.name, feesManual: false }, tariffs, cities, branches, goodsTypes, trip.date)
+                              ? mergeRowWithAutoTariff(
+                                  { ...r, parcelType: item.name, collectManual: false },
+                                  tariffs,
+                                  cities,
+                                  branches,
+                                  goodsTypes,
+                                  trip.date,
+                                )
                               : r,
                           ),
                         );
+                        queueRowSave(row.id);
                       }}
                       onAddNew={(name) => {
                         void (async () => {
@@ -1372,7 +1488,7 @@ export default function ShipmentQuickLedger() {
                                 prevRows.map((rr) =>
                                   rr.id === row.id
                                     ? mergeRowWithAutoTariff(
-                                        { ...rr, parcelType: normalized, feesManual: false },
+                                        { ...rr, parcelType: normalized, collectManual: false },
                                         tariffs,
                                         cities,
                                         branches,
@@ -1384,6 +1500,7 @@ export default function ShipmentQuickLedger() {
                               );
                               return nextGoods;
                             });
+                            queueRowSave(row.id);
                           } catch (error) {
                             showToast(error instanceof Error ? error.message : 'تعذر إضافة نوع الطرد', 'error');
                           }
@@ -1403,7 +1520,7 @@ export default function ShipmentQuickLedger() {
                             const matched = goodsTypes.find((x) => normalizeName(x.name) === normalizeName(r.parcelType));
                             if (!matched) return r;
                             return mergeRowWithAutoTariff(
-                              { ...r, parcelType: matched.name, feesManual: false },
+                              { ...r, parcelType: matched.name, collectManual: false },
                               tariffs,
                               cities,
                               branches,
@@ -1415,7 +1532,7 @@ export default function ShipmentQuickLedger() {
                       }}
                     />
                   </td>
-                  <td>
+                  <td className="col-parcel-count">
                     <input
                       id={`ledger-pc-${row.id}`}
                       data-ledger-field="true"
@@ -1424,7 +1541,6 @@ export default function ShipmentQuickLedger() {
                       disabled={locked}
                       onFocus={() => setActiveRowId(row.id)}
                       onKeyDown={focusNext}
-                      onBlur={() => recalcTariffFeesForRowId(row.id)}
                       onChange={(e) => updateRow(row.id, 'parcelCount', e.target.value)}
                     />
                   </td>
@@ -1436,7 +1552,7 @@ export default function ShipmentQuickLedger() {
                       disabled={locked}
                       onFocus={() => setActiveRowId(row.id)}
                       onKeyDown={focusNext}
-                      onBlur={() => recalcTariffFeesForRowId(row.id)}
+                      onBlur={() => recalcTariffCollectForRowId(row.id)}
                       onChange={(e) => updateRow(row.id, 'weightKg', e.target.value)}
                     />
                   </td>
@@ -1445,6 +1561,9 @@ export default function ShipmentQuickLedger() {
                       data-ledger-field="true"
                       value={row.sender}
                       onChange={(v) => updateRow(row.id, 'sender', v)}
+                      onSelect={(party) => {
+                        updateRow(row.id, 'sender', party.name);
+                      }}
                       onAddNew={(name) => updateRow(row.id, 'sender', name)}
                       placeholder="المرسل"
                       disabled={locked}
@@ -1468,7 +1587,6 @@ export default function ShipmentQuickLedger() {
                   <td><input data-ledger-field="true" inputMode="decimal" value={row.prepaidAmount} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onChange={(e) => updateRow(row.id, 'prepaidAmount', e.target.value)} /></td>
                   <td><input data-ledger-field="true" inputMode="decimal" value={row.receiverCollect} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onChange={(e) => updateRow(row.id, 'receiverCollect', e.target.value)} /></td>
                   <td><input data-ledger-field="true" inputMode="decimal" value={row.transferServiceFee} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onChange={(e) => updateRow(row.id, 'transferServiceFee', e.target.value)} /></td>
-                  <td><input data-ledger-field="true" inputMode="decimal" value={row.fees} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onChange={(e) => updateRow(row.id, 'fees', e.target.value)} /></td>
                 </tr>
               );
             })}
@@ -1486,6 +1604,49 @@ export default function ShipmentQuickLedger() {
         <span>التاريخ</span>
         <span>التوقيع</span>
       </section>
+
+      {printDialogOpen && (
+        <div className="quick-ledger-confirm" role="dialog" aria-modal="true">
+          <div className="quick-ledger-confirm-panel">
+            <h3>طباعة دفتر الشحن حسب السائق</h3>
+            <p>اختر السائق والتاريخ لطباعة كل طلبات الشحن المرتبطة به من قسم المركبات والسائقون.</p>
+            <div className="space-y-3 mb-3">
+              <label className="form-group block">
+                <span className="form-label">السائق</span>
+                <select
+                  className="form-select w-full"
+                  value={printDriverId || ''}
+                  onChange={(e) => setPrintDriverId(Number(e.target.value))}
+                >
+                  <option value="">اختر السائق...</option>
+                  {drivers.map((driver) => (
+                    <option key={driver.id} value={driver.id}>
+                      {driver.code ? `${driver.code} — ` : ''}{driver.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="form-group block">
+                <span className="form-label">التاريخ</span>
+                <input
+                  className="form-input w-full"
+                  type="date"
+                  value={printDate}
+                  onChange={(e) => setPrintDate(e.target.value)}
+                />
+              </label>
+            </div>
+            <div>
+              <button type="button" onClick={() => setPrintDialogOpen(false)} disabled={printLoading}>
+                إلغاء
+              </button>
+              <button type="button" className="primary" onClick={() => void executeDriverPrint()} disabled={printLoading}>
+                {printLoading ? 'جاري التحضير...' : 'طباعة'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {closeConfirmOpen && (
         <div className="quick-ledger-confirm" role="dialog" aria-modal="true">

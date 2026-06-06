@@ -399,6 +399,181 @@ export class TransfersRepository {
     return rows[0] ?? null;
   }
 
+  private buildReportConditions(filters: {
+    company_id: string;
+    branch_id?: string;
+    agent_id?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    status?: string;
+    originAgentId?: string;
+    destinationAgentId?: string;
+    destinationCity?: string;
+  }) {
+    const values: unknown[] = [filters.company_id];
+    const conditions: string[] = ['t.company_id = $1::uuid'];
+
+    if (filters.branch_id) {
+      values.push(filters.branch_id);
+      conditions.push(`t.branch_id = $${values.length}::uuid`);
+    }
+    if (filters.agent_id) {
+      values.push(filters.agent_id);
+      conditions.push(`(
+        t.agent_id = $${values.length}::uuid
+        or t.origin_agent_id = $${values.length}::uuid
+        or t.destination_agent_id = $${values.length}::uuid
+      )`);
+    }
+    if (filters.status) {
+      values.push(String(filters.status).toUpperCase());
+      conditions.push(`upper(t.status) = $${values.length}`);
+    }
+    if (filters.originAgentId) {
+      values.push(filters.originAgentId);
+      conditions.push(`t.origin_agent_id = $${values.length}::uuid`);
+    }
+    if (filters.destinationAgentId) {
+      values.push(filters.destinationAgentId);
+      conditions.push(`t.destination_agent_id = $${values.length}::uuid`);
+    }
+    if (filters.destinationCity) {
+      values.push(`%${filters.destinationCity}%`);
+      conditions.push(`coalesce(t.destination_city, '') ilike $${values.length}`);
+    }
+    if (filters.dateFrom) {
+      values.push(filters.dateFrom);
+      conditions.push(`coalesce(t.transfer_date, t.created_at) >= $${values.length}::timestamptz`);
+    }
+    if (filters.dateTo) {
+      values.push(filters.dateTo);
+      conditions.push(`coalesce(t.transfer_date, t.created_at) <= $${values.length}::timestamptz`);
+    }
+
+    return { values, conditions };
+  }
+
+  async getReport(filters: {
+    company_id: string;
+    branch_id?: string;
+    agent_id?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    status?: string;
+    originAgentId?: string;
+    destinationAgentId?: string;
+    destinationCity?: string;
+  }) {
+    const { values, conditions } = this.buildReportConditions(filters);
+    const whereClause = conditions.join(' and ');
+
+    const detailResult = await this.pool.query(
+      `
+      select
+        t.id,
+        coalesce(t.transfer_date, t.created_at) as report_date,
+        t.created_at,
+        t.transfer_date,
+        t.status,
+        t.sender_name,
+        t.receiver_name,
+        t.amount,
+        t.currency,
+        t.main_amount,
+        t.transfer_service_fee,
+        t.transfer_service_fee_currency,
+        t.agent_commission,
+        t.agent_commission_currency,
+        t.destination_city,
+        t.shipment_id,
+        s.shipment_no,
+        b.name as branch_name,
+        origin_agent.id as origin_agent_id,
+        origin_agent.name as origin_agent_name,
+        coalesce(origin_agent.area, origin_agent.city, origin_agent.governorate) as origin_agent_city,
+        destination_agent.id as destination_agent_id,
+        destination_agent.name as destination_agent_name,
+        coalesce(destination_agent.area, destination_agent.city, destination_agent.governorate) as destination_agent_city,
+        coalesce(t.destination_city, destination_agent.name, destination_agent.city) as destination_label,
+        t.posted_at,
+        t.cancelled_at,
+        payout_cb.name as payout_cashbox_name,
+        payout_pv.voucher_no as payout_voucher_no,
+        collection_cb.name as collection_cashbox_name,
+        collection_rv.voucher_no as collection_voucher_no,
+        t.notes
+      from transfers t
+      left join shipments s on s.id = t.shipment_id
+      left join branches b on b.id = t.branch_id
+      left join agents origin_agent on origin_agent.id = t.origin_agent_id
+      left join agents destination_agent on destination_agent.id = t.destination_agent_id
+      left join cashboxes payout_cb on payout_cb.id = t.payout_cashbox_id
+      left join payment_vouchers payout_pv on payout_pv.id = t.payout_payment_voucher_id
+      left join cashboxes collection_cb on collection_cb.id = t.collection_cashbox_id
+      left join receipt_vouchers collection_rv on collection_rv.id = t.collection_receipt_voucher_id
+      where ${whereClause}
+      order by coalesce(t.transfer_date, t.created_at) desc, t.created_at desc
+      limit 5000
+      `,
+      values,
+    );
+
+    const summaryResult = await this.pool.query(
+      `
+      select
+        count(*)::int as total_count,
+        count(*) filter (where upper(t.status) = 'PENDING')::int as pending_count,
+        count(*) filter (where upper(t.status) = 'COMPLETED')::int as completed_count,
+        count(*) filter (where upper(t.status) = 'CANCELLED')::int as cancelled_count,
+        coalesce(sum(t.amount) filter (where upper(t.status) = 'PENDING'), 0) as pending_amount,
+        coalesce(sum(t.amount) filter (where upper(t.status) = 'COMPLETED'), 0) as completed_amount,
+        coalesce(sum(t.transfer_service_fee) filter (where upper(t.status) != 'CANCELLED'), 0) as total_service_fees,
+        t.currency
+      from transfers t
+      left join agents destination_agent on destination_agent.id = t.destination_agent_id
+      where ${whereClause}
+      group by t.currency
+      order by t.currency
+      `,
+      values,
+    );
+
+    const destinationResult = await this.pool.query(
+      `
+      select
+        coalesce(destination_agent.id::text, '') as destination_agent_id,
+        coalesce(destination_agent.name, t.destination_city, 'غير محدد') as destination_label,
+        coalesce(t.destination_city, destination_agent.city, destination_agent.area) as destination_city,
+        count(*)::int as total_count,
+        count(*) filter (where upper(t.status) = 'PENDING')::int as pending_count,
+        count(*) filter (where upper(t.status) = 'COMPLETED')::int as completed_count,
+        count(*) filter (where upper(t.status) = 'CANCELLED')::int as cancelled_count,
+        coalesce(sum(t.amount) filter (where upper(t.status) = 'PENDING'), 0) as pending_amount,
+        coalesce(sum(t.amount) filter (where upper(t.status) = 'COMPLETED'), 0) as completed_amount,
+        coalesce(sum(t.amount) filter (where upper(t.status) != 'CANCELLED'), 0) as total_amount,
+        t.currency
+      from transfers t
+      left join agents destination_agent on destination_agent.id = t.destination_agent_id
+      where ${whereClause}
+      group by
+        destination_agent.id,
+        destination_agent.name,
+        destination_agent.city,
+        destination_agent.area,
+        t.destination_city,
+        t.currency
+      order by total_amount desc, destination_label asc
+      `,
+      values,
+    );
+
+    return {
+      rows: detailResult.rows,
+      summaryByCurrency: summaryResult.rows,
+      byDestination: destinationResult.rows,
+    };
+  }
+
   async delete(id: string, company_id: string, client?: PoolClient) {
     const db = client || this.pool;
     const existing = await this.getById(id, company_id, client);

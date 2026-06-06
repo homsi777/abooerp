@@ -9,6 +9,18 @@ export class CenterReceiptService {
     return this.repository.list(scope);
   }
 
+  listProvincialInbound(
+    scope: DataScope | undefined,
+    filters: {
+      center?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      receiptStatus?: 'all' | 'pending' | 'received';
+    },
+  ) {
+    return this.repository.listProvincialInbound(scope, filters);
+  }
+
   async create(input: CenterReceiptCreateInput, scope?: DataScope) {
     if (scope?.branchId && input.branchId && input.branchId !== scope.branchId) {
       throw new HttpError(403, 'Cannot receive shipment outside scoped branch.');

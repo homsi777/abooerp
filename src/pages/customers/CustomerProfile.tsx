@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowRight, Building2, Phone, MapPin, Tag, UserCheck } from 'lucide-react';
-import { customersGateway, type CustomerRecord } from '../../lib/api/customersGateway';
+import { customersGateway, type CustomerFinancialSummary, type CustomerRecord, type CustomerShipmentRow } from '../../lib/api/customersGateway';
 import { useToast } from '../../components/Toast';
 
 function InfoRow({ label, value }: { label: string; value?: string | null }) {
@@ -18,14 +18,23 @@ export default function CustomerProfile() {
   const { id } = useParams<{ id: string }>();
   const { showToast } = useToast();
   const [customer, setCustomer] = useState<CustomerRecord | null>(null);
+  const [financial, setFinancial] = useState<CustomerFinancialSummary | null>(null);
+  const [shipments, setShipments] = useState<CustomerShipmentRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    customersGateway
-      .get(id)
-      .then(setCustomer)
+    Promise.all([
+      customersGateway.get(id),
+      customersGateway.getFinancialSummary(id).catch(() => null),
+      customersGateway.getShipments(id).catch(() => []),
+    ])
+      .then(([customerRow, financialRow, shipmentRows]) => {
+        setCustomer(customerRow);
+        setFinancial(financialRow);
+        setShipments(Array.isArray(shipmentRows) ? shipmentRows : []);
+      })
       .catch((err) => showToast(err instanceof Error ? err.message : 'تعذر تحميل بيانات العميل', 'error'))
       .finally(() => setLoading(false));
   }, [id, showToast]);
@@ -118,7 +127,25 @@ export default function CustomerProfile() {
             </h2>
             <InfoRow label="حد الائتمان" value={customer.credit_limit > 0 ? String(customer.credit_limit) : 'غير محدد'} />
             <InfoRow label="العملة الافتراضية" value={customer.default_currency_code} />
-            <div className="mt-3 flex gap-2">
+            {financial && (
+              <>
+                <InfoRow
+                  label="إجمالي المدين"
+                  value={`${Number(financial.totalDebit).toLocaleString()} ${financial.currencyCode}`}
+                />
+                <InfoRow
+                  label="إجمالي الدائن"
+                  value={`${Number(financial.totalCredit).toLocaleString()} ${financial.currencyCode}`}
+                />
+                <InfoRow
+                  label="الرصيد الحالي"
+                  value={`${Number(financial.balance).toLocaleString()} ${financial.currencyCode}`}
+                />
+                <InfoRow label="عدد الحركات" value={String(financial.movementCount)} />
+                <InfoRow label="عدد الشحنات" value={String(financial.shipmentCount)} />
+              </>
+            )}
+            <div className="mt-3 flex gap-2 flex-wrap">
               <Link
                 to={`/finance/account-statement?partyType=customer&partyId=${customer.id}`}
                 className="btn btn-secondary text-xs"
@@ -132,6 +159,11 @@ export default function CustomerProfile() {
                 الدائن والمدين
               </Link>
             </div>
+            {financial && financial.movementCount === 0 && financial.shipmentCount > 0 && (
+              <p className="text-xs text-amber-700 mt-3">
+                توجد شحنات مرتبطة بالاسم لكن بدون حركات مالية على هذا العميل — غالباً لأن الشحنة رُحّلت على الوكيل وليس على العميل الحسابي. الشحنات الجديدة (بعد التحديث) تُرحّل تلقائياً على العميل إذا كان المرسل عميلاً حسابياً بنفس الاسم.
+              </p>
+            )}
           </div>
         )}
 
@@ -153,6 +185,34 @@ export default function CustomerProfile() {
           </div>
         )}
       </div>
+
+      {shipments.length > 0 && (
+        <div className="card p-5 mt-6 overflow-x-auto">
+          <h2 className="font-semibold text-gray-800 mb-3">الشحنات المرتبطة</h2>
+          <table className="data-table w-full text-sm">
+            <thead>
+              <tr>
+                <th>رقم الشحنة</th>
+                <th>التاريخ</th>
+                <th>الوجهة</th>
+                <th>المبلغ</th>
+                <th>الحالة</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shipments.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.shipment_no}</td>
+                  <td>{String(row.created_at).split('T')[0]}</td>
+                  <td>{row.destination_city ?? '—'}</td>
+                  <td>{Number(row.original_amount ?? 0).toLocaleString()} {row.currency_code}</td>
+                  <td>{row.status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Non-account customers note */}
       {!customer.is_account_customer && (
