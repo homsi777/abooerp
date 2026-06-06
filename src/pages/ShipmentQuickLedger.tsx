@@ -44,8 +44,9 @@ type LedgerRow = {
   notes: string;
 };
 
-const DEFAULT_LEDGER_ROW_COUNT = 200;
-const LEDGER_ROWS_ADD_INCREMENT = 100;
+const LEDGER_PAGE_SIZE = 10;
+const DEFAULT_LEDGER_ROW_COUNT = LEDGER_PAGE_SIZE;
+const LEDGER_ROWS_ADD_INCREMENT = 10;
 
 type RemoteDailyLedgerRow = {
   id: string;
@@ -132,15 +133,27 @@ function normalizeName(value: string) {
 }
 
 function isRowStarted(row: LedgerRow) {
-  return Object.entries(row).some(
-    ([key, value]) =>
-      key !== 'id' &&
-      key !== 'origin' &&
-      key !== 'collectManual' &&
-      typeof value !== 'boolean' &&
-      typeof value !== 'number' &&
-      String(value).trim() !== '',
+  return Boolean(
+    row.dbId ||
+      row.receiptNo.trim() ||
+      row.destination.trim() ||
+      row.parcelType.trim() ||
+      row.parcelCount.trim() ||
+      row.weightKg.trim() ||
+      row.sender.trim() ||
+      row.receiver.trim() ||
+      row.collectAmount.trim() ||
+      row.prepaidAmount.trim() ||
+      row.receiverCollect.trim() ||
+      row.transferServiceFee.trim() ||
+      row.notes.trim(),
   );
+}
+
+function shouldPersistRow(row: LedgerRow) {
+  if (row.loadedAt) return false;
+  if (row.dbId) return true;
+  return isRowStarted(row);
 }
 
 function isRowComplete(row: LedgerRow) {
@@ -548,6 +561,8 @@ export default function ShipmentQuickLedger() {
   const [catalogAgents, setCatalogAgents] = useState<SuggestedAgent[]>([]);
   const [includeLoaded, setIncludeLoaded] = useState(false);
   const [remoteLoading, setRemoteLoading] = useState(false);
+  const [ledgerPage, setLedgerPage] = useState(0);
+  const [hasMoreLedgerPages, setHasMoreLedgerPages] = useState(false);
   const saveTimersRef = useRef<Record<number, number>>({});
   const saveRowToServerRef = useRef<(displayRowId: number) => Promise<void>>(async () => {});
   const [branchSearch, setBranchSearch] = useState('');
@@ -688,15 +703,6 @@ export default function ShipmentQuickLedger() {
     return ['general_manager', 'branch_manager'].includes(user.role);
   }, [user]);
 
-  const flushPendingRowSaves = async () => {
-    Object.values(saveTimersRef.current).forEach((timer) => window.clearTimeout(timer));
-    saveTimersRef.current = {};
-    const targets = rowsRef.current.filter((row) => row.dbId || isRowStarted(row));
-    for (const row of targets) {
-      await saveRowToServerRef.current(row.id);
-    }
-  };
-
   const mapRemoteRowToLocal = (remote: RemoteDailyLedgerRow, displayId: number): LedgerRow => ({
     id: displayId,
     serverRowNo: remote.row_no,
@@ -724,7 +730,16 @@ export default function ShipmentQuickLedger() {
     notes: remote.notes ?? '',
   });
 
-  const loadRemoteRows = async () => {
+  const flushPendingRowSaves = async () => {
+    Object.values(saveTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+    saveTimersRef.current = {};
+    const targets = rowsRef.current.filter(shouldPersistRow);
+    for (const row of targets) {
+      await saveRowToServerRef.current(row.id);
+    }
+  };
+
+  const loadRemoteRows = async (page = ledgerPage) => {
     const branchId = activeBranchIdRef.current;
     const currentTrip = tripRef.current;
     if (!branchId) return;
@@ -738,22 +753,24 @@ export default function ShipmentQuickLedger() {
       params.set('ledgerDate', currentTrip.date);
       params.set('lineLabel', currentTrip.line);
       params.set('includeLoaded', includeLoaded ? 'true' : 'false');
-      const data = await fetchAllDailyLedgerRows(params);
+      params.set('limit', String(LEDGER_PAGE_SIZE));
+      params.set('offset', String(page * LEDGER_PAGE_SIZE));
+      const data = await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${params.toString()}`);
+      setHasMoreLedgerPages(data.length === LEDGER_PAGE_SIZE);
       const sorted = [...data].sort((a, b) => {
         const driverCmp = String(a.driver_label ?? '').localeCompare(String(b.driver_label ?? ''), 'ar');
         if (driverCmp !== 0) return driverCmp;
         return a.row_no - b.row_no;
       });
-      let displayId = 1;
+      let displayId = page * LEDGER_PAGE_SIZE + 1;
       const consolidated = sorted.map((remote) => mapRemoteRowToLocal(remote, displayId++));
       const origin = resolveTripOrigin(currentTrip.line);
-      const emptyStart = consolidated.length + 1;
-      const emptyCount = Math.max(DEFAULT_LEDGER_ROW_COUNT - consolidated.length, 100);
+      const emptyCount = Math.max(LEDGER_PAGE_SIZE - consolidated.length, 0);
       const nextRows = [
         ...consolidated,
         ...Array.from({ length: emptyCount }, (_, idx) =>
           mergeRowWithAutoTariff(
-            { ...createEmptyRow(emptyStart + idx), origin },
+            { ...createEmptyRow(page * LEDGER_PAGE_SIZE + consolidated.length + idx + 1), origin },
             tariffs,
             cities,
             branches,
@@ -772,9 +789,9 @@ export default function ShipmentQuickLedger() {
 
   useEffect(() => {
     if (!loadingRefs) {
-      void loadRemoteRows();
+      void loadRemoteRows(ledgerPage);
     }
-  }, [activeBranchId, trip.date, trip.line, includeLoaded, loadingRefs]);
+  }, [activeBranchId, trip.date, trip.line, includeLoaded, loadingRefs, ledgerPage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -928,7 +945,7 @@ export default function ShipmentQuickLedger() {
     if (!currentTrip.date || !currentTrip.line) return;
     const row = rowsRef.current.find((r) => r.id === displayRowId);
     if (!row) return;
-    if (!row.dbId && !isRowStarted(row)) return;
+    if (!shouldPersistRow(row)) return;
 
     const origin = resolveTripOrigin(currentTrip.line);
     const fleet = resolveFleetForLedgerRow(row, currentTrip, driversRef.current, vehiclesRef.current);
@@ -1095,6 +1112,7 @@ export default function ShipmentQuickLedger() {
   };
 
   const handleTripLineChange = (value: string) => {
+    setLedgerPage(0);
     setTrip((prev) => ({ ...prev, line: value }));
     applyTripOriginToRows(value);
   };
@@ -1437,7 +1455,7 @@ export default function ShipmentQuickLedger() {
       await flushPendingRowSaves();
       if (!rowsToPost.length) {
         showToast('تم حفظ التعديلات على الأسطر', 'success');
-        await loadRemoteRows();
+        await loadRemoteRows(ledgerPage);
         return;
       }
       if (!trip.driverId) {
@@ -1514,7 +1532,7 @@ export default function ShipmentQuickLedger() {
         showToast('لا توجد أسطر صالحة للترحيل. تأكد من اكتمال البيانات وربط الوكيل بالوجهة.', 'info');
       }
 
-      await loadRemoteRows();
+      await loadRemoteRows(ledgerPage);
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'تعذر حفظ الشحنات', 'error');
     } finally {
@@ -1529,7 +1547,7 @@ export default function ShipmentQuickLedger() {
           <div className="quick-ledger-eyebrow">إدخال سريع للشحنات</div>
           <h2>دفتر الشحن اليومي</h2>
           <p className="quick-ledger-hint">
-            اختر <strong>الخط</strong> لعرض كل شحناته (كل السائقين). السائق والمركبة للإدخال الجديد فقط. الطباعة من زر «طباعة» حسب السائق/المركبة وفترة تاريخ.
+            اختر <strong>الخط</strong> لعرض شحناته على دفعات (10 أسطر لكل صفحة). السائق والمركبة للإدخال الجديد. الطباعة من زر «طباعة».
             عمود <strong>تحصيل $</strong> يُملأ من تعريف الأسعار عند تطابق المسار + نوع الطرد + الوزن.
           </p>
         </div>
@@ -1576,13 +1594,20 @@ export default function ShipmentQuickLedger() {
           </div>
           <button type="button" onClick={addRows}>
             <Plus size={16} />
-            إضافة 100 سطر
+            إضافة 10 أسطر
           </button>
-          <button type="button" onClick={() => void loadRemoteRows()} disabled={remoteLoading}>
+          <button type="button" onClick={() => void loadRemoteRows(ledgerPage)} disabled={remoteLoading}>
             {remoteLoading ? 'جاري التحديث...' : 'تحديث'}
           </button>
           <label className="quick-ledger-print-toggle">
-            <input type="checkbox" checked={includeLoaded} onChange={(e) => setIncludeLoaded(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={includeLoaded}
+              onChange={(e) => {
+                setLedgerPage(0);
+                setIncludeLoaded(e.target.checked);
+              }}
+            />
             إظهار المحمّلة
           </label>
           <button type="button" onClick={openPrintDialog}>
@@ -1631,12 +1656,10 @@ export default function ShipmentQuickLedger() {
                 showToast('لا يمكن اختيار تاريخ مستقبلي', 'error');
                 return;
               }
+              setLedgerPage(0);
               setTrip((prev) => ({ ...prev, date: next }));
             }}
           />
-          {canPickHistoricalDate && (
-            <span className="quick-ledger-hint">يمكن للمدير اختيار تواريخ سابقة لإدخال بيانات متأخرة.</span>
-          )}
         </label>
         <label>
           <span>المركبة</span>
@@ -1660,6 +1683,30 @@ export default function ShipmentQuickLedger() {
             ))}
           </select>
         </label>
+        {canPickHistoricalDate && (
+          <p className="quick-ledger-trip-hint">يمكن للمدير اختيار تواريخ سابقة لإدخال بيانات متأخرة.</p>
+        )}
+      </section>
+
+      <section className="quick-ledger-pager">
+        <button
+          type="button"
+          disabled={ledgerPage === 0 || remoteLoading}
+          onClick={() => setLedgerPage((page) => Math.max(0, page - 1))}
+        >
+          ← السابق (10 أسطر)
+        </button>
+        <span>
+          صفحة {ledgerPage + 1} — أسطر {ledgerPage * LEDGER_PAGE_SIZE + 1}–{ledgerPage * LEDGER_PAGE_SIZE + rows.length}
+          {remoteLoading ? ' · جاري التحميل...' : ''}
+        </span>
+        <button
+          type="button"
+          disabled={!hasMoreLedgerPages || remoteLoading}
+          onClick={() => setLedgerPage((page) => page + 1)}
+        >
+          التالي (10 أسطر) →
+        </button>
       </section>
 
       <section className="quick-ledger-stats">

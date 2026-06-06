@@ -1033,6 +1033,50 @@ body {
   background: white;
 }
 
+.quick-ledger-trip-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-top: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.quick-ledger-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-inline: 1px solid #9fb0c4;
+  background: #f8fafc;
+}
+
+.quick-ledger-pager span {
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.quick-ledger-pager button {
+  height: 32px;
+  border: 1px solid #b6c2d2;
+  background: #fff;
+  color: #172033;
+  border-radius: 6px;
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.quick-ledger-pager button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .quick-ledger-stats {
   display: grid;
   grid-template-columns: repeat(5, minmax(120px, 1fr));
