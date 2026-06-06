@@ -50,9 +50,9 @@ export async function probePrinterRuntimeReadiness() {
         message: result.message,
     };
 }
-function executePrint(activeWindow, payload) {
+function executePrint(webContents, payload) {
     return new Promise((resolve) => {
-        activeWindow.webContents.print({
+        webContents.print({
             silent: true,
             printBackground: true,
             deviceName: payload.printerTarget,
@@ -61,6 +61,56 @@ function executePrint(activeWindow, payload) {
             resolve({ success, errorType: failureReason || undefined });
         });
     });
+}
+async function loadPrintableHtml(html, parent) {
+    const printWindow = new BrowserWindow({
+        show: false,
+        parent,
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+        },
+    });
+    try {
+        const url = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+        await printWindow.loadURL(url);
+        await printWindow.webContents.executeJavaScript('document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()');
+        return printWindow;
+    }
+    catch (error) {
+        if (!printWindow.isDestroyed()) {
+            printWindow.close();
+        }
+        throw error;
+    }
+}
+function wrapTextAsHtml(content) {
+    const escaped = content
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    return `<!doctype html><html><head><meta charset="utf-8" /><style>body{font-family:Tahoma,Arial,sans-serif;white-space:pre-wrap;margin:12mm;}</style></head><body>${escaped}</body></html>`;
+}
+async function printPayloadContent(payload, host) {
+    if (payload.payloadType === 'html' || payload.payloadType === 'text') {
+        const html = payload.payloadType === 'html'
+            ? String(payload.content ?? '').trim()
+            : wrapTextAsHtml(String(payload.content ?? payload.payloadRef ?? '').trim());
+        if (!html) {
+            return { success: false, errorType: 'empty_content' };
+        }
+        const printWindow = await loadPrintableHtml(html, host);
+        try {
+            return await executePrint(printWindow.webContents, payload);
+        }
+        finally {
+            if (!printWindow.isDestroyed()) {
+                printWindow.close();
+            }
+        }
+    }
+    return executePrint(host.webContents, payload);
 }
 export function registerPrinterIpc() {
     ipcMain.removeHandler(CHANNEL_PRINTER_LIST);
@@ -96,11 +146,11 @@ export function registerPrinterIpc() {
                 message: 'RAW payload execution is not enabled yet. Request shape accepted for future engine.',
             };
         }
-        const result = await executePrint(activeWindow, payload);
+        const result = await printPayloadContent(payload, activeWindow);
         if (!result.success) {
             return {
                 queued: false,
-                message: `OS print dispatch failed (${result.errorType ?? 'unknown error'}).`,
+                message: `فشلت الطباعة (${result.errorType ?? 'خطأ غير معروف'}).`,
             };
         }
         return {

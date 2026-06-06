@@ -63,8 +63,11 @@ export type DailyLedgerRowWithSession = DailyLedgerRow & {
 export interface DailyLedgerRowListFilters {
   branchId?: string;
   ledgerDate?: string;
+  dateFrom?: string;
+  dateTo?: string;
   lineLabel?: string;
   driverId?: string;
+  vehicleId?: string;
   includeLoaded?: boolean;
   q?: string;
   limit: number;
@@ -111,9 +114,17 @@ export class DailyLedgerRepository {
       values.push(filters.branchId);
       conditions.push(`s.branch_id = $${values.length}`);
     }
-    if (filters.ledgerDate) {
+    if (filters.ledgerDate && !filters.dateFrom && !filters.dateTo) {
       values.push(filters.ledgerDate);
       conditions.push(`s.ledger_date = $${values.length}::date`);
+    }
+    if (filters.dateFrom) {
+      values.push(filters.dateFrom);
+      conditions.push(`s.ledger_date >= $${values.length}::date`);
+    }
+    if (filters.dateTo) {
+      values.push(filters.dateTo);
+      conditions.push(`s.ledger_date <= $${values.length}::date`);
     }
     if (filters.lineLabel) {
       values.push(filters.lineLabel);
@@ -122,6 +133,10 @@ export class DailyLedgerRepository {
     if (filters.driverId) {
       values.push(filters.driverId);
       conditions.push(`s.driver_id = $${values.length}::uuid`);
+    }
+    if (filters.vehicleId) {
+      values.push(filters.vehicleId);
+      conditions.push(`s.vehicle_id = $${values.length}::uuid`);
     }
     if (!filters.includeLoaded) {
       conditions.push('r.loaded_at is null');
@@ -156,7 +171,9 @@ export class DailyLedgerRepository {
         s.origin_label,
         s.trip_no,
         s.vehicle_label,
-        s.driver_label
+        s.driver_label,
+        s.driver_id,
+        s.vehicle_id
       from daily_ledger_rows r
       join daily_ledger_sessions s on s.id = r.session_id
       where ${conditions.join(' and ')}
@@ -267,7 +284,9 @@ export class DailyLedgerRepository {
           $20::text as origin_label,
           $21::text as trip_no,
           $22::text as vehicle_label,
-          $23::text as driver_label
+          $23::text as driver_label,
+          $24::uuid as driver_id,
+          $25::uuid as vehicle_id
         `,
         [
           sessionId,
@@ -293,6 +312,8 @@ export class DailyLedgerRepository {
           session.rows[0].trip_no,
           session.rows[0].vehicle_label,
           session.rows[0].driver_label,
+          session.rows[0].driver_id,
+          session.rows[0].vehicle_id,
         ],
       );
 

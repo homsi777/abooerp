@@ -26,11 +26,14 @@ export function createDailyLedgerRouter(service: DailyLedgerService) {
       const querySchema = z.object({
         branchId: uuid.optional(),
         ledgerDate: z.string().optional(),
+        dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
         lineLabel: z.string().optional(),
         driverId: uuid.optional(),
+        vehicleId: uuid.optional(),
         includeLoaded: z.coerce.boolean().optional(),
         q: z.string().optional(),
-        limit: z.coerce.number().min(1).max(500).optional(),
+        limit: z.coerce.number().min(1).max(2000).optional(),
         offset: z.coerce.number().min(0).optional(),
       });
       const q = querySchema.parse(req.query);
@@ -51,8 +54,11 @@ export function createDailyLedgerRouter(service: DailyLedgerService) {
       const rows = await service.listRows(scope, {
         branchId: effectiveBranchId,
         ledgerDate: q.ledgerDate,
+        dateFrom: q.dateFrom,
+        dateTo: q.dateTo,
         lineLabel: q.lineLabel,
         driverId: q.driverId,
+        vehicleId: q.vehicleId,
         includeLoaded: q.includeLoaded ?? false,
         q: q.q,
         limit: q.limit ?? 250,

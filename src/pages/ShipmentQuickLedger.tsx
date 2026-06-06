@@ -4,6 +4,7 @@ import { Plus, Printer, Save, Search } from 'lucide-react';
 import { useToast } from '../components/Toast';
 import { getBackendIdFromSynthetic, phase15Gateway, syntheticEntityId } from '../lib/api/phase15Gateway';
 import { httpClient } from '../lib/api/httpClient';
+import { isElectronRuntime } from '../lib/runtime/runtimeMode';
 import { useAuth } from '../context/AuthProvider';
 import SmartPartyInput from '../components/SmartPartyInput';
 import AutocompleteInput from '../components/AutocompleteInput';
@@ -18,6 +19,8 @@ import type { Branch, City, Customer, Driver, GoodsType, Shipment, Tariff, Vehic
 
 type LedgerRow = {
   id: number;
+  serverRowNo?: number;
+  sessionDriverId?: number;
   dbId?: string;
   updatedAt?: string;
   postedShipmentId?: string | null;
@@ -73,6 +76,8 @@ type RemoteDailyLedgerRow = {
   trip_no: string | null;
   vehicle_label: string | null;
   driver_label: string | null;
+  driver_id?: string | null;
+  vehicle_id?: string | null;
 };
 
 type SuggestedAgent = { id: number; code: string; name: string; city?: string; area?: string };
@@ -167,6 +172,39 @@ function tripFleetPayload(trip: {
   };
 }
 
+function resolveFleetForLedgerRow(
+  row: LedgerRow,
+  trip: { driver: string; vehicle: string; driverId: number; vehicleId: number },
+  driverList: Driver[],
+  vehicleList: Vehicle[],
+) {
+  const driverId = row.sessionDriverId ?? trip.driverId;
+  const driver = driverList.find((d) => d.id === driverId);
+  const vehicle =
+    vehicleList.find((v) => v.driverId === driverId) ??
+    (trip.vehicleId ? vehicleList.find((v) => v.id === trip.vehicleId) : undefined);
+  return {
+    driverLabel: driver?.name ?? trip.driver ?? null,
+    vehicleLabel: vehicle
+      ? `${vehicle.plateNumber}${vehicle.model ? ` — ${vehicle.model}` : ''}`
+      : trip.vehicle ?? null,
+    driverId: driverId ? getBackendIdFromSynthetic(driverId) ?? null : null,
+    vehicleId: vehicle?.id
+      ? getBackendIdFromSynthetic(vehicle.id) ?? null
+      : trip.vehicleId
+        ? getBackendIdFromSynthetic(trip.vehicleId) ?? null
+        : null,
+  };
+}
+
+function nextServerRowNoForDriver(rows: LedgerRow[], driverId: number) {
+  if (!driverId) return undefined;
+  const nums = rows
+    .filter((r) => r.sessionDriverId === driverId && r.serverRowNo)
+    .map((r) => r.serverRowNo as number);
+  return nums.length ? Math.max(...nums) + 1 : 1;
+}
+
 function isRemoteRowPrintable(remote: RemoteDailyLedgerRow) {
   return Boolean(
     remote.receipt_no?.trim() ||
@@ -182,6 +220,64 @@ function isRemoteRowPrintable(remote: RemoteDailyLedgerRow) {
       parseUsd(String(remote.transfer_service_fee_usd ?? '')) > 0 ||
       parseUsd(String(remote.fees_amount_usd ?? '')) > 0,
   );
+}
+
+function remoteRowMatchesPrintFilters(
+  remote: RemoteDailyLedgerRow,
+  filters: {
+    driverBackendId?: string;
+    driverName?: string;
+    vehicleBackendId?: string;
+    vehicleLabel?: string;
+  },
+) {
+  if (filters.driverBackendId || filters.driverName) {
+    if (filters.driverBackendId && remote.driver_id === filters.driverBackendId) return true;
+    if (
+      filters.driverName &&
+      normalizeName(remote.driver_label ?? '') === normalizeName(filters.driverName)
+    ) {
+      return true;
+    }
+    return false;
+  }
+  if (filters.vehicleBackendId || filters.vehicleLabel) {
+    if (filters.vehicleBackendId && remote.vehicle_id === filters.vehicleBackendId) return true;
+    if (
+      filters.vehicleLabel &&
+      normalizeName(remote.vehicle_label ?? '') === normalizeName(filters.vehicleLabel)
+    ) {
+      return true;
+    }
+    return false;
+  }
+  return true;
+}
+
+function printHtmlInBrowser(html: string) {
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  document.body.appendChild(iframe);
+  const frameWindow = iframe.contentWindow;
+  const frameDoc = iframe.contentDocument ?? frameWindow?.document;
+  if (!frameDoc || !frameWindow) {
+    document.body.removeChild(iframe);
+    throw new Error('تعذر تهيئة نافذة الطباعة');
+  }
+  frameDoc.open();
+  frameDoc.write(html);
+  frameDoc.close();
+  frameWindow.focus();
+  frameWindow.print();
+  window.setTimeout(() => {
+    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+  }, 1000);
 }
 
 type QuickLedgerPrintRow = {
@@ -245,7 +341,7 @@ function buildQuickLedgerPrintHtml(
   rows: QuickLedgerPrintRow[],
   meta: {
     title: string;
-    date: string;
+    dateLabel: string;
     driverName: string;
     vehicleLabel: string;
     lineLabel?: string;
@@ -298,7 +394,7 @@ function buildQuickLedgerPrintHtml(
 </head>
 <body>
   <div class="meta">
-    <div><strong>التاريخ:</strong> ${escapePrintHtml(meta.date)}</div>
+    <div><strong>الفترة:</strong> ${escapePrintHtml(meta.dateLabel)}</div>
     <div><strong>السائق:</strong> ${escapePrintHtml(meta.driverName)}</div>
     <div><strong>المركبة:</strong> ${escapePrintHtml(meta.vehicleLabel)}</div>
     <div><strong>عدد الأسطر:</strong> ${rows.length}</div>
@@ -405,7 +501,9 @@ export default function ShipmentQuickLedger() {
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printDriverId, setPrintDriverId] = useState(0);
-  const [printDate, setPrintDate] = useState(new Date().toISOString().split('T')[0]);
+  const [printVehicleId, setPrintVehicleId] = useState(0);
+  const [printDateFrom, setPrintDateFrom] = useState(new Date().toISOString().split('T')[0]);
+  const [printDateTo, setPrintDateTo] = useState(new Date().toISOString().split('T')[0]);
   const [printLoading, setPrintLoading] = useState(false);
   const [loadingRefs, setLoadingRefs] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -492,6 +590,16 @@ export default function ShipmentQuickLedger() {
   const goodsTypesRef = useRef(goodsTypes);
   const tripRef = useRef(trip);
   const activeBranchIdRef = useRef(activeBranchId);
+  const driversRef = useRef(drivers);
+  const vehiclesRef = useRef(vehicles);
+
+  useEffect(() => {
+    driversRef.current = drivers;
+  }, [drivers]);
+
+  useEffect(() => {
+    vehiclesRef.current = vehicles;
+  }, [vehicles]);
 
   useEffect(() => {
     rowsRef.current = rows;
@@ -537,8 +645,10 @@ export default function ShipmentQuickLedger() {
     return (user.allowedBranchIds || []).length <= 1;
   }, [user]);
 
-  const mapRemoteRowToLocal = (remote: RemoteDailyLedgerRow): LedgerRow => ({
-    id: remote.row_no,
+  const mapRemoteRowToLocal = (remote: RemoteDailyLedgerRow, displayId: number): LedgerRow => ({
+    id: displayId,
+    serverRowNo: remote.row_no,
+    sessionDriverId: remote.driver_id ? syntheticEntityId(remote.driver_id) : undefined,
     dbId: remote.id,
     updatedAt: remote.updated_at,
     postedShipmentId: remote.posted_shipment_id,
@@ -574,24 +684,33 @@ export default function ShipmentQuickLedger() {
       params.set('branchId', branchId);
       params.set('ledgerDate', currentTrip.date);
       params.set('lineLabel', currentTrip.line);
-      if (currentTrip.driverId) {
-        const driverBackendId = getBackendIdFromSynthetic(currentTrip.driverId);
-        if (driverBackendId) params.set('driverId', driverBackendId);
-      }
       params.set('includeLoaded', includeLoaded ? 'true' : 'false');
-      params.set('limit', '500');
+      params.set('limit', '2000');
       params.set('offset', '0');
       const data = await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${params.toString()}`);
-      const mapped = data.map(mapRemoteRowToLocal);
-      const maxRowNo = Math.max(DEFAULT_LEDGER_ROW_COUNT, ...mapped.map((r) => r.id));
-      const byNo = new Map<number, LedgerRow>(mapped.map((r) => [r.id, r]));
-      const origin = resolveTripOrigin(currentTrip.line);
-      const nextRows = Array.from({ length: maxRowNo }, (_, idx) => {
-        const rowNo = idx + 1;
-        const existing = byNo.get(rowNo);
-        if (existing) return existing;
-        return mergeRowWithAutoTariff({ ...createEmptyRow(rowNo), origin }, tariffs, cities, branches, goodsTypes, currentTrip.date);
+      const sorted = [...data].sort((a, b) => {
+        const driverCmp = String(a.driver_label ?? '').localeCompare(String(b.driver_label ?? ''), 'ar');
+        if (driverCmp !== 0) return driverCmp;
+        return a.row_no - b.row_no;
       });
+      let displayId = 1;
+      const consolidated = sorted.map((remote) => mapRemoteRowToLocal(remote, displayId++));
+      const origin = resolveTripOrigin(currentTrip.line);
+      const emptyStart = consolidated.length + 1;
+      const emptyCount = Math.max(DEFAULT_LEDGER_ROW_COUNT - consolidated.length, 100);
+      const nextRows = [
+        ...consolidated,
+        ...Array.from({ length: emptyCount }, (_, idx) =>
+          mergeRowWithAutoTariff(
+            { ...createEmptyRow(emptyStart + idx), origin },
+            tariffs,
+            cities,
+            branches,
+            goodsTypes,
+            currentTrip.date,
+          ),
+        ),
+      ];
       setRows(nextRows);
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'تعذر تحديث دفتر الشحن اليومي من الشبكة', 'error');
@@ -604,7 +723,7 @@ export default function ShipmentQuickLedger() {
     if (!loadingRefs) {
       void loadRemoteRows();
     }
-  }, [activeBranchId, trip.date, trip.line, trip.driverId, includeLoaded, loadingRefs]);
+  }, [activeBranchId, trip.date, trip.line, includeLoaded, loadingRefs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -748,16 +867,22 @@ export default function ShipmentQuickLedger() {
     queueRowSave(id);
   };
 
-  const saveRowToServer = async (rowNo: number) => {
+  const saveRowToServer = async (displayRowId: number) => {
     const branchId = activeBranchIdRef.current;
     const currentTrip = tripRef.current;
     if (!branchId) return;
     if (!currentTrip.date || !currentTrip.line) return;
-    const row = rowsRef.current.find((r) => r.id === rowNo);
+    const row = rowsRef.current.find((r) => r.id === displayRowId);
     if (!row) return;
     if (!row.dbId && !isRowStarted(row)) return;
 
     const origin = resolveTripOrigin(currentTrip.line);
+    const fleet = resolveFleetForLedgerRow(row, currentTrip, driversRef.current, vehiclesRef.current);
+    const effectiveDriverId = row.sessionDriverId ?? currentTrip.driverId;
+    const serverRowNo =
+      row.serverRowNo ??
+      nextServerRowNoForDriver(rowsRef.current, effectiveDriverId) ??
+      row.id;
     try {
       const saved = await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
         branchId,
@@ -765,8 +890,8 @@ export default function ShipmentQuickLedger() {
         lineLabel: currentTrip.line,
         originLabel: origin,
         tripNo: currentTrip.tripNo || null,
-        ...tripFleetPayload(currentTrip),
-        rowNo: row.id,
+        ...fleet,
+        rowNo: serverRowNo,
         receiptNo: row.receiptNo || null,
         destination: row.destination,
         parcelType: row.parcelType,
@@ -783,10 +908,14 @@ export default function ShipmentQuickLedger() {
       });
       setRows((prev) =>
         prev.map((r) =>
-          r.id === rowNo
+          r.id === displayRowId
             ? {
                 ...r,
                 dbId: saved.id,
+                serverRowNo: saved.row_no,
+                sessionDriverId: saved.driver_id
+                  ? syntheticEntityId(saved.driver_id)
+                  : effectiveDriverId || r.sessionDriverId,
                 updatedAt: saved.updated_at,
                 postedShipmentId: saved.posted_shipment_id,
                 loadedAt: saved.loaded_at,
@@ -1062,7 +1191,9 @@ export default function ShipmentQuickLedger() {
 
   const openPrintDialog = () => {
     setPrintDriverId(trip.driverId || 0);
-    setPrintDate(trip.date);
+    setPrintVehicleId(trip.vehicleId || 0);
+    setPrintDateFrom(trip.date);
+    setPrintDateTo(trip.date);
     setPrintDialogOpen(true);
   };
 
@@ -1103,62 +1234,78 @@ export default function ShipmentQuickLedger() {
       showToast('يرجى اختيار الفرع قبل الطباعة', 'error');
       return;
     }
-    if (!printDriverId) {
-      showToast('يرجى اختيار السائق', 'error');
+    if (!printDriverId && !printVehicleId) {
+      showToast('يرجى اختيار السائق أو المركبة', 'error');
       return;
     }
-    if (!printDate) {
-      showToast('يرجى اختيار التاريخ', 'error');
+    if (!printDateFrom || !printDateTo) {
+      showToast('يرجى اختيار فترة التاريخ', 'error');
+      return;
+    }
+    if (printDateFrom > printDateTo) {
+      showToast('تاريخ البداية يجب أن يكون قبل تاريخ النهاية', 'error');
       return;
     }
 
-    const driverBackendId = getBackendIdFromSynthetic(printDriverId);
-    if (!driverBackendId) {
+    const driverBackendId = printDriverId ? getBackendIdFromSynthetic(printDriverId) : undefined;
+    const vehicleBackendId = printVehicleId ? getBackendIdFromSynthetic(printVehicleId) : undefined;
+    if (printDriverId && !driverBackendId) {
       showToast('تعذر تحديد السائق', 'error');
       return;
     }
+    if (printVehicleId && !vehicleBackendId) {
+      showToast('تعذر تحديد المركبة', 'error');
+      return;
+    }
 
-    const selectedDriver = drivers.find((d) => d.id === printDriverId);
-    const linkedVehicle = vehicles.find((v) => v.driverId === printDriverId);
-    const selectedVehicle = linkedVehicle ?? vehicles.find((v) => v.id === trip.vehicleId);
+    const selectedDriver = printDriverId ? drivers.find((d) => d.id === printDriverId) : undefined;
+    const selectedVehicle = printVehicleId
+      ? vehicles.find((v) => v.id === printVehicleId)
+      : printDriverId
+        ? vehicles.find((v) => v.driverId === printDriverId)
+        : undefined;
+    const vehicleLabelForFilter = selectedVehicle
+      ? `${selectedVehicle.plateNumber}${selectedVehicle.model ? ` — ${selectedVehicle.model}` : ''}`
+      : undefined;
 
     setPrintLoading(true);
     try {
-      const useCurrentLedger =
-        printDriverId === trip.driverId && printDate === trip.date && Boolean(trip.line);
-
-      let rowsToPrint: QuickLedgerPrintRow[] = [];
-
-      if (useCurrentLedger) {
-        rowsToPrint = rows.filter(isRowStarted).map(localRowToPrint);
-      } else {
-        const params = new URLSearchParams();
-        params.set('branchId', branchId);
-        params.set('ledgerDate', printDate);
-        params.set('driverId', driverBackendId);
-        params.set('includeLoaded', includeLoaded ? 'true' : 'false');
-        params.set('limit', '500');
-        params.set('offset', '0');
-        const data = await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${params.toString()}`);
-        rowsToPrint = data.filter(isRemoteRowPrintable).map(remoteRowToPrint);
-      }
+      const params = new URLSearchParams();
+      params.set('branchId', branchId);
+      params.set('dateFrom', printDateFrom);
+      params.set('dateTo', printDateTo);
+      params.set('includeLoaded', 'true');
+      params.set('limit', '2000');
+      params.set('offset', '0');
+      const data = await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${params.toString()}`);
+      const rowsToPrint = data
+        .filter((row) =>
+          remoteRowMatchesPrintFilters(row, {
+            driverBackendId,
+            driverName: selectedDriver?.name,
+            vehicleBackendId,
+            vehicleLabel: vehicleLabelForFilter,
+          }),
+        )
+        .filter(isRemoteRowPrintable)
+        .map(remoteRowToPrint);
 
       if (!rowsToPrint.length) {
-        showToast('لا توجد أسطر ببيانات لهذا السائق في التاريخ المحدد', 'info');
+        showToast('لا توجد أسطر ببيانات ضمن الفترة والسائق/المركبة المحددين', 'info');
         return;
       }
 
       const vehicleLabel = selectedVehicle
         ? `${selectedVehicle.plateNumber}${selectedVehicle.model ? ` — ${selectedVehicle.model}` : ''}`
-        : trip.vehicle || '—';
+        : '—';
+      const dateLabel =
+        printDateFrom === printDateTo ? printDateFrom : `${printDateFrom} → ${printDateTo}`;
 
       const html = buildQuickLedgerPrintHtml(rowsToPrint, {
-        title: `دفتر الشحن — ${selectedDriver?.name ?? ''}`,
-        date: printDate,
-        driverName: selectedDriver?.name ?? '',
+        title: `دفتر الشحن — ${selectedDriver?.name ?? selectedVehicle?.plateNumber ?? ''}`,
+        dateLabel,
+        driverName: selectedDriver?.name ?? '—',
         vehicleLabel,
-        lineLabel: useCurrentLedger ? trip.line : undefined,
-        tripNo: useCurrentLedger ? trip.tripNo : undefined,
       });
 
       setPrintDialogOpen(false);
@@ -1173,21 +1320,24 @@ export default function ShipmentQuickLedger() {
             payloadType: 'html',
             content: html,
           });
-          showToast(result.message || 'تم إرسال دفتر الشحن للطباعة', result.queued ? 'success' : 'info');
-          if (result.queued) return;
+          if (result.queued) {
+            showToast(result.message || 'تم إرسال دفتر الشحن للطباعة', 'success');
+            return;
+          }
+          showToast(result.message || 'فشلت الطباعة', 'error');
+          return;
         }
+        showToast(defaultPrinter.message || 'لم يتم العثور على طابعة افتراضية', 'error');
+        return;
       }
 
-      const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=900,height=1100');
-      if (printWindow) {
-        printWindow.document.open();
-        printWindow.document.write(html);
-        printWindow.document.close();
-        printWindow.focus();
-        printWindow.print();
-      } else {
-        showToast('تعذر فتح نافذة الطباعة', 'error');
+      if (isElectronRuntime()) {
+        showToast('خدمة الطباعة غير متاحة — أعد تشغيل التطبيق بعد التحديث', 'error');
+        return;
       }
+
+      printHtmlInBrowser(html);
+      showToast('تم فتح معاينة الطباعة', 'success');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'تعذر تنفيذ الطباعة', 'error');
     } finally {
@@ -1218,15 +1368,19 @@ export default function ShipmentQuickLedger() {
 
     setSaving(true);
     try {
+      let workingRows = [...rows];
       for (const row of rowsToSave) {
+        const fleet = resolveFleetForLedgerRow(row, trip, drivers, vehicles);
+        const rowNo =
+          row.serverRowNo ?? nextServerRowNoForDriver(workingRows, trip.driverId) ?? row.id;
         await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
           branchId: activeBranchId,
           ledgerDate: trip.date,
           lineLabel: trip.line,
           originLabel: origin,
           tripNo: trip.tripNo || null,
-          ...tripFleetPayload(trip),
-          rowNo: row.id,
+          ...fleet,
+          rowNo,
           receiptNo: row.receiptNo || null,
           destination: row.destination,
           parcelType: row.parcelType,
@@ -1241,6 +1395,9 @@ export default function ShipmentQuickLedger() {
           transferServiceFeeUsd: parseUsd(row.transferServiceFee),
           notes: row.notes || null,
         });
+        workingRows = workingRows.map((r) =>
+          r.id === row.id ? { ...r, serverRowNo: rowNo, sessionDriverId: trip.driverId } : r,
+        );
       }
 
       const result = await httpClient.post<{
@@ -1256,7 +1413,7 @@ export default function ShipmentQuickLedger() {
       const postedByRowNo = new Map(result.posted.map((item) => [item.rowNo, item]));
       setRows((prev) =>
         prev.map((row) => {
-          const posted = postedByRowNo.get(row.id);
+          const posted = postedByRowNo.get(row.serverRowNo ?? row.id);
           if (!posted) return row;
           return {
             ...row,
@@ -1294,7 +1451,8 @@ export default function ShipmentQuickLedger() {
           <div className="quick-ledger-eyebrow">إدخال سريع للشحنات</div>
           <h2>دفتر الشحن اليومي</h2>
           <p className="quick-ledger-hint">
-            اختر <strong>الخط</strong> من الأعلى ثم أدخل بيانات الشحنات في الجدول. عمود <strong>تحصيل $</strong> يُملأ تلقائياً من <strong>مالية → تعريف الأسعار</strong> عند تطابق <strong>المسار + نوع الطرد + الوزن</strong> والتاريخ (يمكنك التعديل يدوياً أو نقل المبلغ إلى <strong>دفع مسبق $</strong>).
+            اختر <strong>الخط</strong> لعرض كل شحناته (كل السائقين). السائق والمركبة للإدخال الجديد فقط. الطباعة من زر «طباعة» حسب السائق/المركبة وفترة تاريخ.
+            عمود <strong>تحصيل $</strong> يُملأ من تعريف الأسعار عند تطابق المسار + نوع الطرد + الوزن.
           </p>
         </div>
         <div className="quick-ledger-actions">
@@ -1608,17 +1766,22 @@ export default function ShipmentQuickLedger() {
       {printDialogOpen && (
         <div className="quick-ledger-confirm" role="dialog" aria-modal="true">
           <div className="quick-ledger-confirm-panel">
-            <h3>طباعة دفتر الشحن حسب السائق</h3>
-            <p>اختر السائق والتاريخ لطباعة كل طلبات الشحن المرتبطة به من قسم المركبات والسائقون.</p>
+            <h3>طباعة دفتر الشحن</h3>
+            <p>طباعة الأسطر التي بها بيانات فقط — حسب السائق أو المركبة وفترة التاريخ.</p>
             <div className="space-y-3 mb-3">
               <label className="form-group block">
                 <span className="form-label">السائق</span>
                 <select
                   className="form-select w-full"
                   value={printDriverId || ''}
-                  onChange={(e) => setPrintDriverId(Number(e.target.value))}
+                  onChange={(e) => {
+                    const id = Number(e.target.value);
+                    setPrintDriverId(id);
+                    const linked = vehicles.find((v) => v.driverId === id);
+                    if (linked) setPrintVehicleId(linked.id);
+                  }}
                 >
-                  <option value="">اختر السائق...</option>
+                  <option value="">— اختياري —</option>
                   {drivers.map((driver) => (
                     <option key={driver.id} value={driver.id}>
                       {driver.code ? `${driver.code} — ` : ''}{driver.name}
@@ -1627,14 +1790,40 @@ export default function ShipmentQuickLedger() {
                 </select>
               </label>
               <label className="form-group block">
-                <span className="form-label">التاريخ</span>
-                <input
-                  className="form-input w-full"
-                  type="date"
-                  value={printDate}
-                  onChange={(e) => setPrintDate(e.target.value)}
-                />
+                <span className="form-label">المركبة</span>
+                <select
+                  className="form-select w-full"
+                  value={printVehicleId || ''}
+                  onChange={(e) => setPrintVehicleId(Number(e.target.value))}
+                >
+                  <option value="">— اختياري —</option>
+                  {vehicles.map((vehicle) => (
+                    <option key={vehicle.id} value={vehicle.id}>
+                      {vehicle.plateNumber}{vehicle.model ? ` — ${vehicle.model}` : ''}
+                    </option>
+                  ))}
+                </select>
               </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="form-group block">
+                  <span className="form-label">من تاريخ</span>
+                  <input
+                    className="form-input w-full"
+                    type="date"
+                    value={printDateFrom}
+                    onChange={(e) => setPrintDateFrom(e.target.value)}
+                  />
+                </label>
+                <label className="form-group block">
+                  <span className="form-label">إلى تاريخ</span>
+                  <input
+                    className="form-input w-full"
+                    type="date"
+                    value={printDateTo}
+                    onChange={(e) => setPrintDateTo(e.target.value)}
+                  />
+                </label>
+              </div>
             </div>
             <div>
               <button type="button" onClick={() => setPrintDialogOpen(false)} disabled={printLoading}>
