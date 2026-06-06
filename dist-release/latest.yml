@@ -1,8 +1,8 @@
 version: 1.0.1
 files:
   - url: shahn-setup-1.0.1.exe
-    sha512: FUKDTK2V3p4ngZmquFPcrIhEhsT5H/iZB0Xrji7It1DtlYceeudJigz0fZL0hVt3d51jDd30CQWNxvIN+dLRbw==
-    size: 104415494
+    sha512: X0kCbp2Gco0Beu4f7ot5ulbpjnzh/dp+PRCSHekSJLUc8IBMSXW/rmgaUMi0f1YsI7TURp3nPDK+G5saGpioqw==
+    size: 104415116
 path: shahn-setup-1.0.1.exe
-sha512: FUKDTK2V3p4ngZmquFPcrIhEhsT5H/iZB0Xrji7It1DtlYceeudJigz0fZL0hVt3d51jDd30CQWNxvIN+dLRbw==
-releaseDate: '2026-06-06T15:08:07.473Z'
+sha512: X0kCbp2Gco0Beu4f7ot5ulbpjnzh/dp+PRCSHekSJLUc8IBMSXW/rmgaUMi0f1YsI7TURp3nPDK+G5saGpioqw==
+releaseDate: '2026-06-06T15:15:42.470Z'
