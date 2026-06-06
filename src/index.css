@@ -977,6 +977,29 @@ body {
   color: white;
 }
 
+.quick-ledger-actions button.danger {
+  background: #b42318;
+  border-color: #b42318;
+  color: white;
+}
+
+.quick-ledger-select-col {
+  width: 42px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.quick-ledger-select-col input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.quick-ledger-table tr.saved .quick-ledger-select-col input:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
 .quick-ledger-search input {
   width: 190px;
   border: 0;

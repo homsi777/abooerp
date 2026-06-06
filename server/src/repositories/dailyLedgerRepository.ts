@@ -485,4 +485,45 @@ export class DailyLedgerRepository {
     );
     return result.rowCount ?? 0;
   }
+
+  async deleteRows(
+    scope: DataScope,
+    input: { rowIds: string[]; userId?: string },
+    allowedBranchIds: string[],
+  ): Promise<{ deletedIds: string[]; blockedIds: string[] }> {
+    if (!scope.companyId) {
+      throw new Error('Company scope is required.');
+    }
+    if (!input.rowIds.length) {
+      return { deletedIds: [], blockedIds: [] };
+    }
+
+    const result = await pool.query<{ id: string }>(
+      `
+      update daily_ledger_rows r
+      set
+        deleted_at = now(),
+        updated_by = $2,
+        updated_at = now()
+      from daily_ledger_sessions s
+      join branches b on b.id = s.branch_id
+      where r.id = any($1::uuid[])
+        and r.session_id = s.id
+        and r.deleted_at is null
+        and s.deleted_at is null
+        and b.company_id = $3
+        and r.loaded_at is null
+        and (
+          coalesce(array_length($4::uuid[], 1), 0) = 0
+          or s.branch_id = any($4::uuid[])
+        )
+      returning r.id
+      `,
+      [input.rowIds, input.userId ?? scope.userId ?? null, scope.companyId, allowedBranchIds ?? []],
+    );
+
+    const deletedIds = result.rows.map((row) => row.id);
+    const blockedIds = input.rowIds.filter((id) => !deletedIds.includes(id));
+    return { deletedIds, blockedIds };
+  }
 }

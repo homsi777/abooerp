@@ -227,5 +227,21 @@ export function createDailyLedgerRouter(service: DailyLedgerService) {
     },
   );
 
+  router.post(
+    '/rows/delete',
+    requirePermissions(['shipments.write']),
+    async (req, res) => {
+      const userContext = (req as any).requestUserContext as any;
+      const allowedBranchIds: string[] = Array.isArray(userContext?.allowedBranchIds) ? userContext.allowedBranchIds : [];
+      const scope = parseDataScope(req);
+      const bodySchema = z.object({
+        rowIds: z.array(uuid).min(1),
+      });
+      const { rowIds } = bodySchema.parse(req.body);
+      const result = await service.deleteRows(scope, rowIds, allowedBranchIds);
+      res.json({ success: true, data: result });
+    },
+  );
+
   return router;
 }

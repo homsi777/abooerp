@@ -1,6 +1,6 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Printer, Save, Search } from 'lucide-react';
+import { Plus, Printer, Save, Search, Trash2 } from 'lucide-react';
 import { useToast } from '../components/Toast';
 import { getBackendIdFromSynthetic, phase15Gateway, syntheticEntityId } from '../lib/api/phase15Gateway';
 import { httpClient } from '../lib/api/httpClient';
@@ -177,6 +177,11 @@ function shouldPersistRow(row: LedgerRow) {
 /** جاهز لترحيل الشحنة — لا يشترط وزناً ولا كمية ولا مبلغاً */
 function isRowComplete(row: LedgerRow) {
   return isRowSavable(row);
+}
+
+function isRowDeletable(row: LedgerRow) {
+  if (row.loadedAt) return false;
+  return Boolean(row.dbId || isRowStarted(row));
 }
 
 function rowAmountUsd(row: LedgerRow) {
@@ -546,6 +551,10 @@ export default function ShipmentQuickLedger() {
   const [printDateFrom, setPrintDateFrom] = useState(new Date().toISOString().split('T')[0]);
   const [printDateTo, setPrintDateTo] = useState(new Date().toISOString().split('T')[0]);
   const [printLoading, setPrintLoading] = useState(false);
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [selectedDeleteRowIds, setSelectedDeleteRowIds] = useState<number[]>([]);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deletingRows, setDeletingRows] = useState(false);
   const [loadingRefs, setLoadingRefs] = useState(false);
   const [saving, setSaving] = useState(false);
   const [destinationOptions, setDestinationOptions] = useState<string[]>([]);
@@ -621,6 +630,11 @@ export default function ShipmentQuickLedger() {
       ].some((f) => String(f).toLowerCase().includes(q)),
     );
   }, [rows, searchQuick]);
+
+  const deletableVisibleRows = useMemo(
+    () => visibleRows.filter(isRowDeletable),
+    [visibleRows],
+  );
 
   const stats = useMemo(() => {
     const meaningful = rows.filter(isRowStarted);
@@ -1347,10 +1361,69 @@ export default function ShipmentQuickLedger() {
   };
 
   const openPrintDialog = () => {
+    setDeleteMode(false);
+    setSelectedDeleteRowIds([]);
     setPrintDriverId(trip.driverId || 0);
     setPrintDateFrom(trip.date);
     setPrintDateTo(trip.date);
     setPrintDialogOpen(true);
+  };
+
+  const exitDeleteMode = () => {
+    setDeleteMode(false);
+    setSelectedDeleteRowIds([]);
+    setDeleteConfirmOpen(false);
+  };
+
+  const toggleDeleteRowSelection = (rowId: number) => {
+    setSelectedDeleteRowIds((prev) =>
+      prev.includes(rowId) ? prev.filter((id) => id !== rowId) : [...prev, rowId],
+    );
+  };
+
+  const toggleSelectAllDeletable = () => {
+    const ids = deletableVisibleRows.map((row) => row.id);
+    setSelectedDeleteRowIds((prev) => (prev.length === ids.length ? [] : ids));
+  };
+
+  const deleteSelectedRows = async () => {
+    const selected = rows.filter((row) => selectedDeleteRowIds.includes(row.id));
+    if (!selected.length) {
+      showToast('لم تُحدَّد أسطر للحذف', 'info');
+      return;
+    }
+    if (selected.some((row) => row.loadedAt)) {
+      showToast('لا يمكن حذف أسطر محمّلة على بيان', 'error');
+      return;
+    }
+
+    setDeletingRows(true);
+    try {
+      await flushPendingRowSaves();
+      const dbIds = selected.map((row) => row.dbId).filter((id): id is string => Boolean(id));
+      if (dbIds.length) {
+        const result = await httpClient.post<{ deletedIds: string[]; blockedIds: string[] }>(
+          '/daily-ledger/rows/delete',
+          { rowIds: dbIds },
+        );
+        if (result.blockedIds.length) {
+          showToast(`تعذر حذف ${result.blockedIds.length} سطر (ربما محمّل على بيان)`, 'error');
+        }
+      }
+
+      const origin = resolveTripOrigin(tripRef.current.line);
+      setRows((prev) => {
+        const remaining = prev.filter((row) => !selectedDeleteRowIds.includes(row.id));
+        if (!remaining.length) return buildEntrySlotRows(1, origin);
+        return appendTrailingEntrySlot(remaining);
+      });
+      exitDeleteMode();
+      showToast(`تم حذف ${selected.length} سطر`, 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر حذف الأسطر المحددة', 'error');
+    } finally {
+      setDeletingRows(false);
+    }
   };
 
   const handleDriverSelect = (driverId: number) => {
@@ -1690,6 +1763,27 @@ export default function ShipmentQuickLedger() {
             <Printer size={16} />
             طباعة
           </button>
+          {deleteMode ? (
+            <>
+              <button type="button" onClick={exitDeleteMode} disabled={deletingRows}>
+                إلغاء التحديد
+              </button>
+              <button
+                type="button"
+                className="danger"
+                disabled={deletingRows || !selectedDeleteRowIds.length}
+                onClick={() => setDeleteConfirmOpen(true)}
+              >
+                <Trash2 size={16} />
+                {deletingRows ? 'جاري الحذف...' : `حذف المحدد (${selectedDeleteRowIds.length})`}
+              </button>
+            </>
+          ) : (
+            <button type="button" className="danger" onClick={() => setDeleteMode(true)}>
+              <Trash2 size={16} />
+              حذف أسطر
+            </button>
+          )}
           <button type="button" onClick={() => setCloseConfirmOpen(true)}>
             إغلاق القسم
           </button>
@@ -1775,6 +1869,20 @@ export default function ShipmentQuickLedger() {
         <table className="quick-ledger-table">
           <thead>
             <tr>
+              {deleteMode && (
+                <th className="quick-ledger-select-col">
+                  <input
+                    type="checkbox"
+                    aria-label="تحديد كل الأسطر القابلة للحذف"
+                    checked={
+                      deletableVisibleRows.length > 0 &&
+                      selectedDeleteRowIds.length === deletableVisibleRows.length
+                    }
+                    onChange={toggleSelectAllDeletable}
+                    disabled={!deletableVisibleRows.length}
+                  />
+                </th>
+              )}
               <th>رقم الإيصال</th>
               <th>الجهة</th>
               <th className="col-parcel-type">نوع الطرود</th>
@@ -1793,9 +1901,22 @@ export default function ShipmentQuickLedger() {
               const started = isRowStarted(row);
               const locked = Boolean(row.loadedAt);
               const posted = Boolean(row.postedShipmentId);
+              const deletable = isRowDeletable(row);
               const goodsTypeItems = goodsTypes.map((g) => ({ id: g.id, name: g.name }));
               return (
                 <tr key={row.id} className={locked ? 'saved' : posted ? 'started' : activeRowId === row.id ? 'active' : started ? 'started' : ''}>
+                  {deleteMode && (
+                    <td className="quick-ledger-select-col">
+                      <input
+                        type="checkbox"
+                        aria-label={`تحديد سطر ${row.receiptNo || row.id}`}
+                        checked={selectedDeleteRowIds.includes(row.id)}
+                        disabled={!deletable}
+                        title={deletable ? 'تحديد للحذف' : 'لا يمكن حذف سطر محمّل على بيان'}
+                        onChange={() => toggleDeleteRowSelection(row.id)}
+                      />
+                    </td>
+                  )}
                   <td><input data-ledger-field="true" value={row.receiptNo} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onChange={(e) => updateRow(row.id, 'receiptNo', e.target.value)} /></td>
                   <td className="quick-ledger-dest-cell">
                     <input
@@ -1962,6 +2083,28 @@ export default function ShipmentQuickLedger() {
         <span>التاريخ</span>
         <span>التوقيع</span>
       </section>
+
+      {deleteConfirmOpen && (
+        <div className="quick-ledger-confirm" role="dialog" aria-modal="true">
+          <div className="quick-ledger-confirm-panel">
+            <h3>حذف الأسطر المحددة؟</h3>
+            <p>
+              سيتم حذف {selectedDeleteRowIds.length} سطر من الدفتر. الأسطر المحمّلة على بيان لا تُحذف.
+              {rows.some((row) => selectedDeleteRowIds.includes(row.id) && row.postedShipmentId)
+                ? ' بعض الأسطر المحددة مرتبطة بشحنات — سيُحذف سطر الدفتر فقط.'
+                : ''}
+            </p>
+            <div>
+              <button type="button" onClick={() => setDeleteConfirmOpen(false)} disabled={deletingRows}>
+                إلغاء
+              </button>
+              <button type="button" className="danger" onClick={() => void deleteSelectedRows()} disabled={deletingRows}>
+                {deletingRows ? 'جاري الحذف...' : 'تأكيد الحذف'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {printDialogOpen && (
         <div className="quick-ledger-confirm" role="dialog" aria-modal="true">

@@ -39,4 +39,8 @@ export class DailyLedgerService {
     }
     return this.shipmentPosting.postPendingShipments(scope, filters, allowedBranchIds);
   }
+
+  deleteRows(scope: DataScope, rowIds: string[], allowedBranchIds: string[]) {
+    return this.repo.deleteRows(scope, { rowIds, userId: scope.userId }, allowedBranchIds);
+  }
 }
