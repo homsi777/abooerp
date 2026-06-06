@@ -114,16 +114,12 @@ async function ensureGoodsType(client: PoolClient, name: string): Promise<string
 }
 
 function isRowPostable(row: LedgerRowRecord): boolean {
-  const amounts = amountsFromLedgerRow(row);
   return Boolean(
     normalizeName(row.receipt_no) &&
       normalizeName(row.destination) &&
-      normalizeName(row.parcel_type) &&
-      Number(row.parcel_count ?? 0) >= 1 &&
       normalizeName(row.sender_name) &&
       normalizeName(row.receiver_name) &&
-      !row.posted_shipment_id &&
-      amounts.total > 0,
+      !row.posted_shipment_id,
   );
 }
 
@@ -249,7 +245,7 @@ export class DailyLedgerShipmentPostingService {
       };
     }
     if (!isRowPostable(row)) {
-      throw new HttpError(400, `السطر ${row.row_no} غير مكتمل أو بلا مبلغ شحن للترحيل.`);
+      throw new HttpError(400, `السطر ${row.row_no} غير مكتمل للترحيل (يلزم: إيصال + جهة + مرسل + مستلم).`);
     }
 
     const client = await pool.connect();
@@ -259,7 +255,10 @@ export class DailyLedgerShipmentPostingService {
       await client.query('begin');
       senderId = await ensureSenderReceiver(client, row.sender_name ?? '', 'sender');
       receiverId = await ensureSenderReceiver(client, row.receiver_name ?? '', 'receiver');
-      await ensureGoodsType(client, row.parcel_type ?? '');
+      const parcelType = normalizeName(row.parcel_type);
+      if (parcelType) {
+        await ensureGoodsType(client, parcelType);
+      }
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -362,7 +361,7 @@ export class DailyLedgerShipmentPostingService {
     const postable = rows.filter(isRowPostable);
     const skipped = rows
       .filter((row) => !isRowPostable(row))
-      .map((row) => ({ rowId: row.id, rowNo: row.row_no, reason: 'غير مكتمل أو بلا مبلغ' }));
+      .map((row) => ({ rowId: row.id, rowNo: row.row_no, reason: 'ناقص: إيصال أو جهة أو مرسل أو مستلم' }));
 
     const posted: Array<{ rowId: string; rowNo: number; shipmentId: string; shipmentNo: string; agentId: string | null }> = [];
     const errors: Array<{ rowId: string; rowNo: number; message: string }> = [];

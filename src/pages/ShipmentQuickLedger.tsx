@@ -158,21 +158,25 @@ function isRowStarted(row: LedgerRow) {
   );
 }
 
-function shouldPersistRow(row: LedgerRow) {
-  if (row.loadedAt) return false;
-  if (row.dbId) return isRowStarted(row);
-  return isRowComplete(row);
-}
-
-function isRowComplete(row: LedgerRow) {
+/** الحد الأدنى لحفظ سطر جديد — الوزن والكمية والمبالغ اختيارية */
+function isRowSavable(row: LedgerRow) {
   return Boolean(
     row.receiptNo.trim() &&
       row.destination.trim() &&
-      row.parcelType.trim() &&
-      row.parcelCount.trim() &&
       row.sender.trim() &&
       row.receiver.trim(),
   );
+}
+
+function shouldPersistRow(row: LedgerRow) {
+  if (row.loadedAt) return false;
+  if (row.dbId) return isRowStarted(row);
+  return isRowSavable(row);
+}
+
+/** جاهز لترحيل الشحنة — لا يشترط وزناً ولا كمية ولا مبلغاً */
+function isRowComplete(row: LedgerRow) {
+  return isRowSavable(row);
 }
 
 function rowAmountUsd(row: LedgerRow) {
@@ -991,9 +995,7 @@ export default function ShipmentQuickLedger() {
       }),
       ),
     );
-    if (field !== 'destination') {
-      queueRowSave(id);
-    }
+    queueRowSave(id);
   };
 
   const saveRowToServer = async (displayRowId: number) => {
@@ -1552,12 +1554,6 @@ export default function ShipmentQuickLedger() {
         return;
       }
 
-      const rowsMissingAmount = rowsToPost.filter((row) => rowAmountUsd(row) <= 0);
-      if (rowsMissingAmount.length) {
-        showToast('كل سطر مكتمل يحتاج مبلغاً (تحصيل أو دفع مسبق أو حوالة) قبل حفظ الشحنة.', 'error');
-        return;
-      }
-
       let workingRows = [...rows];
       const upsertedRowIds: string[] = [];
       for (const row of rowsToPost) {
@@ -1803,8 +1799,8 @@ export default function ShipmentQuickLedger() {
 
       <section className="quick-ledger-stats">
         <div><strong>{stats.started}</strong><span>أسطر مستخدمة</span></div>
-        <div><strong>{stats.complete}</strong><span>جاهزة للحفظ</span></div>
-        <div><strong>{stats.missing}</strong><span>ناقصة</span></div>
+        <div><strong>{stats.complete}</strong><span>جاهزة للترحيل</span></div>
+        <div><strong>{stats.missing}</strong><span>ناقصة (إيصال+جهة+مرسل+مستلم)</span></div>
         <div><strong>{stats.saved}</strong><span>محفوظة</span></div>
         <div><strong>{stats.totalCollect.toLocaleString()}</strong><span>إجمالي الدولار</span></div>
       </section>
