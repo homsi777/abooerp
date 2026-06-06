@@ -44,9 +44,17 @@ type LedgerRow = {
   notes: string;
 };
 
-const LEDGER_PAGE_SIZE = 10;
-const DEFAULT_LEDGER_ROW_COUNT = LEDGER_PAGE_SIZE;
-const LEDGER_ROWS_ADD_INCREMENT = 10;
+const LEDGER_FETCH_CHUNK_SIZE = 10;
+const DEFAULT_LEDGER_ROW_COUNT = 200;
+const LEDGER_ROWS_ADD_INCREMENT = 100;
+
+function sortRemoteLedgerRows(data: RemoteDailyLedgerRow[]) {
+  return [...data].sort((a, b) => {
+    const driverCmp = String(a.driver_label ?? '').localeCompare(String(b.driver_label ?? ''), 'ar');
+    if (driverCmp !== 0) return driverCmp;
+    return a.row_no - b.row_no;
+  });
+}
 
 type RemoteDailyLedgerRow = {
   id: string;
@@ -561,8 +569,8 @@ export default function ShipmentQuickLedger() {
   const [catalogAgents, setCatalogAgents] = useState<SuggestedAgent[]>([]);
   const [includeLoaded, setIncludeLoaded] = useState(false);
   const [remoteLoading, setRemoteLoading] = useState(false);
-  const [ledgerPage, setLedgerPage] = useState(0);
-  const [hasMoreLedgerPages, setHasMoreLedgerPages] = useState(false);
+  const [remoteSyncedCount, setRemoteSyncedCount] = useState(0);
+  const loadGenerationRef = useRef(0);
   const saveTimersRef = useRef<Record<number, number>>({});
   const saveRowToServerRef = useRef<(displayRowId: number) => Promise<void>>(async () => {});
   const [branchSearch, setBranchSearch] = useState('');
@@ -739,38 +747,25 @@ export default function ShipmentQuickLedger() {
     }
   };
 
-  const loadRemoteRows = async (page = ledgerPage) => {
+  const loadRemoteRows = async () => {
     const branchId = activeBranchIdRef.current;
     const currentTrip = tripRef.current;
     if (!branchId) return;
     if (!currentTrip.date || !currentTrip.line) return;
 
+    const generation = ++loadGenerationRef.current;
     setRemoteLoading(true);
+    setRemoteSyncedCount(0);
+
     try {
       await flushPendingRowSaves();
-      const params = new URLSearchParams();
-      params.set('branchId', branchId);
-      params.set('ledgerDate', currentTrip.date);
-      params.set('lineLabel', currentTrip.line);
-      params.set('includeLoaded', includeLoaded ? 'true' : 'false');
-      params.set('limit', String(LEDGER_PAGE_SIZE));
-      params.set('offset', String(page * LEDGER_PAGE_SIZE));
-      const data = await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${params.toString()}`);
-      setHasMoreLedgerPages(data.length === LEDGER_PAGE_SIZE);
-      const sorted = [...data].sort((a, b) => {
-        const driverCmp = String(a.driver_label ?? '').localeCompare(String(b.driver_label ?? ''), 'ar');
-        if (driverCmp !== 0) return driverCmp;
-        return a.row_no - b.row_no;
-      });
-      let displayId = page * LEDGER_PAGE_SIZE + 1;
-      const consolidated = sorted.map((remote) => mapRemoteRowToLocal(remote, displayId++));
+      if (generation !== loadGenerationRef.current) return;
+
       const origin = resolveTripOrigin(currentTrip.line);
-      const emptyCount = Math.max(LEDGER_PAGE_SIZE - consolidated.length, 0);
-      const nextRows = [
-        ...consolidated,
-        ...Array.from({ length: emptyCount }, (_, idx) =>
+      setRows(
+        Array.from({ length: DEFAULT_LEDGER_ROW_COUNT }, (_, idx) =>
           mergeRowWithAutoTariff(
-            { ...createEmptyRow(page * LEDGER_PAGE_SIZE + consolidated.length + idx + 1), origin },
+            { ...createEmptyRow(idx + 1), origin },
             tariffs,
             cities,
             branches,
@@ -778,20 +773,69 @@ export default function ShipmentQuickLedger() {
             currentTrip.date,
           ),
         ),
-      ];
-      setRows(nextRows);
+      );
+
+      const baseParams = new URLSearchParams();
+      baseParams.set('branchId', branchId);
+      baseParams.set('ledgerDate', currentTrip.date);
+      baseParams.set('lineLabel', currentTrip.line);
+      baseParams.set('includeLoaded', includeLoaded ? 'true' : 'false');
+
+      const accumulated: RemoteDailyLedgerRow[] = [];
+      let offset = 0;
+
+      while (offset <= 50000) {
+        if (generation !== loadGenerationRef.current) return;
+
+        const params = new URLSearchParams(baseParams);
+        params.set('limit', String(LEDGER_FETCH_CHUNK_SIZE));
+        params.set('offset', String(offset));
+        const batch = await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${params.toString()}`);
+
+        if (generation !== loadGenerationRef.current) return;
+        if (!batch.length) break;
+
+        accumulated.push(...batch);
+        setRemoteSyncedCount(accumulated.length);
+
+        const sorted = sortRemoteLedgerRows(accumulated);
+        let displayId = 1;
+        const consolidated = sorted.map((remote) => mapRemoteRowToLocal(remote, displayId++));
+        const emptyStart = consolidated.length + 1;
+        const emptyCount = Math.max(DEFAULT_LEDGER_ROW_COUNT - consolidated.length, 100);
+        setRows([
+          ...consolidated,
+          ...Array.from({ length: emptyCount }, (_, idx) =>
+            mergeRowWithAutoTariff(
+              { ...createEmptyRow(emptyStart + idx), origin },
+              tariffs,
+              cities,
+              branches,
+              goodsTypes,
+              currentTrip.date,
+            ),
+          ),
+        ]);
+
+        if (batch.length < LEDGER_FETCH_CHUNK_SIZE) break;
+        offset += LEDGER_FETCH_CHUNK_SIZE;
+      }
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'تعذر تحديث دفتر الشحن اليومي من الشبكة', 'error');
+      if (generation === loadGenerationRef.current) {
+        showToast(error instanceof Error ? error.message : 'تعذر تحديث دفتر الشحن اليومي من الشبكة', 'error');
+      }
     } finally {
-      setRemoteLoading(false);
+      if (generation === loadGenerationRef.current) {
+        setRemoteLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     if (!loadingRefs) {
-      void loadRemoteRows(ledgerPage);
+      void loadRemoteRows();
     }
-  }, [activeBranchId, trip.date, trip.line, includeLoaded, loadingRefs, ledgerPage]);
+  }, [activeBranchId, trip.date, trip.line, includeLoaded, loadingRefs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1112,7 +1156,6 @@ export default function ShipmentQuickLedger() {
   };
 
   const handleTripLineChange = (value: string) => {
-    setLedgerPage(0);
     setTrip((prev) => ({ ...prev, line: value }));
     applyTripOriginToRows(value);
   };
@@ -1455,7 +1498,7 @@ export default function ShipmentQuickLedger() {
       await flushPendingRowSaves();
       if (!rowsToPost.length) {
         showToast('تم حفظ التعديلات على الأسطر', 'success');
-        await loadRemoteRows(ledgerPage);
+        await loadRemoteRows();
         return;
       }
       if (!trip.driverId) {
@@ -1532,7 +1575,7 @@ export default function ShipmentQuickLedger() {
         showToast('لا توجد أسطر صالحة للترحيل. تأكد من اكتمال البيانات وربط الوكيل بالوجهة.', 'info');
       }
 
-      await loadRemoteRows(ledgerPage);
+      await loadRemoteRows();
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'تعذر حفظ الشحنات', 'error');
     } finally {
@@ -1547,7 +1590,7 @@ export default function ShipmentQuickLedger() {
           <div className="quick-ledger-eyebrow">إدخال سريع للشحنات</div>
           <h2>دفتر الشحن اليومي</h2>
           <p className="quick-ledger-hint">
-            اختر <strong>الخط</strong> لعرض شحناته على دفعات (10 أسطر لكل صفحة). السائق والمركبة للإدخال الجديد. الطباعة من زر «طباعة».
+            اختر <strong>الخط</strong> لعرض كل شحناته (كل السائقين). السائق والمركبة للإدخال الجديد فقط. الطباعة من زر «طباعة» حسب السائق/المركبة وفترة تاريخ. البيانات المحفوظة تُجلب على دفعات لتسريع الفتح.
             عمود <strong>تحصيل $</strong> يُملأ من تعريف الأسعار عند تطابق المسار + نوع الطرد + الوزن.
           </p>
         </div>
@@ -1594,20 +1637,17 @@ export default function ShipmentQuickLedger() {
           </div>
           <button type="button" onClick={addRows}>
             <Plus size={16} />
-            إضافة 10 أسطر
+            إضافة 100 سطر
           </button>
-          <button type="button" onClick={() => void loadRemoteRows(ledgerPage)} disabled={remoteLoading}>
-            {remoteLoading ? 'جاري التحديث...' : 'تحديث'}
+          <button type="button" onClick={() => void loadRemoteRows()} disabled={remoteLoading}>
+            {remoteLoading
+              ? remoteSyncedCount > 0
+                ? `مزامنة ${remoteSyncedCount}...`
+                : 'جاري التحديث...'
+              : 'تحديث'}
           </button>
           <label className="quick-ledger-print-toggle">
-            <input
-              type="checkbox"
-              checked={includeLoaded}
-              onChange={(e) => {
-                setLedgerPage(0);
-                setIncludeLoaded(e.target.checked);
-              }}
-            />
+            <input type="checkbox" checked={includeLoaded} onChange={(e) => setIncludeLoaded(e.target.checked)} />
             إظهار المحمّلة
           </label>
           <button type="button" onClick={openPrintDialog}>
@@ -1656,7 +1696,6 @@ export default function ShipmentQuickLedger() {
                 showToast('لا يمكن اختيار تاريخ مستقبلي', 'error');
                 return;
               }
-              setLedgerPage(0);
               setTrip((prev) => ({ ...prev, date: next }));
             }}
           />
@@ -1686,27 +1725,6 @@ export default function ShipmentQuickLedger() {
         {canPickHistoricalDate && (
           <p className="quick-ledger-trip-hint">يمكن للمدير اختيار تواريخ سابقة لإدخال بيانات متأخرة.</p>
         )}
-      </section>
-
-      <section className="quick-ledger-pager">
-        <button
-          type="button"
-          disabled={ledgerPage === 0 || remoteLoading}
-          onClick={() => setLedgerPage((page) => Math.max(0, page - 1))}
-        >
-          ← السابق (10 أسطر)
-        </button>
-        <span>
-          صفحة {ledgerPage + 1} — أسطر {ledgerPage * LEDGER_PAGE_SIZE + 1}–{ledgerPage * LEDGER_PAGE_SIZE + rows.length}
-          {remoteLoading ? ' · جاري التحميل...' : ''}
-        </span>
-        <button
-          type="button"
-          disabled={!hasMoreLedgerPages || remoteLoading}
-          onClick={() => setLedgerPage((page) => page + 1)}
-        >
-          التالي (10 أسطر) →
-        </button>
       </section>
 
       <section className="quick-ledger-stats">
