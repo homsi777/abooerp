@@ -13,6 +13,9 @@ export const LAN_STORAGE = {
   CONNECTION_MODE: 'lan.connectionMode',
 } as const;
 
+/** منفذ API على VPS عندما يمر عبر Nginx (مثل :2730) — ليس 4010 الداخلي */
+export const CLOUD_API_PORT = 2730;
+
 export function saveLanConnection(serverIp: string, port = 4010): void {
   const apiBaseUrl = `http://${serverIp}:${port}/api/v1`;
   localStorage.setItem(LAN_STORAGE.API_BASE_URL, apiBaseUrl);

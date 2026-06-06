@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { clearLanConnection, getLanPort, saveLanConnection } from '../../lib/api/httpClient';
+import { clearLanConnection, CLOUD_API_PORT, getLanPort, saveLanConnection } from '../../lib/api/httpClient';
 
 export const DEVICE_BOOTSTRAP_STORAGE_KEY = 'erp.deviceBootstrap.v1';
 
@@ -7,6 +7,10 @@ type Step = 'choose' | 'branch-ip' | 'agent-msg';
 
 function validateIp(ip: string): boolean {
   return /^(\d{1,3}\.){3}\d{1,3}$/.test(ip.trim());
+}
+
+function validatePort(port: number): boolean {
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
 }
 
 async function isPackagedElectron(): Promise<boolean> {
@@ -44,7 +48,7 @@ type Props = {
  */
 export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
   const [step, setStep] = useState<Step>(startAt === 'agent-msg' ? 'agent-msg' : 'choose');
-  const [port, setPort] = useState(4010);
+  const [port, setPort] = useState(CLOUD_API_PORT);
   const [ip, setIp] = useState('');
   const [branchStatus, setBranchStatus] = useState<'idle' | 'testing' | 'success' | 'fail'>('idle');
   const [branchErr, setBranchErr] = useState('');
@@ -55,15 +59,24 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
 
   useEffect(() => {
     const loadPort = async () => {
+      const savedPort = getLanPort();
+      if (localStorage.getItem('lan.serverPort')) {
+        setPort(savedPort);
+        return;
+      }
       try {
         const runtime = (window as any)?.runtime;
         if (runtime?.getConfig) {
           const cfg = await runtime.getConfig();
-          if (cfg?.backendPort) setPort(Number(cfg.backendPort) || 4010);
+          if (cfg?.backendResolutionMode === 'manual_lan' && cfg?.backendPort) {
+            setPort(Number(cfg.backendPort) || CLOUD_API_PORT);
+            return;
+          }
         }
       } catch {
-        setPort(getLanPort());
+        /* ignore */
       }
+      setPort(CLOUD_API_PORT);
     };
     void loadPort();
   }, []);
@@ -106,7 +119,7 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
       setBranchStatus('success');
     } catch {
       setBranchStatus('fail');
-      setBranchErr(`تعذر الاتصال بالرئيسي — تحقق من IP والشبكة والمنفذ (${port}).`);
+      setBranchErr(`تعذر الاتصال — تحقق من IP والمنفذ (${port}). للسحابة استخدم ${CLOUD_API_PORT}.`);
     }
   };
 
@@ -221,7 +234,7 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-            <div style={{ fontWeight: 800, color: '#fff', fontSize: 16 }}>جهاز فرعي — عنوان الرئيسي</div>
+            <div style={{ fontWeight: 800, color: '#fff', fontSize: 16 }}>اتصال بالسحابة</div>
             <button
               type="button"
               onClick={() => setStep('choose')}
@@ -231,9 +244,9 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
             </button>
           </div>
           <p style={{ margin: '0 0 16px', color: 'rgba(255,255,255,.55)', fontSize: 13, lineHeight: 1.6 }}>
-            أدخل IP الجهاز الرئيسي (الذي يعمل عليه PostgreSQL والخادم)، ثم اختبر الاتصال ثم احفظ.
+            أدخل IP السيرفر على السحابة والمنفذ (عادة {CLOUD_API_PORT})، ثم اختبر الاتصال ثم احفظ.
           </p>
-          <label style={{ display: 'block', color: 'rgba(255,255,255,.65)', fontSize: 12, marginBottom: 6 }}>IP الرئيسي</label>
+          <label style={{ display: 'block', color: 'rgba(255,255,255,.65)', fontSize: 12, marginBottom: 6 }}>IP السيرفر</label>
           <input
             value={ip}
             onChange={(e) => {
@@ -241,7 +254,7 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
               setBranchStatus('idle');
               setBranchErr('');
             }}
-            placeholder="192.168.1.100"
+            placeholder="65.21.136.217"
             dir="ltr"
             style={{
               width: '100%',
@@ -256,7 +269,32 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
               fontFamily: 'monospace',
             }}
           />
-          <div style={{ color: 'rgba(255,255,255,.35)', fontSize: 11, marginBottom: 14 }}>المنفذ: {port}</div>
+          <label style={{ display: 'block', color: 'rgba(255,255,255,.65)', fontSize: 12, marginBottom: 6 }}>منفذ API</label>
+          <input
+            type="number"
+            min={1}
+            max={65535}
+            value={port}
+            onChange={(e) => {
+              setPort(Number(e.target.value) || CLOUD_API_PORT);
+              setBranchStatus('idle');
+              setBranchErr('');
+            }}
+            placeholder={String(CLOUD_API_PORT)}
+            dir="ltr"
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '12px 14px',
+              marginBottom: 14,
+              borderRadius: 10,
+              border: '1px solid rgba(255,255,255,.15)',
+              background: 'rgba(255,255,255,.07)',
+              color: '#fff',
+              fontSize: 15,
+              fontFamily: 'monospace',
+            }}
+          />
 
           {branchErr && (
             <div
@@ -278,7 +316,7 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
             <button
               type="button"
               onClick={() => void testBranchConnection()}
-              disabled={!validateIp(ip) || branchStatus === 'testing'}
+              disabled={!validateIp(ip) || !validatePort(port) || branchStatus === 'testing'}
               style={{
                 flex: 1,
                 minWidth: 120,
@@ -287,8 +325,8 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
                 border: 'none',
                 fontWeight: 700,
                 fontSize: 14,
-                cursor: validateIp(ip) && branchStatus !== 'testing' ? 'pointer' : 'not-allowed',
-                opacity: validateIp(ip) && branchStatus !== 'testing' ? 1 : 0.55,
+                cursor: validateIp(ip) && validatePort(port) && branchStatus !== 'testing' ? 'pointer' : 'not-allowed',
+                opacity: validateIp(ip) && validatePort(port) && branchStatus !== 'testing' ? 1 : 0.55,
                 background: 'linear-gradient(135deg,#0ea5e9,#2563eb)',
                 color: '#fff',
               }}
@@ -400,8 +438,8 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
           >
             <span style={{ fontSize: 26 }}>🌐</span>
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>فرعي</div>
-              <div style={{ fontSize: 12, color: 'rgba(255,255,255,.55)' }}>الاتصال بجهاز رئيسي على الشبكة (بدون قاعدة بيانات محلية)</div>
+              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>سحابة</div>
+              <div style={{ fontSize: 12, color: 'rgba(255,255,255,.55)' }}>الاتصال بسيرفر الشركة على الإنترنت (IP + منفذ {CLOUD_API_PORT})</div>
             </div>
             <span style={{ opacity: 0.5 }}>←</span>
           </button>
