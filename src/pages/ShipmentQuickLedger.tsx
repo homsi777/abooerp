@@ -247,6 +247,20 @@ function isRemoteRowPrintable(remote: RemoteDailyLedgerRow) {
   );
 }
 
+function remoteRowMatchesDriver(
+  remote: RemoteDailyLedgerRow,
+  filters: { driverBackendId?: string; driverName?: string },
+) {
+  const driverLabel = normalizeName(remote.driver_label ?? '');
+  return Boolean(
+    (filters.driverBackendId && remote.driver_id === filters.driverBackendId) ||
+      (filters.driverName &&
+        (driverLabel === normalizeName(filters.driverName) ||
+          driverLabel.includes(normalizeName(filters.driverName)) ||
+          normalizeName(filters.driverName).includes(driverLabel))),
+  );
+}
+
 const LEDGER_FETCH_PAGE_SIZE = 2000;
 
 async function fetchAllDailyLedgerRows(
@@ -528,6 +542,7 @@ export default function ShipmentQuickLedger() {
   const [activeRowId, setActiveRowId] = useState(1);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printDriverId, setPrintDriverId] = useState(0);
   const [printDateFrom, setPrintDateFrom] = useState(new Date().toISOString().split('T')[0]);
   const [printDateTo, setPrintDateTo] = useState(new Date().toISOString().split('T')[0]);
   const [printLoading, setPrintLoading] = useState(false);
@@ -1332,6 +1347,7 @@ export default function ShipmentQuickLedger() {
   };
 
   const openPrintDialog = () => {
+    setPrintDriverId(trip.driverId || 0);
     setPrintDateFrom(trip.date);
     setPrintDateTo(trip.date);
     setPrintDialogOpen(true);
@@ -1383,6 +1399,17 @@ export default function ShipmentQuickLedger() {
       showToast('تاريخ البداية يجب أن يكون قبل تاريخ النهاية', 'error');
       return;
     }
+    if (!printDriverId) {
+      showToast('يرجى اختيار السائق قبل الطباعة', 'error');
+      return;
+    }
+
+    const driverBackendId = getBackendIdFromSynthetic(printDriverId);
+    if (!driverBackendId) {
+      showToast('تعذر تحديد السائق', 'error');
+      return;
+    }
+    const selectedDriver = drivers.find((d) => d.id === printDriverId);
 
     setPrintLoading(true);
     try {
@@ -1392,23 +1419,34 @@ export default function ShipmentQuickLedger() {
       params.set('dateTo', printDateTo);
       params.set('includeLoaded', 'true');
       const data = await fetchAllDailyLedgerRows(params);
-      const rowsToPrint = sortRemoteLedgerRows(data).map(remoteRowToPrint);
+      const rowsToPrint = sortRemoteLedgerRows(
+        data.filter((row) =>
+          remoteRowMatchesDriver(row, {
+            driverBackendId,
+            driverName: selectedDriver?.name,
+          }),
+        ),
+      ).map(remoteRowToPrint);
 
       if (!rowsToPrint.length) {
-        showToast('لا توجد أسطر في الفترة المحددة', 'info');
+        showToast('لا توجد أسطر لهذا السائق في الفترة المحددة', 'info');
         return;
       }
 
       showToast(`تم جلب ${rowsToPrint.length} سطر للطباعة`, 'info');
 
+      const linkedVehicle = vehicles.find((v) => v.driverId === printDriverId);
+      const vehicleLabel = linkedVehicle
+        ? `${linkedVehicle.plateNumber}${linkedVehicle.model ? ` — ${linkedVehicle.model}` : ''}`
+        : currentTrip.vehicle || '—';
       const dateLabel =
         printDateFrom === printDateTo ? printDateFrom : `${printDateFrom} → ${printDateTo}`;
 
       const html = buildQuickLedgerPrintHtml(rowsToPrint, {
-        title: `دفتر الشحن — ${currentTrip.line || 'الكل'}`,
+        title: `دفتر الشحن — ${selectedDriver?.name ?? ''}`,
         dateLabel,
-        driverName: currentTrip.driver || '—',
-        vehicleLabel: currentTrip.vehicle || '—',
+        driverName: selectedDriver?.name ?? '—',
+        vehicleLabel,
       });
 
       setPrintDialogOpen(false);
@@ -1929,8 +1967,23 @@ export default function ShipmentQuickLedger() {
         <div className="quick-ledger-confirm" role="dialog" aria-modal="true">
           <div className="quick-ledger-confirm-panel">
             <h3>طباعة دفتر الشحن</h3>
-            <p>طباعة كل أسطر الفرع للفترة المحددة — بدون فلتر سائق أو مركبة، حتى الأسطر الفارغة جزئياً.</p>
+            <p>طباعة حمولة السائق المحدد للفترة — كل أسطره حتى الجزئية منها، بدون استبعاد لعدم اكتمال البيانات.</p>
             <div className="space-y-3 mb-3">
+              <label className="form-group block">
+                <span className="form-label">السائق *</span>
+                <select
+                  className="form-select w-full"
+                  value={printDriverId || ''}
+                  onChange={(e) => setPrintDriverId(Number(e.target.value))}
+                >
+                  <option value="">— اختر السائق —</option>
+                  {drivers.map((driver) => (
+                    <option key={driver.id} value={driver.id}>
+                      {driver.code ? `${driver.code} — ` : ''}{driver.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <div className="grid grid-cols-2 gap-2">
                 <label className="form-group block">
                   <span className="form-label">من تاريخ</span>
