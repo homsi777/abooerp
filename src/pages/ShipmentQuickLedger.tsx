@@ -247,45 +247,14 @@ function isRemoteRowPrintable(remote: RemoteDailyLedgerRow) {
   );
 }
 
-function remoteRowMatchesPrintFilters(
-  remote: RemoteDailyLedgerRow,
-  filters: {
-    driverBackendId?: string;
-    driverName?: string;
-    vehicleBackendId?: string;
-    vehicleLabel?: string;
-  },
-) {
-  const hasDriverFilter = Boolean(filters.driverBackendId || filters.driverName);
-  const hasVehicleFilter = Boolean(filters.vehicleBackendId || filters.vehicleLabel);
-
-  if (hasDriverFilter) {
-    const driverLabel = normalizeName(remote.driver_label ?? '');
-    const driverOk =
-      (filters.driverBackendId && remote.driver_id === filters.driverBackendId) ||
-      (filters.driverName &&
-        (driverLabel === normalizeName(filters.driverName) ||
-          driverLabel.includes(normalizeName(filters.driverName)) ||
-          normalizeName(filters.driverName).includes(driverLabel)));
-    if (!driverOk) return false;
-  }
-
-  if (hasVehicleFilter) {
-    const vehicleOk =
-      (filters.vehicleBackendId && remote.vehicle_id === filters.vehicleBackendId) ||
-      (filters.vehicleLabel &&
-        normalizeName(remote.vehicle_label ?? '') === normalizeName(filters.vehicleLabel));
-    if (!vehicleOk) return false;
-  }
-
-  return hasDriverFilter || hasVehicleFilter;
-}
-
 const LEDGER_FETCH_PAGE_SIZE = 2000;
 
-async function fetchAllDailyLedgerRows(baseParams: URLSearchParams): Promise<RemoteDailyLedgerRow[]> {
+async function fetchAllDailyLedgerRows(
+  baseParams: URLSearchParams,
+  onlyWithData = false,
+): Promise<RemoteDailyLedgerRow[]> {
   const params = new URLSearchParams(baseParams);
-  params.set('onlyWithData', 'true');
+  if (onlyWithData) params.set('onlyWithData', 'true');
   const all: RemoteDailyLedgerRow[] = [];
   let offset = 0;
   while (offset <= 50000) {
@@ -559,8 +528,6 @@ export default function ShipmentQuickLedger() {
   const [activeRowId, setActiveRowId] = useState(1);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
-  const [printDriverId, setPrintDriverId] = useState(0);
-  const [printVehicleId, setPrintVehicleId] = useState(0);
   const [printDateFrom, setPrintDateFrom] = useState(new Date().toISOString().split('T')[0]);
   const [printDateTo, setPrintDateTo] = useState(new Date().toISOString().split('T')[0]);
   const [printLoading, setPrintLoading] = useState(false);
@@ -1365,8 +1332,6 @@ export default function ShipmentQuickLedger() {
   };
 
   const openPrintDialog = () => {
-    setPrintDriverId(trip.driverId || 0);
-    setPrintVehicleId(trip.vehicleId || 0);
     setPrintDateFrom(trip.date);
     setPrintDateTo(trip.date);
     setPrintDialogOpen(true);
@@ -1405,12 +1370,9 @@ export default function ShipmentQuickLedger() {
 
   const executeDriverPrint = async () => {
     const branchId = activeBranchIdRef.current;
+    const currentTrip = tripRef.current;
     if (!branchId) {
       showToast('يرجى اختيار الفرع قبل الطباعة', 'error');
-      return;
-    }
-    if (!printDriverId && !printVehicleId) {
-      showToast('يرجى اختيار السائق أو المركبة', 'error');
       return;
     }
     if (!printDateFrom || !printDateTo) {
@@ -1422,27 +1384,6 @@ export default function ShipmentQuickLedger() {
       return;
     }
 
-    const driverBackendId = printDriverId ? getBackendIdFromSynthetic(printDriverId) : undefined;
-    const vehicleBackendId = printVehicleId ? getBackendIdFromSynthetic(printVehicleId) : undefined;
-    if (printDriverId && !driverBackendId) {
-      showToast('تعذر تحديد السائق', 'error');
-      return;
-    }
-    if (printVehicleId && !vehicleBackendId) {
-      showToast('تعذر تحديد المركبة', 'error');
-      return;
-    }
-
-    const selectedDriver = printDriverId ? drivers.find((d) => d.id === printDriverId) : undefined;
-    const selectedVehicle = printVehicleId
-      ? vehicles.find((v) => v.id === printVehicleId)
-      : printDriverId
-        ? vehicles.find((v) => v.driverId === printDriverId)
-        : undefined;
-    const vehicleLabelForFilter = selectedVehicle
-      ? `${selectedVehicle.plateNumber}${selectedVehicle.model ? ` — ${selectedVehicle.model}` : ''}`
-      : undefined;
-
     setPrintLoading(true);
     try {
       const params = new URLSearchParams();
@@ -1451,36 +1392,23 @@ export default function ShipmentQuickLedger() {
       params.set('dateTo', printDateTo);
       params.set('includeLoaded', 'true');
       const data = await fetchAllDailyLedgerRows(params);
-      const rowsToPrint = data
-        .filter((row) =>
-          remoteRowMatchesPrintFilters(row, {
-            driverBackendId,
-            driverName: selectedDriver?.name,
-            vehicleBackendId,
-            vehicleLabel: vehicleLabelForFilter,
-          }),
-        )
-        .filter(isRemoteRowPrintable)
-        .map(remoteRowToPrint);
+      const rowsToPrint = sortRemoteLedgerRows(data).map(remoteRowToPrint);
 
       if (!rowsToPrint.length) {
-        showToast('لا توجد أسطر ببيانات ضمن الفترة والسائق/المركبة المحددين', 'info');
+        showToast('لا توجد أسطر في الفترة المحددة', 'info');
         return;
       }
 
       showToast(`تم جلب ${rowsToPrint.length} سطر للطباعة`, 'info');
 
-      const vehicleLabel = selectedVehicle
-        ? `${selectedVehicle.plateNumber}${selectedVehicle.model ? ` — ${selectedVehicle.model}` : ''}`
-        : '—';
       const dateLabel =
         printDateFrom === printDateTo ? printDateFrom : `${printDateFrom} → ${printDateTo}`;
 
       const html = buildQuickLedgerPrintHtml(rowsToPrint, {
-        title: `دفتر الشحن — ${selectedDriver?.name ?? selectedVehicle?.plateNumber ?? ''}`,
+        title: `دفتر الشحن — ${currentTrip.line || 'الكل'}`,
         dateLabel,
-        driverName: selectedDriver?.name ?? '—',
-        vehicleLabel,
+        driverName: currentTrip.driver || '—',
+        vehicleLabel: currentTrip.vehicle || '—',
       });
 
       setPrintDialogOpen(false);
@@ -2001,43 +1929,8 @@ export default function ShipmentQuickLedger() {
         <div className="quick-ledger-confirm" role="dialog" aria-modal="true">
           <div className="quick-ledger-confirm-panel">
             <h3>طباعة دفتر الشحن</h3>
-            <p>طباعة الأسطر التي بها بيانات فقط — حسب السائق أو المركبة وفترة التاريخ.</p>
+            <p>طباعة كل أسطر الفرع للفترة المحددة — بدون فلتر سائق أو مركبة، حتى الأسطر الفارغة جزئياً.</p>
             <div className="space-y-3 mb-3">
-              <label className="form-group block">
-                <span className="form-label">السائق</span>
-                <select
-                  className="form-select w-full"
-                  value={printDriverId || ''}
-                  onChange={(e) => {
-                    const id = Number(e.target.value);
-                    setPrintDriverId(id);
-                    const linked = vehicles.find((v) => v.driverId === id);
-                    if (linked) setPrintVehicleId(linked.id);
-                  }}
-                >
-                  <option value="">— اختياري —</option>
-                  {drivers.map((driver) => (
-                    <option key={driver.id} value={driver.id}>
-                      {driver.code ? `${driver.code} — ` : ''}{driver.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="form-group block">
-                <span className="form-label">المركبة</span>
-                <select
-                  className="form-select w-full"
-                  value={printVehicleId || ''}
-                  onChange={(e) => setPrintVehicleId(Number(e.target.value))}
-                >
-                  <option value="">— اختياري —</option>
-                  {vehicles.map((vehicle) => (
-                    <option key={vehicle.id} value={vehicle.id}>
-                      {vehicle.plateNumber}{vehicle.model ? ` — ${vehicle.model}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </label>
               <div className="grid grid-cols-2 gap-2">
                 <label className="form-group block">
                   <span className="form-label">من تاريخ</span>
