@@ -93,15 +93,15 @@ function resolveSlotIndex(slotIndex: number, transform: MahmoudPrintTransform): 
  * global offset: top=0, left=0
  */
 export const MAHMOUD_RECEIPT_FIELD_LAYOUT: Record<string, FieldDef> = {
-  receiptNo: { top: 12.5, left: 88, width: 20, height: 4, fontSize: 13, align: 'center' },
-  date: { top: 26.5, left: 98.5, width: 16, height: 5.5, fontSize: 13, align: 'center' },
-  receiver: { top: 44.5, left: 137.5, width: 92, height: 4, fontSize: 13, align: 'right' },
-  hawala: { top: 58, left: 189, width: 10, height: 3.8, fontSize: 12, align: 'center' },
-  amount: { top: 58.5, left: 153, width: 10, height: 3.8, fontSize: 12, align: 'center' },
-  prepaid: { top: 56.5, left: 170.5, width: 10, height: 3.8, fontSize: 12, align: 'center' },
-  parcelCount: { top: 58, left: 138.5, width: 9, height: 3.8, fontSize: 12, align: 'center' },
-  parcelType: { top: 57, left: 74, width: 36, height: 3.8, fontSize: 12, align: 'right' },
-  sender: { top: 57, left: 38.5, width: 26, height: 3.8, fontSize: 12, align: 'right' },
+  receiptNo: { top: 12.5, left: 88, width: 20, height: 4, fontSize: 19.5, align: 'center' },
+  date: { top: 26.5, left: 98.5, width: 16, height: 5.5, fontSize: 19.5, align: 'center' },
+  receiver: { top: 44.5, left: 137.5, width: 92, height: 4, fontSize: 19.5, align: 'right' },
+  hawala: { top: 58, left: 189, width: 10, height: 3.8, fontSize: 18, align: 'center' },
+  amount: { top: 58.5, left: 153, width: 10, height: 3.8, fontSize: 18, align: 'center' },
+  prepaid: { top: 56.5, left: 170.5, width: 10, height: 3.8, fontSize: 18, align: 'center' },
+  parcelCount: { top: 58, left: 138.5, width: 9, height: 3.8, fontSize: 18, align: 'center' },
+  parcelType: { top: 57, left: 74, width: 36, height: 3.8, fontSize: 18, align: 'right' },
+  sender: { top: 57, left: 38.5, width: 26, height: 3.8, fontSize: 18, align: 'right' },
 };
 
 export type MahmoudReceiptSlotLayouts = Record<number, Record<string, FieldDef>>;
