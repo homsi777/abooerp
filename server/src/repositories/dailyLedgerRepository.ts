@@ -154,12 +154,15 @@ export class DailyLedgerRepository {
           or coalesce(nullif(trim(r.receiver_name), ''), '') <> ''
           or coalesce(nullif(trim(r.parcel_type), ''), '') <> ''
           or coalesce(r.parcel_count, 0) > 0
-          or coalesce(r.weight_kg, 0) > 0
+          or coalesce(r.weight_kg::numeric, 0) > 0
           or coalesce(r.collect_amount_usd, 0) <> 0
           or coalesce(r.prepaid_amount_usd, 0) <> 0
           or coalesce(r.hawala_amount_usd, 0) <> 0
           or coalesce(r.transfer_service_fee_usd, 0) <> 0
           or coalesce(r.fees_amount_usd, 0) <> 0
+          or coalesce(nullif(trim(r.notes), ''), '') <> ''
+          or r.posted_shipment_id is not null
+          or r.loaded_at is not null
         )
       `);
     }

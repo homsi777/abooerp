@@ -44,7 +44,7 @@ type LedgerRow = {
   notes: string;
 };
 
-const LEDGER_FETCH_CHUNK_SIZE = 10;
+const LEDGER_FETCH_CHUNK_SIZE = 500;
 const LEDGER_ENTRY_SLOTS = 1;
 const LEDGER_ROWS_ADD_INCREMENT = 1;
 
@@ -520,9 +520,9 @@ function resolveAgentDestinationLabel(agent: {
   area?: string;
   name: string;
 }): string {
-  const governorate = normalizeName(agent.governorate);
+  const governorate = normalizeName(agent.governorate ?? '');
   if (governorate) return governorate;
-  const location = [agent.city, agent.area].map((part) => normalizeName(part)).filter(Boolean).join(' / ');
+  const location = [agent.city, agent.area].map((part) => normalizeName(part ?? '')).filter(Boolean).join(' / ');
   if (location) return location;
   return normalizeName(agent.name);
 }
@@ -567,7 +567,7 @@ export default function ShipmentQuickLedger() {
   const [agentSuggestions, setAgentSuggestions] = useState<Record<number, SuggestedAgent[]>>({});
   /** كل الوكلاء للشركة — يُحمَّل للمسؤولين لملء القائمة حتى لو بحث الوجهة لم يُطابق حقول الوكيل */
   const [catalogAgents, setCatalogAgents] = useState<SuggestedAgent[]>([]);
-  const [includeLoaded, setIncludeLoaded] = useState(false);
+  const [includeLoaded, setIncludeLoaded] = useState(true);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteSyncedCount, setRemoteSyncedCount] = useState(0);
   const loadGenerationRef = useRef(0);
@@ -804,7 +804,6 @@ export default function ShipmentQuickLedger() {
       baseParams.set('ledgerDate', currentTrip.date);
       baseParams.set('lineLabel', currentTrip.line);
       baseParams.set('includeLoaded', includeLoaded ? 'true' : 'false');
-      baseParams.set('onlyWithData', 'true');
 
       const byId = new Map<string, RemoteDailyLedgerRow>();
       let offset = 0;
@@ -1189,7 +1188,7 @@ export default function ShipmentQuickLedger() {
     try {
       const agents = await phase15Gateway.agents.lookupByDestination(destination);
       const mapped: SuggestedAgent[] = agents.map((a) => ({
-        id: syntheticEntityId(a.id),
+        id: a.id,
         code: a.code,
         name: a.name,
         governorate:
