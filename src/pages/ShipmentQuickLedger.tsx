@@ -1,6 +1,10 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Printer, Save, Search, Trash2 } from 'lucide-react';
+import {
+  buildMahmoudPreprintedReceiptHtml,
+  mapRemoteLedgerRowToMahmoudReceipt,
+} from '../lib/shipping/mahmoudPreprintedReceiptPrint';
 import { useToast } from '../components/Toast';
 import { getBackendIdFromSynthetic, phase15Gateway, syntheticEntityId } from '../lib/api/phase15Gateway';
 import { httpClient } from '../lib/api/httpClient';
@@ -1483,69 +1487,112 @@ export default function ShipmentQuickLedger() {
     }));
   };
 
-  const executeDriverPrint = async () => {
+  const prepareDriverPrintRows = async (): Promise<{
+    rows: RemoteDailyLedgerRow[];
+    activeSearch: string;
+    selectedDriver: Driver | undefined;
+  } | null> => {
     const branchId = activeBranchIdRef.current;
-    const currentTrip = tripRef.current;
     if (!branchId) {
       showToast('يرجى اختيار الفرع قبل الطباعة', 'error');
-      return;
+      return null;
     }
     if (!printDateFrom || !printDateTo) {
       showToast('يرجى اختيار فترة التاريخ', 'error');
-      return;
+      return null;
     }
     if (printDateFrom > printDateTo) {
       showToast('تاريخ البداية يجب أن يكون قبل تاريخ النهاية', 'error');
-      return;
+      return null;
     }
     if (!printDriverId) {
       showToast('يرجى اختيار السائق قبل الطباعة', 'error');
-      return;
+      return null;
     }
 
     const driverBackendId = getBackendIdFromSynthetic(printDriverId);
     if (!driverBackendId) {
       showToast('تعذر تحديد السائق', 'error');
-      return;
+      return null;
     }
     const selectedDriver = drivers.find((d) => d.id === printDriverId);
 
-    setPrintLoading(true);
-    try {
-      const params = new URLSearchParams();
-      params.set('branchId', branchId);
-      params.set('dateFrom', printDateFrom);
-      params.set('dateTo', printDateTo);
-      params.set('includeLoaded', 'true');
-      const data = await fetchAllDailyLedgerRows(params);
-      const activeSearch = searchQuick.trim();
-      const rowsToPrint = sortRemoteLedgerRows(
-        data.filter(
-          (row) =>
-            remoteRowMatchesDriver(row, {
-              driverBackendId,
-              driverName: selectedDriver?.name,
-            }) && matchesQuickLedgerSearch(activeSearch, remoteRowSearchFields(row)),
-        ),
-      ).map(remoteRowToPrint);
+    const params = new URLSearchParams();
+    params.set('branchId', branchId);
+    params.set('dateFrom', printDateFrom);
+    params.set('dateTo', printDateTo);
+    params.set('includeLoaded', 'true');
+    const data = await fetchAllDailyLedgerRows(params);
+    const activeSearch = searchQuick.trim();
+    const rows = sortRemoteLedgerRows(
+      data.filter(
+        (row) =>
+          remoteRowMatchesDriver(row, {
+            driverBackendId,
+            driverName: selectedDriver?.name,
+          }) && matchesQuickLedgerSearch(activeSearch, remoteRowSearchFields(row)),
+      ),
+    );
 
-      if (!rowsToPrint.length) {
-        showToast(
-          activeSearch
-            ? `لا توجد أسطر للسائق تطابق البحث «${activeSearch}»`
-            : 'لا توجد أسطر لهذا السائق في الفترة المحددة',
-          'info',
-        );
-        return;
-      }
-
+    if (!rows.length) {
       showToast(
         activeSearch
-          ? `تم جلب ${rowsToPrint.length} سطر (بحث: ${activeSearch})`
-          : `تم جلب ${rowsToPrint.length} سطر للطباعة`,
+          ? `لا توجد أسطر للسائق تطابق البحث «${activeSearch}»`
+          : 'لا توجد أسطر لهذا السائق في الفترة المحددة',
         'info',
       );
+      return null;
+    }
 
+    showToast(
+      activeSearch
+        ? `تم جلب ${rows.length} سطر (بحث: ${activeSearch})`
+        : `تم جلب ${rows.length} سطر للطباعة`,
+      'info',
+    );
+
+    return { rows, activeSearch, selectedDriver };
+  };
+
+  const dispatchHtmlPrint = async (html: string, documentType: string) => {
+    if (window.printer?.getDefault && window.printer?.print) {
+      const defaultPrinter = await window.printer.getDefault();
+      if (defaultPrinter.available && defaultPrinter.printer?.name) {
+        const result = await window.printer.print({
+          documentType,
+          printerTarget: defaultPrinter.printer.name,
+          copies: 1,
+          payloadType: 'html',
+          content: html,
+        });
+        if (result.queued) {
+          showToast(result.message || 'تم إرسال الطباعة', 'success');
+          return;
+        }
+        showToast(result.message || 'فشلت الطباعة', 'error');
+        return;
+      }
+      showToast(defaultPrinter.message || 'لم يتم العثور على طابعة افتراضية', 'error');
+      return;
+    }
+
+    if (isElectronRuntime()) {
+      showToast('خدمة الطباعة غير متاحة — أعد تشغيل التطبيق بعد التحديث', 'error');
+      return;
+    }
+
+    printHtmlInBrowser(html);
+    showToast('تم فتح معاينة الطباعة', 'success');
+  };
+
+  const executeShipmentsPrint = async () => {
+    setPrintLoading(true);
+    try {
+      const prepared = await prepareDriverPrintRows();
+      if (!prepared) return;
+
+      const { rows, activeSearch, selectedDriver } = prepared;
+      const currentTrip = tripRef.current;
       const linkedVehicle = vehicles.find((v) => v.driverId === printDriverId);
       const vehicleLabel = linkedVehicle
         ? `${linkedVehicle.plateNumber}${linkedVehicle.model ? ` — ${linkedVehicle.model}` : ''}`
@@ -1553,52 +1600,51 @@ export default function ShipmentQuickLedger() {
       const dateLabel =
         printDateFrom === printDateTo ? printDateFrom : `${printDateFrom} → ${printDateTo}`;
 
-      const html = buildQuickLedgerPrintHtml(rowsToPrint, {
-        title: activeSearch
-          ? `دفتر الشحن — ${selectedDriver?.name ?? ''} — ${activeSearch}`
-          : `دفتر الشحن — ${selectedDriver?.name ?? ''}`,
-        dateLabel,
-        driverName: selectedDriver?.name ?? '—',
-        vehicleLabel,
-      });
+      const html = buildQuickLedgerPrintHtml(
+        rows.map(remoteRowToPrint),
+        {
+          title: activeSearch
+            ? `دفتر الشحن — ${selectedDriver?.name ?? ''} — ${activeSearch}`
+            : `دفتر الشحن — ${selectedDriver?.name ?? ''}`,
+          dateLabel,
+          driverName: selectedDriver?.name ?? '—',
+          vehicleLabel,
+        },
+      );
 
       setPrintDialogOpen(false);
-
-      if (window.printer?.getDefault && window.printer?.print) {
-        const defaultPrinter = await window.printer.getDefault();
-        if (defaultPrinter.available && defaultPrinter.printer?.name) {
-          const result = await window.printer.print({
-            documentType: 'quick_ledger',
-            printerTarget: defaultPrinter.printer.name,
-            copies: 1,
-            payloadType: 'html',
-            content: html,
-          });
-          if (result.queued) {
-            showToast(result.message || 'تم إرسال دفتر الشحن للطباعة', 'success');
-            return;
-          }
-          showToast(result.message || 'فشلت الطباعة', 'error');
-          return;
-        }
-        showToast(defaultPrinter.message || 'لم يتم العثور على طابعة افتراضية', 'error');
-        return;
-      }
-
-      if (isElectronRuntime()) {
-        showToast('خدمة الطباعة غير متاحة — أعد تشغيل التطبيق بعد التحديث', 'error');
-        return;
-      }
-
-      printHtmlInBrowser(html);
-      showToast('تم فتح معاينة الطباعة', 'success');
+      await dispatchHtmlPrint(html, 'quick_ledger');
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'تعذر تنفيذ الطباعة', 'error');
+      showToast(error instanceof Error ? error.message : 'تعذر تنفيذ طباعة الشحنات', 'error');
     } finally {
       setPrintLoading(false);
     }
   };
 
+  const executeReceiptsPrint = async () => {
+    setPrintLoading(true);
+    try {
+      const prepared = await prepareDriverPrintRows();
+      if (!prepared) return;
+
+      const { rows, activeSearch, selectedDriver } = prepared;
+      const title = activeSearch
+        ? `إيصالات — ${selectedDriver?.name ?? ''} — ${activeSearch}`
+        : `إيصالات — ${selectedDriver?.name ?? ''}`;
+
+      const html = buildMahmoudPreprintedReceiptHtml(rows.map(mapRemoteLedgerRowToMahmoudReceipt), {
+        title,
+        applyPrintTransform: false,
+      });
+
+      setPrintDialogOpen(false);
+      await dispatchHtmlPrint(html, 'mahmoud_receipt');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر تنفيذ طباعة الإيصالات', 'error');
+    } finally {
+      setPrintLoading(false);
+    }
+  };
 
   const saveRows = async () => {
     const rowsToPost = rows.filter((row) => isRowComplete(row) && !row.postedShipmentId);
@@ -2149,9 +2195,9 @@ export default function ShipmentQuickLedger() {
       {printDialogOpen && (
         <div className="quick-ledger-confirm" role="dialog" aria-modal="true">
           <div className="quick-ledger-confirm-panel">
-            <h3>طباعة دفتر الشحن</h3>
+            <h3>طباعة</h3>
             <p>
-              طباعة حمولة السائق للفترة المحددة.
+              اختر نوع الطباعة ثم حدّد السائق والفترة.
               {searchQuick.trim() ? (
                 <>
                   {' '}
@@ -2161,7 +2207,7 @@ export default function ShipmentQuickLedger() {
                 ' كل أسطر السائق في الفترة.'
               )}
             </p>
-            <div className="space-y-3 mb-3">
+            <div className="quick-ledger-print-form space-y-3 mb-3">
               <label className="form-group block">
                 <span className="form-label">السائق *</span>
                 <select
@@ -2198,12 +2244,25 @@ export default function ShipmentQuickLedger() {
                 </label>
               </div>
             </div>
-            <div>
+            <div className="quick-ledger-print-actions">
               <button type="button" onClick={() => setPrintDialogOpen(false)} disabled={printLoading}>
                 إلغاء
               </button>
-              <button type="button" className="primary" onClick={() => void executeDriverPrint()} disabled={printLoading}>
-                {printLoading ? 'جاري التحضير...' : 'طباعة'}
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void executeShipmentsPrint()}
+                disabled={printLoading}
+              >
+                {printLoading ? 'جاري التحضير...' : 'طباعة شحنات'}
+              </button>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void executeReceiptsPrint()}
+                disabled={printLoading}
+              >
+                {printLoading ? 'جاري التحضير...' : 'طباعة إيصالات'}
               </button>
             </div>
           </div>

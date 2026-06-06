@@ -230,6 +230,39 @@ export const MAHMOUD_RECEIPT_DUMMY_ROWS: MahmoudReceiptRow[] = [
 ];
 
 /** تحويل سطر الدفتر إلى صف إيصال للطباعة على الورق المطبوع */
+export function formatMahmoudReceiptDate(isoDate: string): string {
+  const part = String(isoDate ?? '').split('T')[0];
+  const [y, m, d] = part.split('-');
+  if (!y || !m || !d) return part || '';
+  return `${d}-${m}-${y.slice(-2)}`;
+}
+
+export function mapRemoteLedgerRowToMahmoudReceipt(row: {
+  receipt_no: string | null;
+  ledger_date: string;
+  destination: string;
+  receiver_name: string;
+  sender_name: string;
+  parcel_type: string;
+  parcel_count: number | null;
+  prepaid_amount_usd: string;
+  hawala_amount_usd: string;
+  transfer_service_fee_usd: string;
+}): MahmoudReceiptRow {
+  return {
+    receiptNo: row.receipt_no ?? '',
+    date: formatMahmoudReceiptDate(row.ledger_date),
+    destination: row.destination ?? '',
+    receiver: row.receiver_name ?? '',
+    sender: row.sender_name ?? '',
+    parcelType: row.parcel_type ?? '',
+    parcelCount: row.parcel_count == null ? '' : String(row.parcel_count),
+    prepaidAmount: String(row.prepaid_amount_usd ?? ''),
+    hawalaAmount: String(row.hawala_amount_usd ?? ''),
+    transferServiceFee: String(row.transfer_service_fee_usd ?? ''),
+  };
+}
+
 export function mapLedgerRowToMahmoudReceipt(
   row: {
     receiptNo: string;
@@ -246,7 +279,7 @@ export function mapLedgerRowToMahmoudReceipt(
 ): MahmoudReceiptRow {
   return {
     receiptNo: row.receiptNo,
-    date: dateLabel,
+    date: dateLabel ? formatMahmoudReceiptDate(dateLabel) : '',
     destination: row.destination,
     receiver: row.receiver,
     sender: row.sender,

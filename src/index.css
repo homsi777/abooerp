@@ -1395,6 +1395,23 @@ body {
   color: white;
 }
 
+.quick-ledger-print-form {
+  display: block !important;
+}
+
+.quick-ledger-print-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.quick-ledger-print-actions button.primary {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  color: white;
+}
+
 .centers-page {
   display: flex;
   flex-direction: column;
