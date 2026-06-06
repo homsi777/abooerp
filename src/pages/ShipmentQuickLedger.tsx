@@ -545,7 +545,7 @@ export default function ShipmentQuickLedger() {
   const navigate = useNavigate();
   const { showToast } = useToast();
   const { user, activeBranchId, setActiveBranch } = useAuth();
-  const [rows, setRows] = useState<LedgerRow[]>([]);
+  const [rows, setRows] = useState<LedgerRow[]>(() => [createEmptyRow(1)]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [cities, setCities] = useState<City[]>([]);
   const [goodsTypes, setGoodsTypes] = useState<GoodsType[]>([]);
