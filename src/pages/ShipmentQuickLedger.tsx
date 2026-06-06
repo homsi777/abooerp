@@ -266,6 +266,45 @@ function remoteRowMatchesDriver(
   );
 }
 
+function ledgerRowSearchFields(row: LedgerRow): string[] {
+  return [
+    row.receiptNo,
+    row.origin,
+    row.destination,
+    row.parcelType,
+    row.sender,
+    row.receiver,
+    row.notes,
+    row.agentName ?? '',
+    String(row.agentId ?? ''),
+  ];
+}
+
+function remoteRowSearchFields(row: RemoteDailyLedgerRow): string[] {
+  return [
+    row.receipt_no ?? '',
+    row.origin_label ?? '',
+    row.line_label ?? '',
+    row.destination ?? '',
+    row.parcel_type ?? '',
+    row.sender_name ?? '',
+    row.receiver_name ?? '',
+    row.notes ?? '',
+    row.driver_label ?? '',
+    row.vehicle_label ?? '',
+  ];
+}
+
+/** نفس منطق «بحث سريع داخل الدفتر» — يُستخدم للعرض والطباعة */
+function matchesQuickLedgerSearch(
+  searchQuery: string,
+  fields: Array<string | number | null | undefined>,
+): boolean {
+  const q = normalizeName(searchQuery).toLowerCase();
+  if (!q) return true;
+  return fields.some((field) => String(field ?? '').toLowerCase().includes(q));
+}
+
 const LEDGER_FETCH_PAGE_SIZE = 2000;
 
 async function fetchAllDailyLedgerRows(
@@ -614,21 +653,8 @@ export default function ShipmentQuickLedger() {
     const displayable = rows.filter(
       (row) => isRowStarted(row) || (trailingBlank != null && row.id === trailingBlank.id),
     );
-    const q = normalizeName(searchQuick).toLowerCase();
-    if (!q) return displayable;
-    return displayable.filter((row) =>
-      [
-        row.receiptNo,
-        row.origin,
-        row.destination,
-        row.parcelType,
-        row.sender,
-        row.receiver,
-        row.notes,
-        row.agentName,
-        String(row.agentId ?? ''),
-      ].some((f) => String(f).toLowerCase().includes(q)),
-    );
+    if (!normalizeName(searchQuick)) return displayable;
+    return displayable.filter((row) => matchesQuickLedgerSearch(searchQuick, ledgerRowSearchFields(row)));
   }, [rows, searchQuick]);
 
   const deletableVisibleRows = useMemo(
@@ -1492,21 +1518,33 @@ export default function ShipmentQuickLedger() {
       params.set('dateTo', printDateTo);
       params.set('includeLoaded', 'true');
       const data = await fetchAllDailyLedgerRows(params);
+      const activeSearch = searchQuick.trim();
       const rowsToPrint = sortRemoteLedgerRows(
-        data.filter((row) =>
-          remoteRowMatchesDriver(row, {
-            driverBackendId,
-            driverName: selectedDriver?.name,
-          }),
+        data.filter(
+          (row) =>
+            remoteRowMatchesDriver(row, {
+              driverBackendId,
+              driverName: selectedDriver?.name,
+            }) && matchesQuickLedgerSearch(activeSearch, remoteRowSearchFields(row)),
         ),
       ).map(remoteRowToPrint);
 
       if (!rowsToPrint.length) {
-        showToast('لا توجد أسطر لهذا السائق في الفترة المحددة', 'info');
+        showToast(
+          activeSearch
+            ? `لا توجد أسطر للسائق تطابق البحث «${activeSearch}»`
+            : 'لا توجد أسطر لهذا السائق في الفترة المحددة',
+          'info',
+        );
         return;
       }
 
-      showToast(`تم جلب ${rowsToPrint.length} سطر للطباعة`, 'info');
+      showToast(
+        activeSearch
+          ? `تم جلب ${rowsToPrint.length} سطر (بحث: ${activeSearch})`
+          : `تم جلب ${rowsToPrint.length} سطر للطباعة`,
+        'info',
+      );
 
       const linkedVehicle = vehicles.find((v) => v.driverId === printDriverId);
       const vehicleLabel = linkedVehicle
@@ -1516,7 +1554,9 @@ export default function ShipmentQuickLedger() {
         printDateFrom === printDateTo ? printDateFrom : `${printDateFrom} → ${printDateTo}`;
 
       const html = buildQuickLedgerPrintHtml(rowsToPrint, {
-        title: `دفتر الشحن — ${selectedDriver?.name ?? ''}`,
+        title: activeSearch
+          ? `دفتر الشحن — ${selectedDriver?.name ?? ''} — ${activeSearch}`
+          : `دفتر الشحن — ${selectedDriver?.name ?? ''}`,
         dateLabel,
         driverName: selectedDriver?.name ?? '—',
         vehicleLabel,
@@ -2110,7 +2150,17 @@ export default function ShipmentQuickLedger() {
         <div className="quick-ledger-confirm" role="dialog" aria-modal="true">
           <div className="quick-ledger-confirm-panel">
             <h3>طباعة دفتر الشحن</h3>
-            <p>طباعة حمولة السائق المحدد للفترة — كل أسطره حتى الجزئية منها، بدون استبعاد لعدم اكتمال البيانات.</p>
+            <p>
+              طباعة حمولة السائق للفترة المحددة.
+              {searchQuick.trim() ? (
+                <>
+                  {' '}
+                  البحث النشط: <strong>{searchQuick.trim()}</strong> — تُطبع الأسطر المطابقة فقط (مثل الجهة الرقة).
+                </>
+              ) : (
+                ' كل أسطر السائق في الفترة.'
+              )}
+            </p>
             <div className="space-y-3 mb-3">
               <label className="form-group block">
                 <span className="form-label">السائق *</span>
