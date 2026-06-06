@@ -158,13 +158,36 @@ export default function AgentsModule() {
       notes: agent.notes || '',
       commission_percentage: Number(agent.commission_percentage ?? 0),
       is_active: agent.is_active,
-    } : { ...emptyForm, code: `AG-${Date.now().toString().slice(-6)}` });
+    } : { ...emptyForm });
+  };
+
+  const deleteAgentPermanently = async (agent: AgentRecord) => {
+    const ok = window.confirm(
+      `حذف الوكيل «${agent.code} — ${agent.name}» نهائياً؟\n\nلا يمكن التراجع. إن كان مرتبطاً بشحنات أو مستخدمين سيُرفض الحذف — استخدم «تعطيل» بدلاً من ذلك.`,
+    );
+    if (!ok) return;
+    setSaving(true);
+    setError('');
+    try {
+      await httpClient.delete(`/agents/${agent.id}?permanent=1`);
+      setSuccess(`تم حذف الوكيل ${agent.code} نهائياً.`);
+      if (editing?.id === agent.id) setEditing(null);
+      await load();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'تعذر حذف الوكيل.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const saveAgent = async () => {
     if (!editing) return;
     if (!editing.code.trim() || !editing.name.trim() || !editing.branch_id) {
       setError('كود الوكيل واسم الوكيل والفرع المرتبط حقول مطلوبة.');
+      return;
+    }
+    if (editing.is_active && !editing.governorate.trim()) {
+      setError('المحافظة (الوجهة) مطلوبة للوكيل النشط — يجب أن تطابق ما يُكتب في عمود «الجهة» بالدفتر (مثل: الرقة، الحسكة).');
       return;
     }
     setSaving(true);
@@ -280,7 +303,9 @@ export default function AgentsModule() {
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold">الوكلاء</h2>
-          <p className="text-sm text-gray-600">إدارة الوكلاء، ربطهم بالفروع والوجهات، ومتابعة حالتهم التشغيلية.</p>
+          <p className="text-sm text-gray-600">
+            كل وكيل نشط = وجهة واحدة (محافظة). الكود الرقمي (13، 12…) للإدخال السريع في الدفتر.
+          </p>
         </div>
         <button type="button" className="toolbar-btn primary" onClick={() => beginEdit()}>إضافة وكيل</button>
       </div>
@@ -289,11 +314,11 @@ export default function AgentsModule() {
         <div className="card mb-3">
           <div className="card-header">{editing.id ? 'تعديل وكيل' : 'إضافة وكيل جديد'}</div>
           <div className="grid grid-cols-4 gap-3">
-            <label className="form-group"><span className="form-label">كود الوكيل</span><input className="form-input" value={editing.code} onChange={(e) => setEditing({ ...editing, code: e.target.value })} /></label>
+            <label className="form-group"><span className="form-label">كود الوكيل</span><input className="form-input" placeholder="مثال: 13" value={editing.code} onChange={(e) => setEditing({ ...editing, code: e.target.value })} /></label>
             <label className="form-group"><span className="form-label">اسم الوكيل</span><input className="form-input" value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></label>
             <label className="form-group"><span className="form-label">الهاتف</span><input className="form-input" value={editing.phone} onChange={(e) => setEditing({ ...editing, phone: e.target.value })} /></label>
             <label className="form-group"><span className="form-label">الفرع المرتبط</span><select className="form-select" value={editing.branch_id} onChange={(e) => setEditing({ ...editing, branch_id: e.target.value })}><option value="">اختر الفرع</option>{branches.filter((b: any) => b.is_active !== false).map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
-            <label className="form-group"><span className="form-label">المحافظة</span><input className="form-input" value={editing.governorate} onChange={(e) => setEditing({ ...editing, governorate: e.target.value })} /></label>
+            <label className="form-group"><span className="form-label">المحافظة (الوجهة) *</span><input className="form-input" placeholder="مثل: الرقة — تطابق عمود الجهة في الدفتر" value={editing.governorate} onChange={(e) => setEditing({ ...editing, governorate: e.target.value })} /></label>
             <label className="form-group"><span className="form-label">المدينة</span><input className="form-input" value={editing.city} onChange={(e) => setEditing({ ...editing, city: e.target.value })} /></label>
             <label className="form-group"><span className="form-label">المنطقة</span><input className="form-input" value={editing.area} onChange={(e) => setEditing({ ...editing, area: e.target.value })} /></label>
             <label className="form-group"><span className="form-label">نسبة عمولة الوكيل (%)</span><input type="number" min="0" max="100" step="0.01" className="form-input" value={editing.commission_percentage ?? 0} onChange={(e) => setEditing({ ...editing, commission_percentage: Number(e.target.value) || 0 })} /></label>
@@ -301,8 +326,14 @@ export default function AgentsModule() {
             <label className="form-group col-span-2"><span className="form-label">العنوان</span><input className="form-input" value={editing.address} onChange={(e) => setEditing({ ...editing, address: e.target.value })} /></label>
             <label className="form-group col-span-2"><span className="form-label">ملاحظات</span><input className="form-input" value={editing.notes} onChange={(e) => setEditing({ ...editing, notes: e.target.value })} /></label>
           </div>
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 flex gap-2 flex-wrap">
             <button type="button" className="toolbar-btn success" disabled={saving} onClick={() => void saveAgent()}>{saving ? 'جاري الحفظ...' : 'حفظ'}</button>
+            {editing.id ? (
+              <>
+                <button type="button" className="toolbar-btn danger" disabled={saving} onClick={() => void deleteAgentPermanently({ id: editing.id!, code: editing.code, name: editing.name, is_active: editing.is_active } as AgentRecord)}>حذف نهائي</button>
+                <button type="button" className="toolbar-btn" disabled={saving} onClick={() => void toggleAgent({ id: editing.id!, code: editing.code, name: editing.name, is_active: editing.is_active } as AgentRecord)}>{editing.is_active ? 'تعطيل' : 'تفعيل'}</button>
+              </>
+            ) : null}
             <button type="button" className="toolbar-btn" onClick={() => setEditing(null)}>إلغاء</button>
           </div>
         </div>
@@ -336,6 +367,7 @@ export default function AgentsModule() {
                     <button type="button" className="text-indigo-700" onClick={() => void openAgentStatement(row, 'account')}>كشف حساب شامل</button>
                     <button type="button" className="text-indigo-700" onClick={() => beginEdit(row)}>تعديل</button>
                     <button type="button" className="text-amber-700" onClick={() => void toggleAgent(row)}>{row.is_active ? 'تعطيل' : 'تفعيل'}</button>
+                    <button type="button" className="text-red-700" onClick={() => void deleteAgentPermanently(row)}>حذف</button>
                   </div>
                 </td>
               </tr>

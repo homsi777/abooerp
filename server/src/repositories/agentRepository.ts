@@ -1,6 +1,14 @@
 import { pool } from '../db/pool.js';
 import { numericCodeKey, normalizeDestinationKey } from '../utils/agentDestination.js';
+import {
+  governorateLookupKey,
+  normalizeAgentCode,
+  normalizeAgentGovernorate,
+  normalizeAgentName,
+  normalizeOptionalLocation,
+} from '../utils/agentValidation.js';
 import { computeAgentBalanceDue, computeAgentRemittanceDue } from '../utils/agentShipmentSettlement.js';
+import { HttpError } from '../utils/errors.js';
 
 export interface AgentRecord {
   id: string;
@@ -103,18 +111,59 @@ export class AgentRepository {
   }
 
   async createAgent(companyId: string, data: CreateAgentInput): Promise<AgentRecord> {
+    const normalized = this.normalizeAgentInput(data);
+    await this.assertAgentBusinessRules(companyId, normalized);
     const result = await pool.query<AgentRecord>(
       `
       insert into agents(code, name, phone, governorate, city, area, address, notes, branch_id, telegram_chat_id, is_active, commission_percentage)
       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, coalesce($11, true), coalesce($12, 0))
       returning id, code, name, phone, governorate, city, area, address, notes, branch_id, telegram_chat_id, is_active, commission_percentage, created_at::text, updated_at::text
       `,
-      [data.code, data.name, data.phone ?? null, data.governorate ?? null, data.city ?? null, data.area ?? null, data.address ?? null, data.notes ?? null, data.branch_id ?? null, data.telegram_chat_id ?? null, data.is_active ?? true, data.commission_percentage ?? 0],
+      [
+        normalized.code,
+        normalized.name,
+        normalized.phone ?? null,
+        normalized.governorate ?? null,
+        normalized.city ?? null,
+        normalized.area ?? null,
+        normalized.address ?? null,
+        normalized.notes ?? null,
+        normalized.branch_id ?? null,
+        normalized.telegram_chat_id ?? null,
+        normalized.is_active ?? true,
+        normalized.commission_percentage ?? 0,
+      ],
     );
     return result.rows[0];
   }
 
   async updateAgent(id: string, companyId: string, data: UpdateAgentInput): Promise<AgentRecord | null> {
+    const existing = await this.getAgentById(id, companyId);
+    if (!existing) return null;
+
+    const merged: CreateAgentInput = {
+      code: data.code ?? existing.code,
+      name: data.name ?? existing.name,
+      phone: data.phone ?? existing.phone ?? undefined,
+      governorate: data.governorate ?? existing.governorate ?? undefined,
+      city: data.city ?? existing.city ?? undefined,
+      area: data.area ?? existing.area ?? undefined,
+      address: data.address ?? existing.address ?? undefined,
+      notes: data.notes ?? existing.notes ?? undefined,
+      branch_id:
+        data.branch_id === undefined || data.branch_id === null
+          ? (existing.branch_id ?? '')
+          : data.branch_id,
+      telegram_chat_id: data.telegram_chat_id === null ? null : (data.telegram_chat_id ?? existing.telegram_chat_id),
+      is_active: data.is_active ?? existing.is_active,
+      commission_percentage: data.commission_percentage ?? existing.commission_percentage,
+    };
+    if (!merged.branch_id) {
+      throw new HttpError(400, 'الفرع المرتبط مطلوب للوكيل.');
+    }
+    const normalized = this.normalizeAgentInput(merged);
+    await this.assertAgentBusinessRules(companyId, normalized, id);
+
     const result = await pool.query<AgentRecord>(
       `
       update agents a
@@ -146,12 +195,12 @@ export class AgentRepository {
         companyId,
         data.code ?? null,
         data.name ?? null,
-        data.phone ?? null,
-        data.governorate ?? null,
-        data.city ?? null,
-        data.area ?? null,
-        data.address ?? null,
-        data.notes ?? null,
+        normalized.phone ?? null,
+        normalized.governorate ?? null,
+        normalized.city ?? null,
+        normalized.area ?? null,
+        normalized.address ?? null,
+        normalized.notes ?? null,
         data.branch_id ?? null,
         data.is_active,
         data.branch_id === null,
@@ -175,11 +224,102 @@ export class AgentRepository {
           where b.id = a.branch_id
             and b.company_id = $2
         )
-        and a.is_active = true
       `,
       [id, companyId],
     );
     return (result.rowCount ?? 0) > 0;
+  }
+
+  async getAgentUsageSummary(companyId: string, agentId: string) {
+    const result = await pool.query<{ shipments: number; users: number; cashboxes: number }>(
+      `
+      select
+        (select count(*)::int from shipments s where s.agent_id = $2) as shipments,
+        (select count(*)::int from users u where u.agent_id = $2) as users,
+        (select count(*)::int from cashboxes c where c.company_id = $1 and c.agent_id = $2) as cashboxes
+      `,
+      [companyId, agentId],
+    );
+    return result.rows[0] ?? { shipments: 0, users: 0, cashboxes: 0 };
+  }
+
+  async removeAgentPermanently(id: string, companyId: string): Promise<boolean> {
+    const agent = await this.getAgentById(id, companyId);
+    if (!agent) return false;
+
+    const usage = await this.getAgentUsageSummary(companyId, id);
+    if (usage.shipments > 0) {
+      throw new HttpError(
+        409,
+        `لا يمكن حذف الوكيل «${agent.code}» لوجود ${usage.shipments} شحنة مرتبطة. يمكنك تعطيله بدلاً من الحذف.`,
+      );
+    }
+    if (usage.users > 0) {
+      throw new HttpError(
+        409,
+        `لا يمكن حذف الوكيل «${agent.code}» لوجود ${usage.users} مستخدم مرتبط. يمكنك تعطيله بدلاً من الحذف.`,
+      );
+    }
+
+    const result = await pool.query(
+      `
+      delete from agents a
+      using branches b
+      where a.id = $1
+        and a.branch_id = b.id
+        and b.company_id = $2
+      `,
+      [id, companyId],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  private normalizeAgentInput(data: CreateAgentInput): CreateAgentInput {
+    return {
+      ...data,
+      code: normalizeAgentCode(data.code),
+      name: normalizeAgentName(data.name),
+      governorate: normalizeAgentGovernorate(data.governorate) ?? undefined,
+      city: normalizeOptionalLocation(data.city) ?? undefined,
+      area: normalizeOptionalLocation(data.area) ?? undefined,
+      phone: data.phone?.trim() || undefined,
+      address: data.address?.trim() || undefined,
+      notes: data.notes?.trim() || undefined,
+    };
+  }
+
+  private async assertAgentBusinessRules(companyId: string, data: CreateAgentInput, excludeAgentId?: string) {
+    const isActive = data.is_active ?? true;
+    const governorate = normalizeAgentGovernorate(data.governorate);
+    if (isActive && !governorate) {
+      throw new HttpError(400, 'المحافظة (الوجهة) مطلوبة للوكيل النشط — يجب أن تطابق عمود «الجهة» في دفتر الشحن.');
+    }
+
+    if (!isActive || !governorate) return;
+
+    const lookupKey = governorateLookupKey(governorate);
+    const conflicts = await pool.query<{ id: string; code: string; name: string; governorate: string | null }>(
+      `
+      select a.id, a.code, a.name, a.governorate
+      from agents a
+      join branches b on b.id = a.branch_id
+      where b.company_id = $1
+        and a.is_active = true
+        and ($2::uuid is null or a.id <> $2::uuid)
+        and lower(trim(replace(coalesce(a.governorate, ''), 'وكيل ', ''))) = $3
+      order by a.created_at asc
+      limit 5
+      `,
+      [companyId, excludeAgentId ?? null, lookupKey],
+    );
+
+    if (conflicts.rows.length > 0) {
+      const sample = conflicts.rows.map((row) => `${row.code} (${row.governorate ?? row.name})`).join('، ');
+      throw new HttpError(
+        409,
+        `وجهة «${governorate}» مرتبطة بوكيل نشط آخر: ${sample}. يجب وكيل واحد فقط لكل محافظة — عطّل أو احذف المكرر.`,
+      );
+    }
   }
 
   async lookupByDestination(companyId: string, destination: string, _branchId?: string): Promise<AgentRecord[]> {

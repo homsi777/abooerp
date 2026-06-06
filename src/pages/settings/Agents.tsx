@@ -118,6 +118,10 @@ export default function AgentsSettingsPage() {
       showToast('اختيار الفرع إلزامي عند إنشاء وكيل جديد', 'error');
       return;
     }
+    if (form.is_active && !form.governorate.trim()) {
+      showToast('المحافظة (الوجهة) مطلوبة للوكيل النشط — مثل: الرقة، الحسكة', 'error');
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
@@ -159,6 +163,22 @@ export default function AgentsSettingsPage() {
       startCreate();
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'تعذر تعطيل الوكيل', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removePermanently = async () => {
+    if (!selected) return;
+    if (!window.confirm(`حذف الوكيل «${selected.code}» نهائياً؟ لا يمكن التراجع.`)) return;
+    setSaving(true);
+    try {
+      await httpClient.delete(`/agents/${selected.id}?permanent=1`);
+      showToast('تم حذف الوكيل نهائياً', 'success');
+      await loadAgents();
+      startCreate();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر حذف الوكيل', 'error');
     } finally {
       setSaving(false);
     }
@@ -219,8 +239,8 @@ export default function AgentsSettingsPage() {
           <input className="form-input w-full" value={form.phone} onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))} />
         </div>
         <div className="form-group">
-          <label className="form-label">المحافظة</label>
-          <input className="form-input w-full" value={form.governorate} onChange={(e) => setForm((p) => ({ ...p, governorate: e.target.value }))} />
+          <label className="form-label">المحافظة (الوجهة) *</label>
+          <input className="form-input w-full" placeholder="مثل: الرقة — وكيل واحد نشط لكل محافظة" value={form.governorate} onChange={(e) => setForm((p) => ({ ...p, governorate: e.target.value }))} />
         </div>
         <div className="form-group col-span-2">
           <label className="form-label">الفرع</label>
@@ -275,9 +295,14 @@ export default function AgentsSettingsPage() {
       <div className="flex gap-2 mt-3">
         <button className="toolbar-btn primary" onClick={() => void save()} disabled={saving}>{selected ? 'حفظ التعديل' : 'إضافة'}</button>
         {selected && (
-          <button className="toolbar-btn danger" onClick={() => void deactivate()} disabled={saving}>
-            تعطيل الوكيل
-          </button>
+          <>
+            <button className="toolbar-btn" onClick={() => void deactivate()} disabled={saving}>
+              تعطيل الوكيل
+            </button>
+            <button className="toolbar-btn danger" onClick={() => void removePermanently()} disabled={saving}>
+              حذف نهائي
+            </button>
+          </>
         )}
       </div>
     </div>

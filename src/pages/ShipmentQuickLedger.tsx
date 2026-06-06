@@ -231,27 +231,46 @@ function remoteRowMatchesPrintFilters(
     vehicleLabel?: string;
   },
 ) {
-  if (filters.driverBackendId || filters.driverName) {
-    if (filters.driverBackendId && remote.driver_id === filters.driverBackendId) return true;
-    if (
-      filters.driverName &&
-      normalizeName(remote.driver_label ?? '') === normalizeName(filters.driverName)
-    ) {
-      return true;
-    }
-    return false;
+  const hasDriverFilter = Boolean(filters.driverBackendId || filters.driverName);
+  const hasVehicleFilter = Boolean(filters.vehicleBackendId || filters.vehicleLabel);
+
+  if (hasDriverFilter) {
+    const driverLabel = normalizeName(remote.driver_label ?? '');
+    const driverOk =
+      (filters.driverBackendId && remote.driver_id === filters.driverBackendId) ||
+      (filters.driverName &&
+        (driverLabel === normalizeName(filters.driverName) ||
+          driverLabel.includes(normalizeName(filters.driverName)) ||
+          normalizeName(filters.driverName).includes(driverLabel)));
+    if (!driverOk) return false;
   }
-  if (filters.vehicleBackendId || filters.vehicleLabel) {
-    if (filters.vehicleBackendId && remote.vehicle_id === filters.vehicleBackendId) return true;
-    if (
-      filters.vehicleLabel &&
-      normalizeName(remote.vehicle_label ?? '') === normalizeName(filters.vehicleLabel)
-    ) {
-      return true;
-    }
-    return false;
+
+  if (hasVehicleFilter) {
+    const vehicleOk =
+      (filters.vehicleBackendId && remote.vehicle_id === filters.vehicleBackendId) ||
+      (filters.vehicleLabel &&
+        normalizeName(remote.vehicle_label ?? '') === normalizeName(filters.vehicleLabel));
+    if (!vehicleOk) return false;
   }
-  return true;
+
+  return hasDriverFilter || hasVehicleFilter;
+}
+
+const LEDGER_FETCH_PAGE_SIZE = 2000;
+
+async function fetchAllDailyLedgerRows(baseParams: URLSearchParams): Promise<RemoteDailyLedgerRow[]> {
+  const all: RemoteDailyLedgerRow[] = [];
+  let offset = 0;
+  while (offset <= 50000) {
+    const params = new URLSearchParams(baseParams);
+    params.set('limit', String(LEDGER_FETCH_PAGE_SIZE));
+    params.set('offset', String(offset));
+    const batch = await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${params.toString()}`);
+    all.push(...batch);
+    if (batch.length < LEDGER_FETCH_PAGE_SIZE) break;
+    offset += LEDGER_FETCH_PAGE_SIZE;
+  }
+  return all;
 }
 
 function printHtmlInBrowser(html: string) {
@@ -378,10 +397,12 @@ function buildQuickLedgerPrintHtml(
     .meta { margin-bottom: 10px; font-size: 11px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; }
     .meta div { border: 1px solid #c5d0dc; padding: 4px 6px; background: #f8fafc; }
     .meta strong { font-weight: 800; }
-    table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10px; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10px; page-break-inside: auto; }
+    thead { display: table-header-group; }
+    tr { page-break-inside: avoid; page-break-after: auto; }
     th, td { border: 1px solid #7f93a7; padding: 3px 2px; vertical-align: middle; word-break: break-word; }
-    th { background: #dce8e5; font-weight: 800; text-align: center; height: 32px; line-height: 1.25; }
-    td { text-align: center; height: 28px; background: #fff; }
+    th { background: #dce8e5; font-weight: 800; text-align: center; min-height: 32px; line-height: 1.25; }
+    td { text-align: center; min-height: 24px; height: auto; background: #fff; }
     .col-receipt { width: 8%; }
     .col-dest { width: 10%; }
     .col-type { width: 14%; }
@@ -528,6 +549,7 @@ export default function ShipmentQuickLedger() {
   const [includeLoaded, setIncludeLoaded] = useState(false);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const saveTimersRef = useRef<Record<number, number>>({});
+  const saveRowToServerRef = useRef<(displayRowId: number) => Promise<void>>(async () => {});
   const [branchSearch, setBranchSearch] = useState('');
   const [trip, setTrip] = useState({
     line: '',
@@ -658,6 +680,23 @@ export default function ShipmentQuickLedger() {
     return (user.allowedBranchIds || []).length <= 1;
   }, [user]);
 
+  const todayIso = useMemo(() => new Date().toISOString().split('T')[0], []);
+
+  const canPickHistoricalDate = useMemo(() => {
+    if (!user) return false;
+    if (user.userType === 'admin' || user.role === 'admin') return true;
+    return ['general_manager', 'branch_manager'].includes(user.role);
+  }, [user]);
+
+  const flushPendingRowSaves = async () => {
+    Object.values(saveTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+    saveTimersRef.current = {};
+    const targets = rowsRef.current.filter((row) => row.dbId || isRowStarted(row));
+    for (const row of targets) {
+      await saveRowToServerRef.current(row.id);
+    }
+  };
+
   const mapRemoteRowToLocal = (remote: RemoteDailyLedgerRow, displayId: number): LedgerRow => ({
     id: displayId,
     serverRowNo: remote.row_no,
@@ -693,14 +732,13 @@ export default function ShipmentQuickLedger() {
 
     setRemoteLoading(true);
     try {
+      await flushPendingRowSaves();
       const params = new URLSearchParams();
       params.set('branchId', branchId);
       params.set('ledgerDate', currentTrip.date);
       params.set('lineLabel', currentTrip.line);
       params.set('includeLoaded', includeLoaded ? 'true' : 'false');
-      params.set('limit', '2000');
-      params.set('offset', '0');
-      const data = await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${params.toString()}`);
+      const data = await fetchAllDailyLedgerRows(params);
       const sorted = [...data].sort((a, b) => {
         const driverCmp = String(a.driver_label ?? '').localeCompare(String(b.driver_label ?? ''), 'ar');
         if (driverCmp !== 0) return driverCmp;
@@ -906,6 +944,7 @@ export default function ShipmentQuickLedger() {
         lineLabel: currentTrip.line,
         originLabel: origin,
         tripNo: currentTrip.tripNo || null,
+        ...(row.dbId ? { rowId: row.dbId } : {}),
         ...fleet,
         rowNo: serverRowNo,
         receiptNo: row.receiptNo || null,
@@ -1018,8 +1057,11 @@ export default function ShipmentQuickLedger() {
           /* إذا تعذر تحديث الشحنة، يبقى سطر الدفتر محفوظاً ولا يمنع المستخدم من المتابعة */
         }
       }
-    } catch {}
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر حفظ السطر', 'error');
+    }
   };
+  saveRowToServerRef.current = saveRowToServer;
 
   const queueRowSave = (rowNo: number) => {
     const timer = saveTimersRef.current[rowNo];
@@ -1307,9 +1349,7 @@ export default function ShipmentQuickLedger() {
       params.set('dateFrom', printDateFrom);
       params.set('dateTo', printDateTo);
       params.set('includeLoaded', 'true');
-      params.set('limit', '2000');
-      params.set('offset', '0');
-      const data = await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${params.toString()}`);
+      const data = await fetchAllDailyLedgerRows(params);
       const rowsToPrint = data
         .filter((row) =>
           remoteRowMatchesPrintFilters(row, {
@@ -1326,6 +1366,8 @@ export default function ShipmentQuickLedger() {
         showToast('لا توجد أسطر ببيانات ضمن الفترة والسائق/المركبة المحددين', 'info');
         return;
       }
+
+      showToast(`تم جلب ${rowsToPrint.length} سطر للطباعة`, 'info');
 
       const vehicleLabel = selectedVehicle
         ? `${selectedVehicle.plateNumber}${selectedVehicle.model ? ` — ${selectedVehicle.model}` : ''}`
@@ -1379,11 +1421,7 @@ export default function ShipmentQuickLedger() {
 
 
   const saveRows = async () => {
-    const rowsToSave = rows.filter((row) => isRowComplete(row) && !row.postedShipmentId);
-    if (!rowsToSave.length) {
-      showToast('لا توجد أسطر مكتملة جديدة للحفظ', 'info');
-      return;
-    }
+    const rowsToPost = rows.filter((row) => isRowComplete(row) && !row.postedShipmentId);
     if (!activeBranchId) {
       showToast('يرجى اختيار الفرع قبل حفظ الشحنات', 'error');
       return;
@@ -1393,15 +1431,22 @@ export default function ShipmentQuickLedger() {
       showToast('يرجى اختيار الخط / المصدر أولاً', 'error');
       return;
     }
-    if (!trip.driverId) {
-      showToast('يرجى اختيار السائق من المركبات والسائقون', 'error');
-      return;
-    }
 
     setSaving(true);
     try {
+      await flushPendingRowSaves();
+      if (!rowsToPost.length) {
+        showToast('تم حفظ التعديلات على الأسطر', 'success');
+        await loadRemoteRows();
+        return;
+      }
+      if (!trip.driverId) {
+        showToast('يرجى اختيار السائق من المركبات والسائقون', 'error');
+        return;
+      }
+
       let workingRows = [...rows];
-      for (const row of rowsToSave) {
+      for (const row of rowsToPost) {
         const fleet = resolveFleetForLedgerRow(row, trip, drivers, vehicles);
         const rowNo =
           row.serverRowNo ?? nextServerRowNoForDriver(workingRows, trip.driverId) ?? row.id;
@@ -1411,6 +1456,7 @@ export default function ShipmentQuickLedger() {
           lineLabel: trip.line,
           originLabel: origin,
           tripNo: trip.tripNo || null,
+          ...(row.dbId ? { rowId: row.dbId } : {}),
           ...fleet,
           rowNo,
           receiptNo: row.receiptNo || null,
@@ -1569,7 +1615,28 @@ export default function ShipmentQuickLedger() {
         </label>
         <label>
           <span>التاريخ</span>
-          <input type="date" value={trip.date} onChange={(e) => setTrip({ ...trip, date: e.target.value })} />
+          <input
+            type="date"
+            value={trip.date}
+            max={todayIso}
+            min={canPickHistoricalDate ? undefined : todayIso}
+            onChange={(e) => {
+              const next = e.target.value;
+              if (!canPickHistoricalDate && next !== todayIso) {
+                showToast('مدخل البيانات يعمل على تاريخ اليوم فقط', 'info');
+                setTrip((prev) => ({ ...prev, date: todayIso }));
+                return;
+              }
+              if (next > todayIso) {
+                showToast('لا يمكن اختيار تاريخ مستقبلي', 'error');
+                return;
+              }
+              setTrip((prev) => ({ ...prev, date: next }));
+            }}
+          />
+          {canPickHistoricalDate && (
+            <span className="quick-ledger-hint">يمكن للمدير اختيار تواريخ سابقة لإدخال بيانات متأخرة.</span>
+          )}
         </label>
         <label>
           <span>المركبة</span>

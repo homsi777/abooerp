@@ -6,6 +6,25 @@ import { DailyLedgerService } from '../services/dailyLedgerService.js';
 
 const uuid = z.string().uuid();
 
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function assertLedgerDateAllowed(roleCode: string, userType: string, ledgerDate: string) {
+  const today = todayIsoDate();
+  const isAdmin = roleCode === 'admin' || userType === 'admin';
+  const isManager = isAdmin || roleCode === 'general_manager' || roleCode === 'branch_manager';
+  if (ledgerDate > today) {
+    throw new Error('لا يمكن إدخال بيانات بتاريخ مستقبلي.');
+  }
+  if (roleCode === 'data_entry' && ledgerDate !== today) {
+    throw new Error('مدخل البيانات يعمل على تاريخ اليوم فقط. للتواريخ السابقة يستخدم المدير حسابه.');
+  }
+  if (!isManager && ledgerDate < today) {
+    throw new Error('لا يمكن إدخال بيانات بتاريخ سابق إلا من حساب المدير.');
+  }
+}
+
 export function createDailyLedgerRouter(service: DailyLedgerService) {
   const router = express.Router();
 
@@ -33,7 +52,7 @@ export function createDailyLedgerRouter(service: DailyLedgerService) {
         vehicleId: uuid.optional(),
         includeLoaded: z.coerce.boolean().optional(),
         q: z.string().optional(),
-        limit: z.coerce.number().min(1).max(2000).optional(),
+        limit: z.coerce.number().min(1).max(10000).optional(),
         offset: z.coerce.number().min(0).optional(),
       });
       const q = querySchema.parse(req.query);
@@ -106,8 +125,18 @@ export function createDailyLedgerRouter(service: DailyLedgerService) {
         feesAmountUsd: z.coerce.number().optional(),
         transferServiceFeeUsd: z.coerce.number().optional(),
         notes: z.string().nullable().optional(),
+        rowId: uuid.optional(),
       });
       const input = bodySchema.parse(req.body);
+      try {
+        assertLedgerDateAllowed(roleCode, userType, input.ledgerDate);
+      } catch (dateError) {
+        res.status(400).json({
+          success: false,
+          error: dateError instanceof Error ? dateError.message : 'تاريخ الدفتر غير مسموح.',
+        });
+        return;
+      }
       if (allowedBranchIds.length && !allowedBranchIds.includes(input.branchId) && roleCode !== 'admin' && userType !== 'admin') {
         res.status(403).json({ success: false, error: 'Requested branch scope is not allowed for this user.' });
         return;
@@ -173,6 +202,15 @@ export function createDailyLedgerRouter(service: DailyLedgerService) {
         rowIds: z.array(uuid).optional(),
       });
       const input = bodySchema.parse(req.body);
+      try {
+        assertLedgerDateAllowed(roleCode, userType, input.ledgerDate);
+      } catch (dateError) {
+        res.status(400).json({
+          success: false,
+          error: dateError instanceof Error ? dateError.message : 'تاريخ الدفتر غير مسموح.',
+        });
+        return;
+      }
       if (allowedBranchIds.length && !allowedBranchIds.includes(input.branchId) && roleCode !== 'admin' && userType !== 'admin') {
         res.status(403).json({ success: false, error: 'Requested branch scope is not allowed for this user.' });
         return;

@@ -1,4 +1,5 @@
 import { pool } from '../db/pool.js';
+import { HttpError } from '../utils/errors.js';
 import type { DataScope } from '../utils/scope.js';
 
 export type DailyLedgerSession = {
@@ -99,6 +100,8 @@ export interface DailyLedgerUpsertInput {
   transferServiceFeeUsd?: number;
   notes?: string | null;
   userId?: string;
+  /** عند التعديل: تحديث السطر الموجود مباشرة دون إنشاء جلسة/سطر جديد */
+  rowId?: string;
 }
 
 export class DailyLedgerRepository {
@@ -193,6 +196,77 @@ export class DailyLedgerRepository {
     const client = await pool.connect();
     try {
       await client.query('begin');
+
+      if (input.rowId) {
+        const updated = await client.query<DailyLedgerRowWithSession>(
+          `
+          update daily_ledger_rows r
+          set
+            receipt_no = $3,
+            destination = $4,
+            parcel_type = $5,
+            parcel_count = $6,
+            weight_kg = $7,
+            sender_name = $8,
+            receiver_name = $9,
+            collect_amount_usd = $10,
+            prepaid_amount_usd = $11,
+            hawala_amount_usd = $12,
+            fees_amount_usd = $13,
+            transfer_service_fee_usd = $14,
+            notes = $15,
+            updated_by = $16,
+            updated_at = now()
+          from daily_ledger_sessions s
+          join branches b on b.id = s.branch_id
+          where r.id = $1
+            and r.session_id = s.id
+            and r.deleted_at is null
+            and s.deleted_at is null
+            and b.company_id = $2
+            and s.branch_id = $17
+            and r.loaded_at is null
+          returning
+            r.*,
+            s.branch_id,
+            s.ledger_date,
+            s.line_label,
+            s.origin_label,
+            s.trip_no,
+            s.vehicle_label,
+            s.driver_label,
+            s.driver_id,
+            s.vehicle_id
+          `,
+          [
+            input.rowId,
+            scope.companyId,
+            input.receiptNo ?? null,
+            input.destination ?? '',
+            input.parcelType ?? '',
+            input.parcelCount ?? null,
+            input.weightKg ?? null,
+            input.senderName ?? '',
+            input.receiverName ?? '',
+            input.collectAmountUsd ?? 0,
+            input.prepaidAmountUsd ?? 0,
+            input.hawalaAmountUsd ?? 0,
+            input.feesAmountUsd ?? 0,
+            input.transferServiceFeeUsd ?? 0,
+            input.notes ?? null,
+            input.userId ?? scope.userId ?? null,
+            input.branchId,
+          ],
+        );
+        if (!updated.rows.length) {
+          throw new HttpError(
+            409,
+            'تعذر تحديث السطر — ربما تم تحميله على بيان أو لا ينتمي للفرع المحدد.',
+          );
+        }
+        await client.query('commit');
+        return updated.rows[0];
+      }
 
       const session = await client.query<DailyLedgerSession>(
         `

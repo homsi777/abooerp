@@ -248,7 +248,26 @@ export function createAgentRouter(repository: AgentRepository, financeService: F
     requirePermissions(['settings.agents.write']),
     asyncHandler(async (req, res) => {
       const companyId = requireCompanyId(req);
-      const removed = await repository.deactivateAgent(String(req.params.id), companyId);
+      const permanent = parseBoolFlag(req.query.permanent);
+      const agentId = String(req.params.id);
+
+      if (permanent) {
+        const removed = await repository.removeAgentPermanently(agentId, companyId);
+        if (!removed) {
+          res.status(404).json({ success: false, error: 'Agent not found.' });
+          return;
+        }
+        auditService.logAsync({
+          req,
+          action: 'AGENT_DELETED',
+          entityType: 'agent',
+          entityId: agentId,
+        });
+        res.json({ success: true, mode: 'deleted' });
+        return;
+      }
+
+      const removed = await repository.deactivateAgent(agentId, companyId);
       if (!removed) {
         res.status(404).json({ success: false, error: 'Agent not found.' });
         return;
@@ -257,9 +276,9 @@ export function createAgentRouter(repository: AgentRepository, financeService: F
         req,
         action: 'AGENT_DEACTIVATED',
         entityType: 'agent',
-        entityId: String(req.params.id),
+        entityId: agentId,
       });
-      res.json({ success: true });
+      res.json({ success: true, mode: 'deactivated' });
     }),
   );
 
