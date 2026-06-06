@@ -70,6 +70,7 @@ export interface DailyLedgerRowListFilters {
   driverId?: string;
   vehicleId?: string;
   includeLoaded?: boolean;
+  onlyWithData?: boolean;
   q?: string;
   limit: number;
   offset: number;
@@ -143,6 +144,24 @@ export class DailyLedgerRepository {
     }
     if (!filters.includeLoaded) {
       conditions.push('r.loaded_at is null');
+    }
+    if (filters.onlyWithData) {
+      conditions.push(`
+        (
+          coalesce(nullif(trim(r.receipt_no), ''), '') <> ''
+          or coalesce(nullif(trim(r.destination), ''), '') <> ''
+          or coalesce(nullif(trim(r.sender_name), ''), '') <> ''
+          or coalesce(nullif(trim(r.receiver_name), ''), '') <> ''
+          or coalesce(nullif(trim(r.parcel_type), ''), '') <> ''
+          or coalesce(r.parcel_count, 0) > 0
+          or coalesce(r.weight_kg, 0) > 0
+          or coalesce(r.collect_amount_usd, 0) <> 0
+          or coalesce(r.prepaid_amount_usd, 0) <> 0
+          or coalesce(r.hawala_amount_usd, 0) <> 0
+          or coalesce(r.transfer_service_fee_usd, 0) <> 0
+          or coalesce(r.fees_amount_usd, 0) <> 0
+        )
+      `);
     }
     if (filters.q && filters.q.trim()) {
       const q = `%${filters.q.trim()}%`;

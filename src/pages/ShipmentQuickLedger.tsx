@@ -45,8 +45,8 @@ type LedgerRow = {
 };
 
 const LEDGER_FETCH_CHUNK_SIZE = 10;
-const DEFAULT_LEDGER_ROW_COUNT = 200;
-const LEDGER_ROWS_ADD_INCREMENT = 100;
+const LEDGER_ENTRY_SLOTS = 1;
+const LEDGER_ROWS_ADD_INCREMENT = 1;
 
 function sortRemoteLedgerRows(data: RemoteDailyLedgerRow[]) {
   return [...data].sort((a, b) => {
@@ -160,8 +160,8 @@ function isRowStarted(row: LedgerRow) {
 
 function shouldPersistRow(row: LedgerRow) {
   if (row.loadedAt) return false;
-  if (row.dbId) return true;
-  return isRowStarted(row);
+  if (row.dbId) return isRowStarted(row);
+  return isRowComplete(row);
 }
 
 function isRowComplete(row: LedgerRow) {
@@ -280,13 +280,15 @@ function remoteRowMatchesPrintFilters(
 const LEDGER_FETCH_PAGE_SIZE = 2000;
 
 async function fetchAllDailyLedgerRows(baseParams: URLSearchParams): Promise<RemoteDailyLedgerRow[]> {
+  const params = new URLSearchParams(baseParams);
+  params.set('onlyWithData', 'true');
   const all: RemoteDailyLedgerRow[] = [];
   let offset = 0;
   while (offset <= 50000) {
-    const params = new URLSearchParams(baseParams);
-    params.set('limit', String(LEDGER_FETCH_PAGE_SIZE));
-    params.set('offset', String(offset));
-    const batch = await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${params.toString()}`);
+    const pageParams = new URLSearchParams(params);
+    pageParams.set('limit', String(LEDGER_FETCH_PAGE_SIZE));
+    pageParams.set('offset', String(offset));
+    const batch = await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${pageParams.toString()}`);
     all.push(...batch);
     if (batch.length < LEDGER_FETCH_PAGE_SIZE) break;
     offset += LEDGER_FETCH_PAGE_SIZE;
@@ -543,9 +545,7 @@ export default function ShipmentQuickLedger() {
   const navigate = useNavigate();
   const { showToast } = useToast();
   const { user, activeBranchId, setActiveBranch } = useAuth();
-  const [rows, setRows] = useState<LedgerRow[]>(() =>
-    Array.from({ length: DEFAULT_LEDGER_ROW_COUNT }, (_, index) => createEmptyRow(index + 1)),
-  );
+  const [rows, setRows] = useState<LedgerRow[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [cities, setCities] = useState<City[]>([]);
   const [goodsTypes, setGoodsTypes] = useState<GoodsType[]>([]);
@@ -614,9 +614,14 @@ export default function ShipmentQuickLedger() {
   }, [branches.length, cities.length, trip.line]);
 
   const visibleRows = useMemo(() => {
+    const blankNewEntries = rows.filter((row) => !row.dbId && !row.loadedAt && !isRowStarted(row));
+    const trailingBlank = blankNewEntries.length ? blankNewEntries[blankNewEntries.length - 1] : null;
+    const displayable = rows.filter(
+      (row) => isRowStarted(row) || (trailingBlank != null && row.id === trailingBlank.id),
+    );
     const q = normalizeName(searchQuick).toLowerCase();
-    if (!q) return rows;
-    return rows.filter((row) =>
+    if (!q) return displayable;
+    return displayable.filter((row) =>
       [
         row.receiptNo,
         row.origin,
@@ -632,14 +637,14 @@ export default function ShipmentQuickLedger() {
   }, [rows, searchQuick]);
 
   const stats = useMemo(() => {
-    const started = rows.filter(isRowStarted).length;
-    const completeRows = rows.filter((row) => isRowComplete(row) && !row.postedShipmentId);
+    const meaningful = rows.filter(isRowStarted);
+    const completeRows = meaningful.filter((row) => isRowComplete(row) && !row.postedShipmentId);
     return {
-      started,
+      started: meaningful.length,
       complete: completeRows.length,
-      missing: Math.max(0, started - rows.filter(isRowComplete).length),
-      saved: rows.filter((r) => Boolean(r.postedShipmentId)).length,
-      totalCollect: rows.reduce((sum, row) => sum + rowAmountUsd(row), 0),
+      missing: Math.max(0, meaningful.length - meaningful.filter(isRowComplete).length),
+      saved: meaningful.filter((r) => Boolean(r.postedShipmentId)).length,
+      totalCollect: meaningful.reduce((sum, row) => sum + rowAmountUsd(row), 0),
     };
   }, [rows]);
 
@@ -747,6 +752,36 @@ export default function ShipmentQuickLedger() {
     }
   };
 
+  const buildEntrySlotRows = (startId: number, origin: string, count = LEDGER_ENTRY_SLOTS) =>
+    Array.from({ length: count }, (_, idx) =>
+      mergeRowWithAutoTariff(
+        { ...createEmptyRow(startId + idx), origin },
+        tariffs,
+        cities,
+        branches,
+        goodsTypes,
+        tripRef.current.date,
+      ),
+    );
+
+  const appendTrailingEntrySlot = (prev: LedgerRow[]) => {
+    const hasBlank = prev.some((row) => !row.dbId && !row.loadedAt && !isRowStarted(row));
+    if (hasBlank) return prev;
+    const maxId = prev.reduce((max, row) => Math.max(max, row.id), 0);
+    const origin = resolveTripOrigin(tripRef.current.line);
+    return [...prev, ...buildEntrySlotRows(maxId + 1, origin, 1)];
+  };
+
+  const buildDisplayRowsFromRemote = (remoteRows: RemoteDailyLedgerRow[]) => {
+    const currentTrip = tripRef.current;
+    const origin = resolveTripOrigin(currentTrip.line);
+    const withData = remoteRows.filter(isRemoteRowPrintable);
+    const sorted = sortRemoteLedgerRows(withData);
+    let displayId = 1;
+    const consolidated = sorted.map((remote) => mapRemoteRowToLocal(remote, displayId++));
+    return [...consolidated, ...buildEntrySlotRows(displayId, origin)];
+  };
+
   const loadRemoteRows = async () => {
     const branchId = activeBranchIdRef.current;
     const currentTrip = tripRef.current;
@@ -762,26 +797,16 @@ export default function ShipmentQuickLedger() {
       if (generation !== loadGenerationRef.current) return;
 
       const origin = resolveTripOrigin(currentTrip.line);
-      setRows(
-        Array.from({ length: DEFAULT_LEDGER_ROW_COUNT }, (_, idx) =>
-          mergeRowWithAutoTariff(
-            { ...createEmptyRow(idx + 1), origin },
-            tariffs,
-            cities,
-            branches,
-            goodsTypes,
-            currentTrip.date,
-          ),
-        ),
-      );
+      setRows(buildEntrySlotRows(1, origin));
 
       const baseParams = new URLSearchParams();
       baseParams.set('branchId', branchId);
       baseParams.set('ledgerDate', currentTrip.date);
       baseParams.set('lineLabel', currentTrip.line);
       baseParams.set('includeLoaded', includeLoaded ? 'true' : 'false');
+      baseParams.set('onlyWithData', 'true');
 
-      const accumulated: RemoteDailyLedgerRow[] = [];
+      const byId = new Map<string, RemoteDailyLedgerRow>();
       let offset = 0;
 
       while (offset <= 50000) {
@@ -795,27 +820,13 @@ export default function ShipmentQuickLedger() {
         if (generation !== loadGenerationRef.current) return;
         if (!batch.length) break;
 
-        accumulated.push(...batch);
-        setRemoteSyncedCount(accumulated.length);
-
-        const sorted = sortRemoteLedgerRows(accumulated);
-        let displayId = 1;
-        const consolidated = sorted.map((remote) => mapRemoteRowToLocal(remote, displayId++));
-        const emptyStart = consolidated.length + 1;
-        const emptyCount = Math.max(DEFAULT_LEDGER_ROW_COUNT - consolidated.length, 100);
-        setRows([
-          ...consolidated,
-          ...Array.from({ length: emptyCount }, (_, idx) =>
-            mergeRowWithAutoTariff(
-              { ...createEmptyRow(emptyStart + idx), origin },
-              tariffs,
-              cities,
-              branches,
-              goodsTypes,
-              currentTrip.date,
-            ),
-          ),
-        ]);
+        for (const row of batch) {
+          if (isRemoteRowPrintable(row)) {
+            byId.set(row.id, row);
+          }
+        }
+        setRemoteSyncedCount(byId.size);
+        setRows(buildDisplayRowsFromRemote([...byId.values()]));
 
         if (batch.length < LEDGER_FETCH_CHUNK_SIZE) break;
         offset += LEDGER_FETCH_CHUNK_SIZE;
@@ -951,7 +962,8 @@ export default function ShipmentQuickLedger() {
 
   const updateRow = (id: number, field: keyof LedgerRow, value: string) => {
     setRows((prev) =>
-      prev.map((row) => {
+      appendTrailingEntrySlot(
+        prev.map((row) => {
         if (row.id !== id) return row;
         if (field === 'parcelType') {
           const next = { ...row, parcelType: value, collectManual: false };
@@ -978,8 +990,11 @@ export default function ShipmentQuickLedger() {
         }
         return next;
       }),
+      ),
     );
-    queueRowSave(id);
+    if (field !== 'destination') {
+      queueRowSave(id);
+    }
   };
 
   const saveRowToServer = async (displayRowId: number) => {
@@ -1023,20 +1038,22 @@ export default function ShipmentQuickLedger() {
         notes: row.notes || null,
       });
       setRows((prev) =>
-        prev.map((r) =>
-          r.id === displayRowId
-            ? {
-                ...r,
-                dbId: saved.id,
-                serverRowNo: saved.row_no,
-                sessionDriverId: saved.driver_id
-                  ? syntheticEntityId(saved.driver_id)
-                  : effectiveDriverId || r.sessionDriverId,
-                updatedAt: saved.updated_at,
-                postedShipmentId: saved.posted_shipment_id,
-                loadedAt: saved.loaded_at,
-              }
-            : r,
+        appendTrailingEntrySlot(
+          prev.map((r) =>
+            r.id === displayRowId
+              ? {
+                  ...r,
+                  dbId: saved.id,
+                  serverRowNo: saved.row_no,
+                  sessionDriverId: saved.driver_id
+                    ? syntheticEntityId(saved.driver_id)
+                    : effectiveDriverId || r.sessionDriverId,
+                  updatedAt: saved.updated_at,
+                  postedShipmentId: saved.posted_shipment_id,
+                  loadedAt: saved.loaded_at,
+                }
+              : r,
+          ),
         ),
       );
 
@@ -1148,7 +1165,7 @@ export default function ShipmentQuickLedger() {
     if (!origin) return;
     setRows((prev) =>
       prev.map((row) => {
-        if (row.postedShipmentId) return row;
+        if (row.dbId || row.postedShipmentId || row.loadedAt) return row;
         const next = { ...row, origin, collectManual: false };
         return mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
       }),
@@ -1205,18 +1222,15 @@ export default function ShipmentQuickLedger() {
   };
 
   const addRows = () => {
-    const origin = resolveTripOrigin(trip.line);
     setRows((prev) => {
-      const start = prev.length + 1;
-      const nextRows = Array.from({ length: LEDGER_ROWS_ADD_INCREMENT }, (_, index) => {
-        const base = createEmptyRow(start + index);
-        const merged = {
-          ...base,
-          origin: origin || base.origin,
-        };
-        return mergeRowWithAutoTariff(merged, tariffs, cities, branches, goodsTypes, trip.date);
-      });
-      return [...prev, ...nextRows];
+      const blankNewEntries = prev.filter((row) => !row.dbId && !row.loadedAt && !isRowStarted(row));
+      if (blankNewEntries.length) {
+        showToast('استخدم السطر الفارغ في الأسفل للإدخال الجديد', 'info');
+        return prev;
+      }
+      const maxId = prev.reduce((max, row) => Math.max(max, row.id), 0);
+      const origin = resolveTripOrigin(trip.line);
+      return [...prev, ...buildEntrySlotRows(maxId + 1, origin, LEDGER_ROWS_ADD_INCREMENT)];
     });
   };
 
@@ -1251,44 +1265,69 @@ export default function ShipmentQuickLedger() {
   };
 
   const commitDestinationCell = (row: LedgerRow, rawInput: string) => {
-    const raw = rawInput.trim();
-    let next = raw;
-    let agentId = row.agentId;
-    let agentName = row.agentName;
-    const cityResolved = resolveDestinationByQuickCode(raw, cities, branches);
-    if (cityResolved) {
-      next = cityResolved;
-      agentId = undefined;
-      agentName = '';
-    } else {
-      const unique = dedupeAgentsList([...(agentSuggestions[row.id] || []), ...catalogAgents]);
-      const agent = matchByEntityCode(unique, raw);
-      if (agent) {
-        next = resolveAgentDestinationLabel(agent);
-        agentId = agent.id;
-        agentName = agent.name;
-      } else if (isDigitsOnlyQuickCode(raw) && raw) {
-        showToast(`لا يوجد فرع/مدينة/وكيل بالكود «${raw}»`, 'info');
+    void (async () => {
+      const raw = rawInput.trim();
+      let next = raw;
+      let agentId = row.agentId;
+      let agentName = row.agentName;
+      const cityResolved = resolveDestinationByQuickCode(raw, cities, branches);
+      if (cityResolved) {
+        next = cityResolved;
+        agentId = undefined;
+        agentName = '';
+      } else {
+        const unique = dedupeAgentsList([...(agentSuggestions[row.id] || []), ...catalogAgents]);
+        const agent =
+          matchByEntityCode(unique, raw) ??
+          unique.find((a) => {
+            const label = resolveAgentDestinationLabel(a);
+            const normRaw = normalizeName(raw);
+            return (
+              normalizeName(label) === normRaw ||
+              normalizeName(a.name) === normRaw ||
+              normalizeName(a.governorate ?? '') === normRaw ||
+              normalizeName(a.city ?? '') === normRaw
+            );
+          });
+        if (agent) {
+          next = resolveAgentDestinationLabel(agent);
+          agentId = agent.id;
+          agentName = agent.name;
+        } else if (isDigitsOnlyQuickCode(raw) && raw) {
+          showToast(`لا يوجد فرع/مدينة/وكيل بالكود «${raw}»`, 'info');
+        } else if (normalizeName(raw)) {
+          showToast(
+            'تأكد أن «الجهة» تطابق محافظة الوكيل (مثل: الرقة، الحسكة) ليتم حفظ الشحنة وربطها بالوكيل.',
+            'info',
+          );
+        }
       }
-    }
-    const norm = normalizeName(next);
-    if (norm) rememberDestinationOption(norm);
-    setRows((prev) =>
-      prev.map((r) => {
-        if (r.id !== row.id) return r;
-        const merged: LedgerRow = {
-          ...r,
-          destination: norm || r.destination,
-          agentId,
-          agentName,
-          collectManual: false,
-        };
-        return mergeRowWithAutoTariff(merged, tariffs, cities, branches, goodsTypes, trip.date);
-      }),
-    );
-    queueRowSave(row.id);
-    const destLookup = norm || normalizeName(raw);
-    if (destLookup) void lookupAgentsForRow(row.id, destLookup, row.origin);
+      const norm = normalizeName(next);
+      if (norm) rememberDestinationOption(norm);
+      setRows((prev) =>
+        appendTrailingEntrySlot(
+          prev.map((r) => {
+            if (r.id !== row.id) return r;
+            const merged: LedgerRow = {
+              ...r,
+              destination: norm || r.destination,
+              agentId,
+              agentName,
+              collectManual: false,
+            };
+            return mergeRowWithAutoTariff(merged, tariffs, cities, branches, goodsTypes, trip.date);
+          }),
+        ),
+      );
+      const destLookup = norm || normalizeName(raw);
+      if (destLookup) {
+        await lookupAgentsForRow(row.id, destLookup, row.origin);
+      }
+      const latest = rowsRef.current.find((r) => r.id === row.id);
+      if (latest && shouldPersistRow(latest)) {
+        queueRowSave(row.id);
+      }
+    })();
   };
 
   const rememberDestinationOption = (value: string) => {
@@ -1501,17 +1540,33 @@ export default function ShipmentQuickLedger() {
         await loadRemoteRows();
         return;
       }
-      if (!trip.driverId) {
-        showToast('يرجى اختيار السائق من المركبات والسائقون', 'error');
+
+      const rowsMissingDriver = rowsToPost.filter((row) => {
+        const fleet = resolveFleetForLedgerRow(row, trip, drivers, vehicles);
+        return !fleet.driverId;
+      });
+      if (rowsMissingDriver.length) {
+        showToast(
+          'يرجى اختيار السائق (من أعلى الدفتر) أو التأكد أن السطر مرتبط بسائق — مطلوب لحفظ الشحنات الجديدة.',
+          'error',
+        );
+        return;
+      }
+
+      const rowsMissingAmount = rowsToPost.filter((row) => rowAmountUsd(row) <= 0);
+      if (rowsMissingAmount.length) {
+        showToast('كل سطر مكتمل يحتاج مبلغاً (تحصيل أو دفع مسبق أو حوالة) قبل حفظ الشحنة.', 'error');
         return;
       }
 
       let workingRows = [...rows];
+      const upsertedRowIds: string[] = [];
       for (const row of rowsToPost) {
         const fleet = resolveFleetForLedgerRow(row, trip, drivers, vehicles);
+        const effectiveDriverId = row.sessionDriverId ?? trip.driverId;
         const rowNo =
-          row.serverRowNo ?? nextServerRowNoForDriver(workingRows, trip.driverId) ?? row.id;
-        await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
+          row.serverRowNo ?? nextServerRowNoForDriver(workingRows, effectiveDriverId) ?? row.id;
+        const saved = await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
           branchId: activeBranchId,
           ledgerDate: trip.date,
           lineLabel: trip.line,
@@ -1534,8 +1589,18 @@ export default function ShipmentQuickLedger() {
           transferServiceFeeUsd: parseUsd(row.transferServiceFee),
           notes: row.notes || null,
         });
+        upsertedRowIds.push(saved.id);
         workingRows = workingRows.map((r) =>
-          r.id === row.id ? { ...r, serverRowNo: rowNo, sessionDriverId: trip.driverId } : r,
+          r.id === row.id
+            ? {
+                ...r,
+                dbId: saved.id,
+                serverRowNo: saved.row_no,
+                sessionDriverId: saved.driver_id
+                  ? syntheticEntityId(saved.driver_id)
+                  : trip.driverId || r.sessionDriverId,
+              }
+            : r,
         );
       }
 
@@ -1547,12 +1612,13 @@ export default function ShipmentQuickLedger() {
         branchId: activeBranchId,
         ledgerDate: trip.date,
         lineLabel: trip.line,
+        rowIds: upsertedRowIds,
       });
 
-      const postedByRowNo = new Map(result.posted.map((item) => [item.rowNo, item]));
+      const postedByRowId = new Map(result.posted.map((item) => [item.rowId, item]));
       setRows((prev) =>
         prev.map((row) => {
-          const posted = postedByRowNo.get(row.serverRowNo ?? row.id);
+          const posted = row.dbId ? postedByRowId.get(row.dbId) : undefined;
           if (!posted) return row;
           return {
             ...row,
@@ -1572,7 +1638,16 @@ export default function ShipmentQuickLedger() {
           'error',
         );
       } else if (!result.posted.length) {
-        showToast('لا توجد أسطر صالحة للترحيل. تأكد من اكتمال البيانات وربط الوكيل بالوجهة.', 'info');
+        showToast(
+          'لا توجد أسطر صالحة للترحيل. تأكد من اكتمال البيانات وأن «الجهة» تطابق محافظة وكيل واحد نشط.',
+          'info',
+        );
+      }
+      if (result.skipped.length && !result.posted.length && !result.errors.length) {
+        showToast(
+          result.skipped.map((item) => `السطر ${item.rowNo}: ${item.reason}`).join(' | '),
+          'info',
+        );
       }
 
       await loadRemoteRows();
@@ -1590,8 +1665,8 @@ export default function ShipmentQuickLedger() {
           <div className="quick-ledger-eyebrow">إدخال سريع للشحنات</div>
           <h2>دفتر الشحن اليومي</h2>
           <p className="quick-ledger-hint">
-            اختر <strong>الخط</strong> لعرض كل شحناته (كل السائقين). السائق والمركبة للإدخال الجديد فقط. الطباعة من زر «طباعة» حسب السائق/المركبة وفترة تاريخ. البيانات المحفوظة تُجلب على دفعات لتسريع الفتح.
-            عمود <strong>تحصيل $</strong> يُملأ من تعريف الأسعار عند تطابق المسار + نوع الطرد + الوزن.
+            اختر <strong>الخط</strong> لعرض الشحنات المحفوظة فوراً (بدون أسطر فارغة في القائمة). للإدخال الجديد يظهر سطر واحد في الأسفل.
+            «الجهة» = محافظة الوكيل النشط (مثل الرقة) — اضغط Enter أو اخرج من الحقل بعد الكتابة لربط الوكيل تلقائياً.
           </p>
         </div>
         <div className="quick-ledger-actions">
@@ -1637,7 +1712,7 @@ export default function ShipmentQuickLedger() {
           </div>
           <button type="button" onClick={addRows}>
             <Plus size={16} />
-            إضافة 100 سطر
+            إضافة سطر
           </button>
           <button type="button" onClick={() => void loadRemoteRows()} disabled={remoteLoading}>
             {remoteLoading
