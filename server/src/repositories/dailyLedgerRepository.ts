@@ -1,5 +1,6 @@
 import type { PoolClient } from 'pg';
 import { pool } from '../db/pool.js';
+import { resolveDriverIdByLabel } from '../utils/dailyLedgerDriverMatch.js';
 import { HttpError } from '../utils/errors.js';
 import type { DataScope } from '../utils/scope.js';
 
@@ -502,6 +503,9 @@ export class DailyLedgerRepository {
         return updated.rows[0];
       }
 
+      const resolvedDriverId =
+        input.driverId ?? (await resolveDriverIdByLabel(client, input.driverLabel));
+
       const session = await client.query<DailyLedgerSession>(
         `
         insert into daily_ledger_sessions(
@@ -537,7 +541,7 @@ export class DailyLedgerRepository {
           input.tripNo ?? null,
           input.vehicleLabel ?? null,
           input.driverLabel ?? null,
-          input.driverId ?? null,
+          resolvedDriverId,
           input.vehicleId ?? null,
           input.userId ?? scope.userId ?? null,
         ],
