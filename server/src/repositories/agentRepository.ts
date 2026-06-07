@@ -12,7 +12,12 @@ import {
   normalizeAgentName,
   normalizeOptionalLocation,
 } from '../utils/agentValidation.js';
-import { computeAgentBalanceDue, computeAgentRemittanceDue } from '../utils/agentShipmentSettlement.js';
+import {
+  computeAgentBalanceDue,
+  computeAgentRemittanceDue,
+  computeAgentTransferRemittanceDue,
+  resolveAgentTransferRole,
+} from '../utils/agentShipmentSettlement.js';
 import { HttpError } from '../utils/errors.js';
 
 export interface AgentRecord {
@@ -517,22 +522,37 @@ export class AgentRepository {
         t.id,
         t.transfer_date,
         t.created_at,
+        t.collected_at,
+        t.paid_out_at,
         t.status,
         t.sender_name,
         t.receiver_name,
+        t.destination_city,
         t.amount,
         t.currency,
         t.agent_commission,
         t.agent_commission_currency,
         t.transfer_service_fee,
         t.transfer_service_fee_currency,
+        t.origin_agent_id,
+        t.destination_agent_id,
+        t.agent_id,
+        t.shipment_id,
         s.shipment_no
       from transfers t
       left join shipments s on s.id = t.shipment_id
       where t.company_id = $1
-        and t.agent_id = $2
         and upper(t.status) <> 'CANCELLED'
-        and ($3::text is null or upper(t.agent_commission_currency) = upper($3))
+        and (
+          t.origin_agent_id = $2::uuid
+          or t.destination_agent_id = $2::uuid
+          or t.agent_id = $2::uuid
+        )
+        and (
+          $3::text is null
+          or upper(t.currency) = upper($3)
+          or upper(t.agent_commission_currency) = upper($3)
+        )
       order by coalesce(t.transfer_date, t.created_at) desc
       limit 500
       `,
@@ -577,12 +597,52 @@ export class AgentRepository {
       transfer_totals as (
         select
           count(*)::int as transfers_count,
-          coalesce(sum(coalesce(agent_commission, 0)), 0)::numeric as transfer_commission,
+          coalesce(sum(coalesce(agent_commission, 0)) filter (
+            where destination_agent_id = $2::uuid
+              or (destination_agent_id is null and agent_id = $2::uuid)
+          ), 0)::numeric as transfer_commission,
+          coalesce(sum(coalesce(amount, 0)) filter (
+            where origin_agent_id = $2::uuid
+              and shipment_id is null
+              and collection_receipt_voucher_id is not null
+          ), 0)::numeric as transfer_principal_collected,
+          coalesce(sum(coalesce(transfer_service_fee, 0)) filter (
+            where origin_agent_id = $2::uuid
+              and shipment_id is null
+              and collection_receipt_voucher_id is not null
+          ), 0)::numeric as transfer_service_fee_collected,
+          coalesce(sum(coalesce(amount, 0)) filter (
+            where (
+              destination_agent_id = $2::uuid
+              or (destination_agent_id is null and agent_id = $2::uuid)
+            )
+              and upper(status) = 'COMPLETED'
+          ), 0)::numeric as transfer_principal_paid,
           count(*) filter (where $3::timestamptz is not null and coalesce(transfer_date, created_at) > $3::timestamptz)::int as transfers_since_count,
-          coalesce(sum(coalesce(agent_commission, 0)) filter (where $3::timestamptz is not null and coalesce(transfer_date, created_at) > $3::timestamptz), 0)::numeric as transfer_commission_since
+          coalesce(sum(coalesce(agent_commission, 0)) filter (
+            where $3::timestamptz is not null
+              and coalesce(transfer_date, created_at) > $3::timestamptz
+              and (
+                destination_agent_id = $2::uuid
+                or (destination_agent_id is null and agent_id = $2::uuid)
+              )
+          ), 0)::numeric as transfer_commission_since,
+          coalesce(sum(coalesce(amount, 0) + coalesce(transfer_service_fee, 0)) filter (
+            where $3::timestamptz is not null
+              and coalesce(transfer_date, created_at) > $3::timestamptz
+              and origin_agent_id = $2::uuid
+              and shipment_id is null
+              and collection_receipt_voucher_id is not null
+          ), 0)::numeric as transfer_remittance_since
         from transfers
-        where company_id = $1 and agent_id = $2 and upper(status) = 'COMPLETED'
-          and ($5::text is null or upper(agent_commission_currency) = upper($5))
+        where company_id = $1
+          and upper(status) <> 'CANCELLED'
+          and (
+            origin_agent_id = $2::uuid
+            or destination_agent_id = $2::uuid
+            or agent_id = $2::uuid
+          )
+          and ($5::text is null or upper(currency) = upper($5) or upper(agent_commission_currency) = upper($5))
       ),
       receipt_totals as (
         select
@@ -638,7 +698,12 @@ export class AgentRepository {
       `,
       [companyId, agentId, Number(agent.commission_percentage ?? 0), currencyCode ?? null],
     );
-    const totalAgentRemittanceDue = Number(remittanceResult.rows[0]?.total_remittance_due ?? 0);
+    const totalAgentRemittanceDueFromShipments = Number(remittanceResult.rows[0]?.total_remittance_due ?? 0);
+    const totalTransferPrincipalCollected = Number(totals.transfer_principal_collected || 0);
+    const totalTransferServiceFeeCollected = Number(totals.transfer_service_fee_collected || 0);
+    const totalTransferRemittanceDue = totalTransferPrincipalCollected + totalTransferServiceFeeCollected;
+    const totalTransferPrincipalPaid = Number(totals.transfer_principal_paid || 0);
+    const totalAgentRemittanceDue = totalAgentRemittanceDueFromShipments + totalTransferRemittanceDue;
     const movementTotalsResult = await pool.query(
       `
       select
@@ -655,15 +720,18 @@ export class AgentRepository {
     const movementTotals = movementTotalsResult.rows[0] ?? {};
 
     const totalShipmentCommission = Number(totals.shipment_commission || 0);
-    const totalTransferCommission = 0;
+    const totalTransferCommission = Number(totals.transfer_commission || 0);
     const totalReceipts = Number(totals.receipts || 0);
     const totalPayments = Number(totals.payments || 0);
     const sinceShipmentCommission = lastReconciledAt ? Number(totals.shipment_commission_since || 0) : totalShipmentCommission;
-    const sinceTransferCommission = 0;
+    const sinceTransferCommission = lastReconciledAt ? Number(totals.transfer_commission_since || 0) : totalTransferCommission;
     const sinceReceipts = lastReconciledAt ? Number(totals.receipts_since || 0) : totalReceipts;
     const sincePayments = lastReconciledAt ? Number(totals.payments_since || 0) : totalPayments;
-    const totalAgentCommission = totalShipmentCommission;
-    const sinceAgentCommission = sinceShipmentCommission;
+    const sinceTransferRemittanceDue = lastReconciledAt
+      ? Number(totals.transfer_remittance_since || 0)
+      : totalTransferRemittanceDue;
+    const totalAgentCommission = totalShipmentCommission + totalTransferCommission;
+    const sinceAgentCommission = sinceShipmentCommission + sinceTransferCommission;
     const detailedStatement = await this.getAgentAccountStatement(companyId, agentId, currencyCode, null);
     const settlementBalance = Number(detailedStatement?.summary.netAgentDue ?? 0);
     const settlementBalanceSince = Number(detailedStatement?.summary.sinceLastReconciliation.netAgentDue ?? settlementBalance);
@@ -687,6 +755,11 @@ export class AgentRepository {
         totalTransferCommission,
         totalAgentCommission,
         totalAgentRemittanceDue,
+        totalAgentRemittanceDueFromShipments,
+        totalTransferRemittanceDue,
+        totalTransferPrincipalCollected,
+        totalTransferServiceFeeCollected,
+        totalTransferPrincipalPaid,
         totalReceipts,
         totalPayments,
         netVoucherBalance: totalReceipts - totalPayments,
@@ -705,6 +778,11 @@ export class AgentRepository {
           totalTransferCommission: sinceTransferCommission,
           totalAgentCommission: sinceAgentCommission,
           totalAgentRemittanceDue,
+          totalAgentRemittanceDueFromShipments,
+          totalTransferRemittanceDue: sinceTransferRemittanceDue,
+          totalTransferPrincipalCollected,
+          totalTransferServiceFeeCollected,
+          totalTransferPrincipalPaid,
           totalReceipts: sinceReceipts,
           totalPayments: sincePayments,
           paidToAgent: sincePayments,
@@ -721,7 +799,26 @@ export class AgentRepository {
           agentCommissionAmount: row.agent_commission_amount_snapshot,
         }),
       })),
-      transfers: transfers.rows,
+      transfers: transfers.rows.map((row) => {
+        const agentRole = resolveAgentTransferRole(
+          agentId,
+          row.origin_agent_id,
+          row.destination_agent_id,
+          row.agent_id,
+        );
+        return {
+          ...row,
+          agent_role: agentRole,
+          agent_remittance_due: computeAgentTransferRemittanceDue({
+            agentRole,
+            status: row.status,
+            amount: row.amount,
+            transferServiceFee: row.transfer_service_fee,
+            linkedShipmentId: row.shipment_id,
+            collectedAt: row.collected_at,
+          }),
+        };
+      }),
       vouchers: vouchers.rows,
     };
   }
@@ -784,7 +881,8 @@ export class AgentRepository {
             'shipment_transfer_service_fee',
             'transfer_principal_collected',
             'transfer_service_fee_collected',
-            'transfer_principal_paid'
+            'transfer_principal_paid',
+            'transfer_agent_commission'
           )
 
         union all

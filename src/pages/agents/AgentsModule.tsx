@@ -5,6 +5,9 @@ import { httpClient } from '../../lib/api/httpClient';
 import { phase3FinanceGateway } from '../../lib/api/phase3FinanceGateway';
 import { normalizeShipmentStatus } from '../../lib/shipments/shipmentStatus';
 import AgentStatementReconciliationPanel from '../../components/agents/AgentStatementReconciliationPanel';
+import AgentFinancialStatementContent, {
+  agentStatementSourceLabel,
+} from '../../components/agents/AgentFinancialStatementContent';
 import AgentQuickCodesPanel from '../../components/agents/AgentQuickCodesPanel';
 import {
   AGENT_QUICK_CODE_TEMPLATES,
@@ -370,13 +373,7 @@ export default function AgentsModule() {
 
   const money = (value: unknown, currency = 'USD') => `${Number(value || 0).toLocaleString('ar-SY', { maximumFractionDigits: 2 })} ${currency}`;
   const dateText = (value: unknown) => value ? new Date(String(value)).toLocaleString('ar-SY') : 'لا توجد مطابقة محفوظة';
-  const sourceLabel = (value: string) => ({
-    shipment_commission: 'عمولة شحنة',
-    transfer: 'حوالة',
-    receipt_voucher: 'سند قبض',
-    payment_voucher: 'سند دفع',
-    cashbox_transaction: 'حركة صندوق',
-  }[value] ?? value);
+  const sourceLabel = agentStatementSourceLabel;
   const reconciliationMetrics = statementModal ? getAgentReconciliationMetrics(statementModal.data) : null;
   const rowReconciliationClass = (row: any) => resolveStatementRowReconciliationClass(
     row,
@@ -533,38 +530,11 @@ export default function AgentsModule() {
                 returnPath={`${location.pathname}${location.search}`}
               />
               {statementModal.kind === 'financial' ? (
-                <>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="stat-card"><div className="stat-value">{statementModal.data.summary.shipmentsCount}</div><div className="stat-label">شحنات</div></div>
-                    <div className="stat-card"><div className="stat-value">{money(statementModal.data.summary.totalAgentRemittanceDue ?? 0)}</div><div className="stat-label">مطلوب من الوكيل</div></div>
-                    <div className="stat-card"><div className="stat-value">{money(statementModal.data.summary.totalShipmentCommission)}</div><div className="stat-label">عمولة الشحن</div></div>
-                    <div className="stat-card"><div className="stat-value">{money(statementModal.data.summary.totalReceipts)}</div><div className="stat-label">سندات قبض (مسدّد)</div></div>
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="stat-card"><div className="stat-value">{Number(statementModal.data.agent.commission_percentage || 0)}%</div><div className="stat-label">نسبة عمولة الشحن</div></div>
-                    <div className="stat-card"><div className="stat-value font-bold text-red-700">{money(statementModal.data.summary.agentBalanceDue ?? 0)}</div><div className="stat-label">ذمة على الوكيل (متبقي)</div></div>
-                    <div className="stat-card"><div className="stat-value">{money(statementModal.data.summary.sinceLastReconciliation?.totalAgentRemittanceDue ?? statementModal.data.summary.totalAgentRemittanceDue ?? 0)}</div><div className="stat-label">مطلوب بعد آخر مطابقة</div></div>
-                    <div className="stat-card"><div className="stat-value font-bold text-red-700">{money(statementModal.data.summary.sinceLastReconciliation?.agentBalanceDue ?? statementModal.data.summary.agentBalanceDue ?? 0)}</div><div className="stat-label">ذمة بعد آخر مطابقة</div></div>
-                  </div>
-                  <section>
-                    <h4 className="font-bold mb-2">تفاصيل الشحنات والسندات</h4>
-                    <table className="data-grid text-sm">
-                      <thead><tr><th>التاريخ</th><th>المرجع</th><th>البيان</th><th>أجور الشحن</th><th>مطلوب من الوكيل</th><th>العمولة</th><th>الحالة</th></tr></thead>
-                      <tbody>
-                        {statementModal.data.shipments.map((s: any) => (
-                          <tr key={s.id} className={rowReconciliationClass({ at: s.created_at, source_type: 'shipment', debit: Number(s.agent_remittance_due ?? 0) })}>
-                            <td>{String(s.created_at).split('T')[0]}</td><td>{s.shipment_no}</td><td>{s.sender_name ?? '-'} / {s.receiver_name ?? '-'}</td><td>{money(s.agent_commission_base_amount ?? s.freight_charge, s.original_currency)}</td><td>{money(s.agent_remittance_due ?? 0, s.original_currency)}</td><td>{money(s.agent_commission_amount_snapshot, s.original_currency)}</td><td>{s.status}</td>
-                          </tr>
-                        ))}
-                        {statementModal.data.vouchers.map((v: any) => (
-                          <tr key={`v-${v.id}`} className={rowReconciliationClass({ at: v.created_at, source_type: v.voucher_kind === 'receipt' ? 'receipt_voucher' : 'payment_voucher', status: v.status, credit: Number(v.original_amount ?? 0), debit: v.voucher_kind === 'payment' ? Number(v.original_amount ?? 0) : 0 })}>
-                            <td>{String(v.created_at).split('T')[0]}</td><td>{v.voucher_no}</td><td>{v.voucher_kind === 'receipt' ? 'سند قبض من الوكيل' : 'سند دفع للوكيل'}</td><td colSpan={2}>{money(v.original_amount, v.original_currency)}</td><td>-</td><td>{v.status}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </section>
-                </>
+                <AgentFinancialStatementContent
+                  data={statementModal.data}
+                  money={money}
+                  rowReconciliationClass={rowReconciliationClass}
+                />
               ) : (
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

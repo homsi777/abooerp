@@ -1,4 +1,5 @@
 import type { DataScope } from '../utils/scope.js';
+import { HttpError } from '../utils/errors.js';
 import type { DailyLedgerRowListFilters, DailyLedgerUpsertInput } from '../repositories/dailyLedgerRepository.js';
 import { DailyLedgerRepository } from '../repositories/dailyLedgerRepository.js';
 import type { DailyLedgerShipmentPostingService } from './dailyLedgerShipmentPostingService.js';
@@ -13,8 +14,17 @@ export class DailyLedgerService {
     return this.repo.listRows(scope, filters);
   }
 
-  upsertRow(scope: DataScope, input: DailyLedgerUpsertInput) {
-    return this.repo.upsertRow(scope, input);
+  async upsertRow(scope: DataScope, input: DailyLedgerUpsertInput) {
+    const row = await this.repo.upsertRow(scope, input);
+    if (this.shipmentPosting && row.posted_shipment_id && !row.loaded_at) {
+      try {
+        await this.shipmentPosting.syncPostedShipmentFromLedgerRow(scope, row.id);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'تعذر تحديث الشحنة المرتبطة.';
+        throw new HttpError(409, `تم حفظ سطر الدفتر، لكن ${detail}`);
+      }
+    }
+    return row;
   }
 
   markPosted(

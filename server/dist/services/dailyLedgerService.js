@@ -1,3 +1,4 @@
+import { HttpError } from '../utils/errors.js';
 export class DailyLedgerService {
     repo;
     shipmentPosting;
@@ -8,8 +9,18 @@ export class DailyLedgerService {
     listRows(scope, filters) {
         return this.repo.listRows(scope, filters);
     }
-    upsertRow(scope, input) {
-        return this.repo.upsertRow(scope, input);
+    async upsertRow(scope, input) {
+        const row = await this.repo.upsertRow(scope, input);
+        if (this.shipmentPosting && row.posted_shipment_id && !row.loaded_at) {
+            try {
+                await this.shipmentPosting.syncPostedShipmentFromLedgerRow(scope, row.id);
+            }
+            catch (error) {
+                const detail = error instanceof Error ? error.message : 'تعذر تحديث الشحنة المرتبطة.';
+                throw new HttpError(409, `تم حفظ سطر الدفتر، لكن ${detail}`);
+            }
+        }
+        return row;
     }
     markPosted(scope, input, allowedBranchIds) {
         return this.repo.markPosted(scope, { ...input, userId: scope.userId }, allowedBranchIds);

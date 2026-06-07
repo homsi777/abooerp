@@ -46,3 +46,43 @@ export function computeAgentBalanceDue(input: {
   const payments = money(input.confirmedPaymentsToAgent);
   return Math.max(money(input.totalRemittanceDue) - receipts + payments, 0);
 }
+
+export type AgentTransferRole = 'origin' | 'destination' | 'both' | 'none';
+
+export function resolveAgentTransferRole(
+  agentId: string,
+  originAgentId?: string | null,
+  destinationAgentId?: string | null,
+  legacyAgentId?: string | null,
+): AgentTransferRole {
+  const id = String(agentId);
+  const isOrigin = Boolean(originAgentId && String(originAgentId) === id);
+  const isDestination = Boolean(
+    (destinationAgentId && String(destinationAgentId) === id)
+      || (!destinationAgentId && legacyAgentId && String(legacyAgentId) === id),
+  );
+  if (isOrigin && isDestination) return 'both';
+  if (isOrigin) return 'origin';
+  if (isDestination) return 'destination';
+  return 'none';
+}
+
+/** Net remittance for standalone transfers (hawala not already on a shipment row). */
+export function computeAgentTransferRemittanceDue(input: {
+  agentRole: AgentTransferRole;
+  status: string;
+  amount: number;
+  transferServiceFee: number;
+  linkedShipmentId?: string | null;
+  collectedAt?: string | null;
+}): number {
+  if (input.linkedShipmentId) return 0;
+  const status = String(input.status || '').toUpperCase();
+  if (status === 'CANCELLED' || input.agentRole === 'none' || input.agentRole === 'destination') {
+    return 0;
+  }
+  if (!input.collectedAt && status !== 'COMPLETED' && status !== 'PENDING') {
+    return 0;
+  }
+  return Math.max(money(input.amount) + money(input.transferServiceFee), 0);
+}

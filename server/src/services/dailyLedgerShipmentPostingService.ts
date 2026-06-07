@@ -24,6 +24,7 @@ type LedgerRowRecord = {
   transfer_service_fee_usd: string | number | null;
   notes: string | null;
   posted_shipment_id: string | null;
+  loaded_at?: string | null;
   branch_id: string;
   company_id: string;
   ledger_date: string;
@@ -229,6 +230,94 @@ export class DailyLedgerShipmentPostingService {
     return result.rows;
   }
 
+  /** يحدّث الشحنة المرتبطة بسطر الدفter — لا ينشئ شحنة جديدة. */
+  async syncPostedShipmentFromLedgerRow(
+    scope: DataScope,
+    rowId: string,
+  ): Promise<{ shipmentId: string; shipmentNo: string; agentId: string | null }> {
+    const row = await this.loadRow(scope, rowId);
+    if (!row) throw new HttpError(404, 'سطر الدفتر غير موجود.');
+    if (!row.posted_shipment_id) {
+      throw new HttpError(400, 'السطر غير مربوط بشحنة.');
+    }
+    if (row.loaded_at) {
+      throw new HttpError(409, 'لا يمكن تعديل شحنة سطر مُحمّل على بيان.');
+    }
+
+    const client = await pool.connect();
+    let senderId: string;
+    let receiverId: string;
+    try {
+      await client.query('begin');
+      senderId = await ensureSenderReceiver(client, row.sender_name ?? '', 'sender');
+      receiverId = await ensureSenderReceiver(client, row.receiver_name ?? '', 'receiver');
+      const parcelType = normalizeName(row.parcel_type);
+      if (parcelType) {
+        await ensureGoodsType(client, parcelType);
+      }
+      await client.query('commit');
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    const agent = await this.agentRepository.resolveAgentForDestination(
+      scope.companyId!,
+      normalizeName(row.destination),
+    );
+    const agentId = agent.id;
+    const destinationCity = resolveAgentDestinationLabel(agent) || normalizeName(row.destination);
+    const amounts = amountsFromLedgerRow(row);
+    const accountCustomer = await resolveAccountCustomerBySenderName(row.company_id, row.sender_name ?? '');
+
+    const notes = [
+      row.notes,
+      row.trip_no ? `رقم الرحلة: ${row.trip_no}` : '',
+      row.vehicle_label ? `المركبة: ${row.vehicle_label}` : '',
+      row.driver_label ? `السائق: ${row.driver_label}` : '',
+    ]
+      .filter(Boolean)
+      .join(' | ');
+
+    const updated = await this.shipmentService.update(
+      row.posted_shipment_id,
+      {
+        senderId,
+        receiverId,
+        agentId,
+        customerId: accountCustomer?.id,
+        originCity: normalizeName(row.origin_label) || normalizeName(row.line_label),
+        destinationCity,
+        description: notes || normalizeName(row.parcel_type),
+        piecesCount: Number(row.parcel_count) || 1,
+        weightKg: row.weight_kg == null ? undefined : Number(row.weight_kg),
+        originalAmount: amounts.total,
+        originalCurrency: 'USD',
+        exchangeRateToUsd: 1,
+        baseAmountUsd: amounts.total,
+        freightCharge: amounts.freightCharge,
+        transferFee: amounts.transferFee,
+        prepaidAmount: amounts.prepaidAmount,
+        hawalaAmount: amounts.hawalaAmount,
+        transferServiceFee: amounts.transferServiceFee,
+        discountAmount: 0,
+      },
+      { ...scope, branchId: row.branch_id, companyId: row.company_id },
+    );
+
+    if (!updated) {
+      throw new HttpError(404, 'الشحنة المرتبطة بهذا السطر غير موجودة.');
+    }
+
+    return {
+      shipmentId: row.posted_shipment_id,
+      shipmentNo: String((updated as { shipment_no?: string }).shipment_no ?? row.receipt_no ?? ''),
+      agentId,
+    };
+  }
+
   async postRowAsShipment(
     scope: DataScope,
     rowId: string,
@@ -237,11 +326,12 @@ export class DailyLedgerShipmentPostingService {
     const row = await this.loadRow(scope, rowId);
     if (!row) throw new HttpError(404, 'سطر الدفتر غير موجود.');
     if (row.posted_shipment_id) {
+      const synced = await this.syncPostedShipmentFromLedgerRow(scope, row.id);
       return {
         rowId: row.id,
-        shipmentId: row.posted_shipment_id,
-        shipmentNo: '',
-        agentId: null,
+        shipmentId: synced.shipmentId,
+        shipmentNo: synced.shipmentNo,
+        agentId: synced.agentId,
       };
     }
     if (!isRowPostable(row)) {
