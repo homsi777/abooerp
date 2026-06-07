@@ -31,32 +31,26 @@ async function assertUniqueLedgerReceiptNo(client, companyId, receiptNo, scope, 
         const where = hit.posted ? 'محفوظ مسبقاً في هذا الدفتر' : 'في هذا الدفتر';
         throw new HttpError(409, `رقم الإيصال مكرر ${where} (${hit.ledger_date} — ${hit.line_label} — سطر ${hit.row_no}): ${normalized}`);
     }
-    const shipmentDup = await client.query(`
-    select id, shipment_no
-    from shipments
-    where company_id = $1::uuid
-      and deleted_at is null
-      and lower(trim(shipment_no)) = lower($2)
-    limit 1
-    `, [companyId, normalized]);
-    if (!shipmentDup.rows.length)
-        return;
-    const shipmentId = shipmentDup.rows[0].id;
-    const linked = await client.query(`
-    select r.row_no, s.ledger_date::text as ledger_date, s.line_label
+}
+async function resolveExistingLedgerRowIdByReceipt(client, companyId, scope, receiptNo) {
+    const normalized = normalizeLedgerReceiptNo(receiptNo);
+    if (!normalized)
+        return null;
+    const existing = await client.query(`
+    select r.id
     from daily_ledger_rows r
     join daily_ledger_sessions s on s.id = r.session_id
-    where r.deleted_at is null
+    where s.company_id = $1::uuid
       and s.deleted_at is null
-      and r.posted_shipment_id = $1::uuid
-      and ($2::uuid is null or r.id <> $2::uuid)
-    order by s.ledger_date desc, r.row_no asc
+      and r.deleted_at is null
+      and s.branch_id = $2::uuid
+      and s.ledger_date = $3::date
+      and s.line_label = $4
+      and lower(trim(r.receipt_no)) = lower($5)
+    order by r.updated_at desc, r.row_no asc
     limit 1
-    `, [shipmentId, excludeRowId ?? null]);
-    if (linked.rows.length) {
-        const hit = linked.rows[0];
-        throw new HttpError(409, `رقم الإيصال ${normalized} محفوظ كشحنة (${hit.ledger_date} — ${hit.line_label} — سطر ${hit.row_no})`);
-    }
+    `, [companyId, scope.branchId, scope.ledgerDate, scope.lineLabel, normalized]);
+    return existing.rows[0]?.id ?? null;
 }
 export class DailyLedgerRepository {
     async listRows(scope, filters) {
@@ -162,12 +156,17 @@ export class DailyLedgerRepository {
         const client = await pool.connect();
         try {
             await client.query('begin');
-            await assertUniqueLedgerReceiptNo(client, scope.companyId, input.receiptNo, {
+            const ledgerScope = {
                 branchId: input.branchId,
                 ledgerDate: input.ledgerDate,
                 lineLabel: input.lineLabel,
-            }, input.rowId ?? null);
-            if (input.rowId) {
+            };
+            let effectiveRowId = input.rowId ?? null;
+            if (!effectiveRowId) {
+                effectiveRowId = await resolveExistingLedgerRowIdByReceipt(client, scope.companyId, ledgerScope, input.receiptNo);
+            }
+            await assertUniqueLedgerReceiptNo(client, scope.companyId, input.receiptNo, ledgerScope, effectiveRowId);
+            if (effectiveRowId) {
                 const updated = await client.query(`
           update daily_ledger_rows r
           set
@@ -207,7 +206,7 @@ export class DailyLedgerRepository {
             s.driver_id,
             s.vehicle_id
           `, [
-                    input.rowId,
+                    effectiveRowId,
                     scope.companyId,
                     input.receiptNo ?? null,
                     input.destination ?? '',

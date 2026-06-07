@@ -52,42 +52,35 @@ async function assertUniqueLedgerReceiptNo(
       `رقم الإيصال مكرر ${where} (${hit.ledger_date} — ${hit.line_label} — سطر ${hit.row_no}): ${normalized}`,
     );
   }
+}
 
-  const shipmentDup = await client.query<{ id: string; shipment_no: string }>(
-    `
-    select id, shipment_no
-    from shipments
-    where company_id = $1::uuid
-      and deleted_at is null
-      and lower(trim(shipment_no)) = lower($2)
-    limit 1
-    `,
-    [companyId, normalized],
-  );
-  if (!shipmentDup.rows.length) return;
+async function resolveExistingLedgerRowIdByReceipt(
+  client: PoolClient,
+  companyId: string,
+  scope: { branchId: string; ledgerDate: string; lineLabel: string },
+  receiptNo: string | null | undefined,
+): Promise<string | null> {
+  const normalized = normalizeLedgerReceiptNo(receiptNo);
+  if (!normalized) return null;
 
-  const shipmentId = shipmentDup.rows[0].id;
-  const linked = await client.query<{ row_no: number; ledger_date: string; line_label: string }>(
+  const existing = await client.query<{ id: string }>(
     `
-    select r.row_no, s.ledger_date::text as ledger_date, s.line_label
+    select r.id
     from daily_ledger_rows r
     join daily_ledger_sessions s on s.id = r.session_id
-    where r.deleted_at is null
+    where s.company_id = $1::uuid
       and s.deleted_at is null
-      and r.posted_shipment_id = $1::uuid
-      and ($2::uuid is null or r.id <> $2::uuid)
-    order by s.ledger_date desc, r.row_no asc
+      and r.deleted_at is null
+      and s.branch_id = $2::uuid
+      and s.ledger_date = $3::date
+      and s.line_label = $4
+      and lower(trim(r.receipt_no)) = lower($5)
+    order by r.updated_at desc, r.row_no asc
     limit 1
     `,
-    [shipmentId, excludeRowId ?? null],
+    [companyId, scope.branchId, scope.ledgerDate, scope.lineLabel, normalized],
   );
-  if (linked.rows.length) {
-    const hit = linked.rows[0];
-    throw new HttpError(
-      409,
-      `رقم الإيصال ${normalized} محفوظ كشحنة (${hit.ledger_date} — ${hit.line_label} — سطر ${hit.row_no})`,
-    );
-  }
+  return existing.rows[0]?.id ?? null;
 }
 
 export type DailyLedgerSession = {
@@ -307,19 +300,31 @@ export class DailyLedgerRepository {
     try {
       await client.query('begin');
 
+      const ledgerScope = {
+        branchId: input.branchId,
+        ledgerDate: input.ledgerDate,
+        lineLabel: input.lineLabel,
+      };
+
+      let effectiveRowId = input.rowId ?? null;
+      if (!effectiveRowId) {
+        effectiveRowId = await resolveExistingLedgerRowIdByReceipt(
+          client,
+          scope.companyId,
+          ledgerScope,
+          input.receiptNo,
+        );
+      }
+
       await assertUniqueLedgerReceiptNo(
         client,
         scope.companyId,
         input.receiptNo,
-        {
-          branchId: input.branchId,
-          ledgerDate: input.ledgerDate,
-          lineLabel: input.lineLabel,
-        },
-        input.rowId ?? null,
+        ledgerScope,
+        effectiveRowId,
       );
 
-      if (input.rowId) {
+      if (effectiveRowId) {
         const updated = await client.query<DailyLedgerRowWithSession>(
           `
           update daily_ledger_rows r
@@ -361,7 +366,7 @@ export class DailyLedgerRepository {
             s.vehicle_id
           `,
           [
-            input.rowId,
+            effectiveRowId,
             scope.companyId,
             input.receiptNo ?? null,
             input.destination ?? '',

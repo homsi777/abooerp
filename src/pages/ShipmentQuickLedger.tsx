@@ -1196,7 +1196,6 @@ export default function ShipmentQuickLedger() {
 
         const amounts = shipmentAmountsFromLedgerRow(row);
         await phase15Gateway.shipments.update(shipmentSyntheticId, {
-          shipmentNo: normalizeName(row.receiptNo),
           date: currentTrip.date,
           branchId: branchForRow.id,
           branchName: branchForRow.name,
