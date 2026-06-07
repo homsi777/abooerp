@@ -72,7 +72,7 @@ export default function FinancialStatementPrintButtons({
         طباعة
       </button>
       <button type="button" className="toolbar-btn" disabled={disabled || busy} onClick={() => void handlePdf()}>
-        تصدير PDF
+        {busy ? 'جاري التصدير...' : 'تصدير PDF'}
       </button>
     </div>
   );

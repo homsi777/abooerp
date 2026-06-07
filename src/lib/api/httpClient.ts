@@ -127,21 +127,18 @@ export function configureHttpClientAuth(config: {
   conflictHandler = config.onConflict;
 }
 
-async function request<T>(path: string, method: HttpMethod, body?: unknown, retryingAfterAuth = false, idempotencyKey?: string): Promise<T> {
+async function buildRequestHeaders(path: string, method: HttpMethod, idempotencyKey?: string) {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
   Object.assign(headers, await readRuntimeHeaders());
   const token = authTokenGetter?.();
-  // Logout must not send a bad/expired bearer: requestContext would return 401 before the route runs.
   const skipAuthHeader =
     path.startsWith('/auth/login') || path.startsWith('/auth/refresh') || path.startsWith('/auth/logout');
   if (token && !skipAuthHeader) {
     headers.Authorization = `Bearer ${token}`;
   }
   const activeBranchId = activeBranchGetter?.();
-  // /auth/me must resolve scope from the JWT's branch first; sending a stale
-  // x-branch-id here can lock session restore to the wrong branch vs login.
   const skipBranchHeaderForPath = path === '/auth/me';
   if (!skipBranchHeaderForPath && activeBranchId && uuidRegex.test(activeBranchId)) {
     headers['x-branch-id'] = activeBranchId;
@@ -150,26 +147,30 @@ async function request<T>(path: string, method: HttpMethod, body?: unknown, retr
   if (writeMethod && !skipAuthHeader) {
     headers['x-idempotency-key'] = idempotencyKey ?? createIdempotencyKey();
   }
+  return { headers, skipAuthHeader };
+}
 
-  const executeFetch = () =>
-    resolveApiBaseUrl().then((baseUrl) =>
-      fetch(`${baseUrl}${path}`, {
+async function executeFetch(path: string, method: HttpMethod, headers: Record<string, string>, body?: unknown) {
+  const baseUrl = await resolveApiBaseUrl();
+  const run = () =>
+    fetch(`${baseUrl}${path}`, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
-      })
-    );
-
-  let response: Response;
+    });
   try {
-    response = await executeFetch();
+    return await run();
   } catch (error) {
     await new Promise((resolve) => setTimeout(resolve, 800));
-    response = await executeFetch().catch(() => {
+    return run().catch(() => {
       throw error;
     });
   }
+}
 
+async function request<T>(path: string, method: HttpMethod, body?: unknown, retryingAfterAuth = false, idempotencyKey?: string): Promise<T> {
+  const { headers, skipAuthHeader } = await buildRequestHeaders(path, method, idempotencyKey);
+  const response = await executeFetch(path, method, headers, body);
   let payload: any = null;
   try {
     payload = await response.json();
@@ -213,9 +214,68 @@ async function request<T>(path: string, method: HttpMethod, body?: unknown, retr
   return payload.data as T;
 }
 
+async function requestBlob(
+  path: string,
+  method: HttpMethod,
+  body?: unknown,
+  retryingAfterAuth = false,
+  idempotencyKey?: string,
+): Promise<Blob> {
+  const { headers, skipAuthHeader } = await buildRequestHeaders(path, method, idempotencyKey);
+  const response = await executeFetch(path, method, headers, body);
+
+  if (
+    response.status === 401 &&
+    unauthorizedHandler &&
+    !retryingAfterAuth &&
+    !path.startsWith('/auth/login') &&
+    !path.startsWith('/auth/refresh') &&
+    !path.startsWith('/auth/logout')
+  ) {
+    let payload: any = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    const action = await unauthorizedHandler(payload?.error);
+    if (action === 'retry') {
+      return requestBlob(path, method, body, true, headers['x-idempotency-key']);
+    }
+  }
+
+  if (response.status === 403 && forbiddenHandler) {
+    let payload: any = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    await forbiddenHandler(payload?.error);
+  }
+
+  if (!response.ok) {
+    let message = `Request failed with status ${response.status}`;
+    try {
+      const payload = await response.json();
+      if (payload?.error) message = String(payload.error);
+    } catch {
+      /* binary error body */
+    }
+    throw new Error(message);
+  }
+
+  if ((method === 'POST' || method === 'PUT' || method === 'DELETE') && response.ok) {
+    rememberOwnCorrelationFromFetchResponse(response);
+  }
+
+  return response.blob();
+}
+
 export const httpClient = {
   get: <T>(path: string) => request<T>(path, 'GET'),
   post: <T>(path: string, body: unknown) => request<T>(path, 'POST', body),
+  postBlob: (path: string, body: unknown) => requestBlob(path, 'POST', body),
   put: <T>(path: string, body: unknown) => request<T>(path, 'PUT', body),
   delete: <T>(path: string) => request<T>(path, 'DELETE'),
 };

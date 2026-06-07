@@ -16,6 +16,7 @@ import { createDeliveryRouter } from './routes/deliveryRoutes.js';
 import { CenterReceiptRepository } from './repositories/centerReceiptRepository.js';
 import { CenterReceiptService } from './services/centerReceiptService.js';
 import { createCenterReceiptRouter } from './routes/centerReceiptRoutes.js';
+import { createExportRouter } from './routes/exportRoutes.js';
 import { HttpError } from './utils/errors.js';
 import { requestContextMiddleware } from './middleware/requestContext.js';
 import { FinanceRepository } from './repositories/financeRepository.js';
@@ -236,6 +237,7 @@ app.use('/api/v1/agent-portal', createAgentPortalRouter(shipmentService, finance
 app.use('/api/v1/dashboard', createDashboardRouter());
 app.use('/api/v1/manifests', createManifestRouter(manifestService));
 app.use('/api/v1/center-receipts', createCenterReceiptRouter(centerReceiptService));
+app.use('/api/v1/export', createExportRouter());
 app.use('/api/v1/deliveries', createDeliveryRouter(deliveryService));
 app.use('/api/v1', createFinanceRouter(financeService));
 app.use('/api/v1/transfers', createTransfersRouter(transfersService));

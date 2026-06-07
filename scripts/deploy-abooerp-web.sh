@@ -31,6 +31,14 @@ git pull origin "$BRANCH"
 echo "Installing dependencies"
 npm install
 
+echo "Ensuring Chromium for server PDF export (Ubuntu)"
+if command -v apt-get >/dev/null 2>&1; then
+  if ! command -v chromium-browser >/dev/null 2>&1 && ! command -v chromium >/dev/null 2>&1; then
+    sudo apt-get update -qq
+    sudo apt-get install -y chromium-browser fonts-liberation fonts-noto-core || true
+  fi
+fi
+
 echo "Applying PostgreSQL migrations"
 npm run server:migrate
 
@@ -62,4 +70,5 @@ Required backend environment:
   WEB_MODE_ENABLED=true
   MOBILE_MODE_ENABLED=true
   WEB_PUBLIC_ORIGINS=${PUBLIC_URL}
+  PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 EOF
