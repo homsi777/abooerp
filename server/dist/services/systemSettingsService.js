@@ -35,7 +35,7 @@ const defaultValues = {
     'runtime.environment': 'development',
     'runtime.offlineMode': false,
     'runtime.autoReconnect': true,
-    'runtime.deviceName': 'main-workstation',
+    'runtime.deviceName': 'حلب-الجميلية',
     'runtime.maintenanceMode': false,
     'diagnostics.enabled': true,
     'diagnostics.level': 'info',

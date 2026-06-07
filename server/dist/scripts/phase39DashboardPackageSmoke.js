@@ -4,6 +4,8 @@ async function request(baseUrl, path, init) {
     const headers = { 'Content-Type': 'application/json' };
     if (init?.auth?.userId)
         headers['x-user-id'] = init.auth.userId;
+    if (init?.idempotencyKey)
+        headers['x-idempotency-key'] = init.idempotencyKey;
     const response = await fetch(`${baseUrl}${path}`, {
         ...init,
         headers: {
@@ -48,6 +50,7 @@ async function runPhase39DashboardPackageSmoke() {
         const receiptRes = await request(baseUrl, '/api/v1/receipt-vouchers', {
             method: 'POST',
             auth: { userId: adminUserId },
+            idempotencyKey: `phase39-receipt-${Date.now()}`,
             body: JSON.stringify({
                 voucherNo: `RV-P39-${Date.now()}`,
                 branchId,

@@ -1,7 +1,14 @@
 import { pool } from '../db/pool.js';
 import { verifyAccessToken } from '../auth/tokens.js';
 import { loadUserContextByUserId } from '../auth/userContext.js';
+import { env } from '../config/env.js';
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function isLoopbackIp(ip) {
+    if (!ip)
+        return false;
+    const normalized = ip.trim();
+    return normalized === '127.0.0.1' || normalized === '::1' || normalized === '::ffff:127.0.0.1';
+}
 async function validateActiveCompanyBranch(branchId, companyId) {
     const result = await pool.query(`
     select 1
@@ -21,7 +28,11 @@ export async function requestContextMiddleware(req, res, next) {
         return;
     }
     const authorization = req.headers.authorization;
-    const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : undefined;
+    // SSE streams use EventSource which cannot set headers — accept token via ?t= query param as fallback
+    const queryToken = typeof req.query.t === 'string' ? req.query.t.trim() : undefined;
+    const bearerToken = authorization?.startsWith('Bearer ')
+        ? authorization.slice('Bearer '.length).trim()
+        : queryToken;
     if (bearerToken) {
         try {
             const payload = verifyAccessToken(bearerToken);
@@ -85,6 +96,11 @@ export async function requestContextMiddleware(req, res, next) {
     const userId = Array.isArray(userIdHeader) ? userIdHeader[0] : userIdHeader;
     if (!userId) {
         next();
+        return;
+    }
+    const allowDevUserHeader = env.NODE_ENV !== 'production' && Boolean(env.ALLOW_DEV_USER_HEADER) && isLoopbackIp(req.ip);
+    if (!allowDevUserHeader) {
+        res.status(401).json({ success: false, error: 'Authentication required.' });
         return;
     }
     if (!uuidRegex.test(userId)) {

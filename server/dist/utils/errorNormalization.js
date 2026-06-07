@@ -9,11 +9,20 @@ export function normalizeError(error) {
     }
     const dbCode = error?.code;
     if (dbCode === '23505') {
+        const detail = String(error?.detail || '');
+        const constraint = String(error?.constraint || '');
+        const duplicateValue = (() => {
+            const match = detail.match(/\)=\(([^)]+)\)/);
+            return match?.[1] ?? '';
+        })();
+        const message = detail.includes('(shipment_no)') || constraint.includes('shipment') || constraint.includes('shipment_no')
+            ? `رقم الإيصال مكرر${duplicateValue ? `: ${duplicateValue}` : ''}`
+            : 'تم إدخال بيانات مكررة. يرجى التحقق والمحاولة مجدداً.';
         return {
             statusCode: 409,
-            message: 'Duplicate operation detected.',
+            message,
             code: 'DB_UNIQUE_VIOLATION',
-            details: error?.detail,
+            details: detail,
         };
     }
     if (dbCode === '23503') {
@@ -38,6 +47,14 @@ export function normalizeError(error) {
             message: 'Temporary serialization conflict detected. Please retry.',
             code: 'DB_SERIALIZATION_FAILURE',
             details: error?.detail,
+        };
+    }
+    if (dbCode === '42703' || dbCode === '42P01' || dbCode === '23514') {
+        return {
+            statusCode: 503,
+            message: 'مخطط قاعدة البيانات غير محدث. شغّل ترحيلات قاعدة البيانات ثم أعد تشغيل الخادم.',
+            code: 'DB_SCHEMA_OUTDATED',
+            details: error?.detail || error?.message,
         };
     }
     return {

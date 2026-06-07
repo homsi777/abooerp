@@ -92,6 +92,67 @@ export class AuditRepository {
       `, values);
         return result.rows;
     }
+    async listAuditLogsEnriched(companyId, filters, scope) {
+        const values = [companyId];
+        const conditions = ['al.company_id = $1'];
+        if (scope?.branchId) {
+            values.push(scope.branchId);
+            conditions.push(`al.branch_id = $${values.length}`);
+        }
+        if (filters?.branchId) {
+            values.push(filters.branchId);
+            conditions.push(`al.branch_id = $${values.length}`);
+        }
+        if (filters?.userId) {
+            values.push(filters.userId);
+            conditions.push(`al.user_id = $${values.length}`);
+        }
+        if (filters?.entityType) {
+            values.push(filters.entityType);
+            conditions.push(`al.entity_type = $${values.length}`);
+        }
+        if (filters?.action) {
+            values.push(filters.action);
+            conditions.push(`al.action = $${values.length}`);
+        }
+        if (filters?.fromAt) {
+            values.push(filters.fromAt);
+            conditions.push(`al.created_at >= $${values.length}::timestamptz`);
+        }
+        if (filters?.toAt) {
+            values.push(filters.toAt);
+            conditions.push(`al.created_at <= $${values.length}::timestamptz`);
+        }
+        const limit = Math.min(500, Math.max(1, filters?.limit ?? 200));
+        values.push(limit);
+        const result = await pool.query(`
+      select
+        al.id,
+        al.company_id,
+        al.branch_id,
+        al.user_id,
+        al.action,
+        al.entity_type,
+        al.entity_id,
+        al.metadata,
+        al.ip_address,
+        al.user_agent,
+        al.created_at::text as created_at,
+        coalesce(nullif(trim(coalesce(u.full_name, '')), ''), u.username) as actor_display_name,
+        u.username as actor_username,
+        u.role as actor_role_code,
+        b.name as branch_name,
+        ag.name as agent_profile_name
+      from audit_logs al
+      left join users u on u.id = al.user_id
+      left join branches b on b.id = al.branch_id
+      left join agents ag on ag.id = u.agent_id
+      where ${conditions.join(' and ')}
+      order by al.created_at desc
+      limit $${values.length}
+      `, values);
+        return result.rows;
+    }
     async getAuditLogById(id) {
         const result = await pool.query(`
       select

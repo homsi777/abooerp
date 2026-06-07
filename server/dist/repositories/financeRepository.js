@@ -1,9 +1,24 @@
 import { pool } from '../db/pool.js';
 import { HttpError } from '../utils/errors.js';
-function buildScopeWhere(scope, startIndex = 1, alias = '') {
+import { buildShipmentBreakdownMetadata } from '../utils/shipmentFinancialBreakdown.js';
+function buildScopeWhere(scope, startIndex = 1, alias = '', skipCompany = false) {
     const values = [];
     const conditions = [];
     const prefix = alias ? `${alias}.` : '';
+    if (!skipCompany && scope?.companyId) {
+        values.push(scope.companyId);
+        conditions.push(`${prefix}company_id = $${startIndex + values.length - 1}`);
+    }
+    // Agent mini-ERP finance: bind strictly to voucher.agent_id (ignore branch header overlap).
+    if (scope?.financeAgentScope) {
+        if (scope.agentId) {
+            values.push(scope.agentId);
+            conditions.push(`${prefix}agent_id = $${startIndex + values.length - 1}`);
+            return { values, conditions };
+        }
+        conditions.push('false');
+        return { values, conditions };
+    }
     if (scope?.branchId) {
         values.push(scope.branchId);
         conditions.push(`${prefix}branch_id = $${startIndex + values.length - 1}`);
@@ -110,15 +125,33 @@ export class FinanceRepository {
         };
     }
     async listReceiptVouchers(scope, filters) {
-        const scoped = buildScopeWhere(scope, 1);
+        const scoped = buildScopeWhere(scope, 1, 'v');
         const values = [...scoped.values];
         const conditions = [...scoped.conditions];
         if (filters?.deliveryId) {
             values.push(filters.deliveryId);
-            conditions.push(`delivery_id = $${values.length}`);
+            conditions.push(`v.delivery_id = $${values.length}`);
         }
         const whereClause = conditions.length ? `where ${conditions.join(' and ')}` : '';
-        const result = await pool.query(`select * from receipt_vouchers ${whereClause} order by created_at desc`, values);
+        const result = await pool.query(`
+      select
+        v.*,
+        case
+          when v.sender_receiver_id is not null then sr.full_name
+          when v.customer_id is not null then c.name
+          when v.agent_id is not null then a.name
+          else null
+        end as party_display_name,
+        cb.name as cashbox_name,
+        cb.code as cashbox_code
+      from receipt_vouchers v
+      left join customers c on c.id = v.customer_id
+      left join senders_receivers sr on sr.id = v.sender_receiver_id
+      left join agents a on a.id = v.agent_id
+      left join cashboxes cb on cb.id = v.cashbox_id
+      ${whereClause}
+      order by v.created_at desc
+      `, values);
         return result.rows;
     }
     async getReceiptVoucherById(id, scope) {
@@ -128,9 +161,27 @@ export class FinanceRepository {
         return result.rows[0] ?? null;
     }
     async listPaymentVouchers(scope) {
-        const scoped = buildScopeWhere(scope, 1);
+        const scoped = buildScopeWhere(scope, 1, 'v');
         const whereClause = scoped.conditions.length ? `where ${scoped.conditions.join(' and ')}` : '';
-        const result = await pool.query(`select * from payment_vouchers ${whereClause} order by created_at desc`, scoped.values);
+        const result = await pool.query(`
+      select
+        v.*,
+        case
+          when v.sender_receiver_id is not null then sr.full_name
+          when v.customer_id is not null then c.name
+          when v.agent_id is not null then a.name
+          else null
+        end as party_display_name,
+        cb.name as cashbox_name,
+        cb.code as cashbox_code
+      from payment_vouchers v
+      left join customers c on c.id = v.customer_id
+      left join senders_receivers sr on sr.id = v.sender_receiver_id
+      left join agents a on a.id = v.agent_id
+      left join cashboxes cb on cb.id = v.cashbox_id
+      ${whereClause}
+      order by v.created_at desc
+      `, scoped.values);
         return result.rows;
     }
     async getPaymentVoucherById(id, scope) {
@@ -140,19 +191,552 @@ export class FinanceRepository {
         return result.rows[0] ?? null;
     }
     async listCashboxTransactions(scope) {
-        const scoped = buildScopeWhere(scope, 1);
+        if (scope?.financeAgentScope) {
+            if (!scope.companyId || !scope.agentId) {
+                return [];
+            }
+            const result = await pool.query(`
+        select ct.*
+        from cashbox_transactions ct
+        left join cashboxes cb on cb.id = ct.cashbox_id
+        where ct.company_id = $1::uuid
+          and (
+            cb.agent_id = $2::uuid
+            or (ct.cashbox_id is null and ct.agent_id = $2::uuid)
+          )
+        order by ct.created_at desc
+        `, [scope.companyId, scope.agentId]);
+            return result.rows;
+        }
+        const scoped = buildScopeWhere(scope, 1, 'ct');
         const whereClause = scoped.conditions.length ? `where ${scoped.conditions.join(' and ')}` : '';
-        const result = await pool.query(`select * from cashbox_transactions ${whereClause} order by created_at desc`, scoped.values);
+        const result = await pool.query(`select ct.* from cashbox_transactions ct ${whereClause} order by ct.created_at desc`, scoped.values);
         return result.rows;
     }
+    async listCashboxes(scope, filters) {
+        const conditions = [];
+        const values = [];
+        if (scope?.companyId) {
+            values.push(scope.companyId);
+            conditions.push(`c.company_id = $${values.length}::uuid`);
+        }
+        if (scope?.financeAgentScope) {
+            if (!scope.agentId) {
+                return [];
+            }
+            values.push(scope.agentId);
+            conditions.push(`c.agent_id = $${values.length}::uuid`);
+            conditions.push(`c.type = 'AGENT'`);
+        }
+        else {
+            if (filters?.type) {
+                values.push(filters.type);
+                conditions.push(`c.type = $${values.length}`);
+            }
+            if (filters?.branchId) {
+                values.push(filters.branchId);
+                conditions.push(`c.branch_id = $${values.length}::uuid`);
+            }
+            if (filters?.agentId) {
+                values.push(filters.agentId);
+                conditions.push(`c.agent_id = $${values.length}::uuid`);
+            }
+            if (filters?.currencyCode) {
+                values.push(filters.currencyCode.toUpperCase());
+                conditions.push(`c.currency_code = $${values.length}`);
+            }
+            if (filters?.isActive === true || filters?.isActive === false) {
+                values.push(filters.isActive);
+                conditions.push(`c.is_active = $${values.length}`);
+            }
+        }
+        if (filters?.search?.trim()) {
+            const q = `%${filters.search.trim()}%`;
+            values.push(q);
+            const i = values.length;
+            values.push(q);
+            conditions.push(`(c.name ilike $${i} or c.code ilike $${i + 1})`);
+        }
+        const whereSql = conditions.length ? `where ${conditions.join(' and ')}` : '';
+        const result = await pool.query(`
+      select
+        c.*,
+        b.name as branch_name,
+        a.name as agent_name,
+        u.username as created_by_username,
+        pc.name as parent_cashbox_name,
+        pc.code as parent_cashbox_code
+      from cashboxes c
+      left join branches b on b.id = c.branch_id
+      left join agents a on a.id = c.agent_id
+      left join users u on u.id = c.created_by_user_id
+      left join cashboxes pc on pc.id = c.parent_cashbox_id
+      ${whereSql}
+      order by c.code asc
+      `, values);
+        return result.rows;
+    }
+    async getCashboxById(id, scope) {
+        const result = await pool.query(`
+      select
+        c.*,
+        b.name as branch_name,
+        a.name as agent_name,
+        u.username as created_by_username,
+        pc.name as parent_cashbox_name,
+        pc.code as parent_cashbox_code
+      from cashboxes c
+      left join branches b on b.id = c.branch_id
+      left join agents a on a.id = c.agent_id
+      left join users u on u.id = c.created_by_user_id
+      left join cashboxes pc on pc.id = c.parent_cashbox_id
+      where c.id = $1::uuid
+      limit 1
+      `, [id]);
+        const row = result.rows[0];
+        if (!row)
+            return null;
+        if (scope?.companyId && String(row.company_id) !== scope.companyId) {
+            return null;
+        }
+        if (scope?.financeAgentScope) {
+            if (!scope.agentId || String(row.agent_id) !== String(scope.agentId)) {
+                return null;
+            }
+        }
+        return row;
+    }
+    async resolveBranchCode(branchId, companyId) {
+        const r = await pool.query(`select code from branches where id = $1::uuid and company_id = $2::uuid limit 1`, [branchId, companyId]);
+        return r.rows[0]?.code ?? null;
+    }
+    async findDefaultCompanyCashboxUsdId(companyId) {
+        const r = await pool.query(`
+      select id
+      from cashboxes
+      where company_id = $1::uuid
+        and type = 'COMPANY'
+        and currency_code = 'USD'
+        and is_active = true
+      order by case when code = 'CASH-GENERAL-USD' then 0 else 1 end, created_at asc
+      limit 1
+      `, [companyId]);
+        return r.rows[0]?.id ?? null;
+    }
+    async findActiveBranchCashboxUsd(companyId) {
+        const r = await pool.query(`
+      select id, branch_id
+      from cashboxes
+      where company_id = $1::uuid
+        and type = 'BRANCH'
+        and currency_code = 'USD'
+        and is_active = true
+      limit 1
+      `, [companyId]);
+        return r.rows[0] ?? null;
+    }
+    async findAnyAgentCashbox(companyId, agentId) {
+        const r = await pool.query(`
+      select *
+      from cashboxes
+      where company_id = $1::uuid
+        and agent_id = $2::uuid
+        and type = 'AGENT'
+      limit 1
+      `, [companyId, agentId]);
+        return r.rows[0] ?? null;
+    }
+    async createCashbox(input) {
+        const opening = input.openingBalance ?? 0;
+        const current = input.currentBalance ?? opening;
+        const result = await pool.query(`
+      insert into cashboxes(
+        company_id, branch_id, agent_id, code, name, type, currency_code,
+        opening_balance, current_balance, is_active, notes, created_by_user_id, parent_cashbox_id, created_at, updated_at
+      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,coalesce($10,true),$11,$12,$13,now(),now())
+      returning *
+      `, [
+            input.companyId,
+            input.branchId ?? null,
+            input.agentId ?? null,
+            input.code.trim(),
+            input.name.trim(),
+            input.type,
+            String(input.currencyCode).toUpperCase(),
+            opening,
+            current,
+            input.isActive,
+            input.notes ?? null,
+            input.createdByUserId ?? null,
+            input.parentCashboxId ?? null,
+        ]);
+        return result.rows[0] ?? null;
+    }
+    async updateCashbox(id, input, scope) {
+        const existing = await this.getCashboxById(id, scope);
+        if (!existing)
+            return null;
+        const result = await pool.query(`
+      update cashboxes
+      set
+        code = coalesce($2, code),
+        name = coalesce($3, name),
+        branch_id = coalesce($4, branch_id),
+        agent_id = coalesce($5, agent_id),
+        currency_code = coalesce($6, currency_code),
+        opening_balance = coalesce($7, opening_balance),
+        is_active = coalesce($8, is_active),
+        notes = coalesce($9, notes),
+        updated_at = now()
+      where id = $1::uuid
+      returning *
+      `, [
+            id,
+            input.code?.trim() ?? null,
+            input.name?.trim() ?? null,
+            input.branchId !== undefined ? input.branchId : null,
+            input.agentId !== undefined ? input.agentId : null,
+            input.currencyCode ? String(input.currencyCode).toUpperCase() : null,
+            input.openingBalance ?? null,
+            input.isActive ?? null,
+            input.notes !== undefined ? input.notes : null,
+        ]);
+        return result.rows[0] ?? null;
+    }
+    async listCashboxMovementsForCashbox(cashboxId, scope) {
+        const cb = await this.getCashboxById(cashboxId, scope);
+        if (!cb)
+            return [];
+        const result = await pool.query(`
+      select
+        ct.*,
+        u.username as created_by_username
+      from cashbox_transactions ct
+      left join users u on u.id = ct.created_by_user_id
+      where ct.cashbox_id = $1::uuid
+      order by ct.created_at asc
+      `, [cashboxId]);
+        return result.rows;
+    }
+    async getCashboxStatement(cashboxId, scope, filters) {
+        const cb = await this.getCashboxById(cashboxId, scope);
+        if (!cb)
+            return null;
+        const values = [cashboxId];
+        const periodConditions = ['ct.cashbox_id = $1::uuid'];
+        const beforeConditions = ['ct.cashbox_id = $1::uuid'];
+        if (filters?.dateFrom) {
+            values.push(filters.dateFrom);
+            const ref = `$${values.length}::timestamptz`;
+            periodConditions.push(`ct.created_at >= ${ref}`);
+            beforeConditions.push(`ct.created_at < ${ref}`);
+        }
+        if (filters?.dateTo) {
+            values.push(filters.dateTo);
+            periodConditions.push(`ct.created_at <= $${values.length}::timestamptz`);
+        }
+        if (filters?.transactionType) {
+            values.push(filters.transactionType);
+            periodConditions.push(`ct.transaction_type = $${values.length}`);
+        }
+        const beforeResult = await pool.query(`
+      select coalesce(sum(case when transaction_type = 'inflow' then original_amount else -original_amount end), 0) as delta
+      from cashbox_transactions ct
+      where ${beforeConditions.join(' and ')}
+      `, values.slice(0, filters?.dateFrom ? 2 : 1));
+        const openingBalance = Number(cb.opening_balance || 0) + Number(beforeResult.rows[0]?.delta || 0);
+        const result = await pool.query(`
+      select
+        ct.*,
+        coalesce(rv.voucher_no, pv.voucher_no, '-') as reference_no,
+        coalesce(rv.status, pv.status, case when ct.is_reversal then 'reversal' else 'posted' end) as status,
+        coalesce(rv.related_entity_type, pv.related_entity_type) as related_entity_type,
+        case
+          when coalesce(rv.related_entity_type, pv.related_entity_type) = 'cashbox_transfer' then 'cashbox_transfer'
+          when ct.source_voucher_type = 'receipt' then 'receipt_voucher'
+          when pv.related_entity_type = 'expense' then 'expense'
+          when pv.related_entity_type = 'salary_record' then 'salary_record'
+          when ct.source_voucher_type = 'payment' then 'payment_voucher'
+          else ct.source_voucher_type
+        end as source_label,
+        case
+          when pv.related_entity_type = 'salary_record' then emp.name
+          when coalesce(rv.related_entity_type, pv.related_entity_type) = 'cashbox_transfer' then 'مناقلة بين الصناديق'
+          when coalesce(rv.related_entity_type, pv.related_entity_type) = 'manual_party' then
+            trim(split_part(regexp_replace(coalesce(rv.notes, pv.notes, ''), '^\\s*جهة:\\s*', ''), ' - ', 1))
+          when rv.sender_receiver_id is not null then rv_sr.full_name
+          when pv.sender_receiver_id is not null then pv_sr.full_name
+          when rv.customer_id is not null then rv_c.name
+          when pv.customer_id is not null then pv_c.name
+          when rv.agent_id is not null then rv_a.name
+          when pv.agent_id is not null then pv_a.name
+          when pv.related_entity_type = 'expense' then 'مصروف داخلي'
+          else null
+        end as party_display_name,
+        coalesce(u.username, u.full_name, '-') as created_by_username
+      from cashbox_transactions ct
+      left join receipt_vouchers rv on ct.source_voucher_type = 'receipt' and rv.id = ct.source_voucher_id
+      left join payment_vouchers pv on ct.source_voucher_type = 'payment' and pv.id = ct.source_voucher_id
+      left join customers rv_c on rv_c.id = rv.customer_id
+      left join customers pv_c on pv_c.id = pv.customer_id
+      left join senders_receivers rv_sr on rv_sr.id = rv.sender_receiver_id
+      left join senders_receivers pv_sr on pv_sr.id = pv.sender_receiver_id
+      left join agents rv_a on rv_a.id = rv.agent_id
+      left join agents pv_a on pv_a.id = pv.agent_id
+      left join salary_records sal on pv.related_entity_type = 'salary_record' and sal.id = pv.related_entity_id
+      left join employees emp on emp.id = sal.employee_id
+      left join users u on u.id = ct.created_by_user_id
+      where ${periodConditions.join(' and ')}
+      order by ct.created_at asc, ct.id asc
+      `, values);
+        let running = openingBalance;
+        let totalIncoming = 0;
+        let totalOutgoing = 0;
+        const rows = result.rows.map((row) => {
+            const amount = Number(row.original_amount || 0);
+            const incoming = row.transaction_type === 'inflow' ? amount : 0;
+            const outgoing = row.transaction_type === 'outflow' ? amount : 0;
+            totalIncoming += incoming;
+            totalOutgoing += outgoing;
+            running += incoming - outgoing;
+            return {
+                ...row,
+                debit_in: incoming,
+                credit_out: outgoing,
+                running_balance: Number(running.toFixed(2)),
+            };
+        });
+        return {
+            cashbox: cb,
+            summary: {
+                openingBalance: Number(openingBalance.toFixed(2)),
+                totalIncoming: Number(totalIncoming.toFixed(2)),
+                totalOutgoing: Number(totalOutgoing.toFixed(2)),
+                closingBalance: Number(running.toFixed(2)),
+            },
+            rows,
+        };
+    }
     async listPartyFinancialMovements(scope) {
-        const scoped = buildScopeWhere(scope, 1);
+        const scoped = buildScopeWhere(scope, 1, '', true);
         const whereClause = scoped.conditions.length ? `where ${scoped.conditions.join(' and ')}` : '';
         const result = await pool.query(`select * from party_financial_movements ${whereClause} order by created_at desc`, scoped.values);
         return result.rows;
     }
+    async getDebitCreditSummary(scope, filters) {
+        const scoped = buildScopeWhere(scope, 1, 'pfm', true);
+        const values = [...scoped.values];
+        const conditions = [...scoped.conditions, 'pfm.is_reversal = false'];
+        if (filters?.partyType) {
+            // Explicit party type filter — honour exactly what was requested
+            values.push(filters.partyType);
+            conditions.push(`pfm.party_type = $${values.length}`);
+        }
+        else if (!filters?.includeOperationalParties) {
+            // Default: financial parties only (agents and account customers).
+            // sender_receiver are operational contacts, not ledger parties by default.
+            conditions.push(`pfm.party_type in ('agent', 'customer')`);
+        }
+        if (filters?.partyId) {
+            values.push(filters.partyId);
+            conditions.push(`pfm.party_id = $${values.length}::uuid`);
+        }
+        if (filters?.branchId) {
+            values.push(filters.branchId);
+            conditions.push(`pfm.branch_id = $${values.length}::uuid`);
+        }
+        if (filters?.currencyCode) {
+            values.push(filters.currencyCode.toUpperCase());
+            conditions.push(`pfm.original_currency = $${values.length}`);
+        }
+        if (filters?.dateFrom) {
+            values.push(filters.dateFrom);
+            conditions.push(`pfm.created_at >= $${values.length}::timestamptz`);
+        }
+        if (filters?.dateTo) {
+            values.push(filters.dateTo);
+            conditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+        }
+        if (filters?.search?.trim()) {
+            values.push(`%${filters.search.trim()}%`);
+            conditions.push(`(
+        coalesce(c.name, sr.full_name, ag.name, '') ilike $${values.length}
+        or coalesce(c.code, sr.code, ag.code, '') ilike $${values.length}
+      )`);
+        }
+        const page = Math.max(1, Number(filters?.page ?? 1));
+        const pageSize = Math.min(500, Math.max(1, Number(filters?.pageSize ?? 100)));
+        const offset = (page - 1) * pageSize;
+        values.push(String(pageSize));
+        const limitRef = `$${values.length}`;
+        values.push(String(offset));
+        const offsetRef = `$${values.length}`;
+        const whereClause = conditions.length ? `where ${conditions.join(' and ')}` : '';
+        const debitExpr = `case when pfm.direction in ('debit', 'inflow') then coalesce(nullif(pfm.debit_amount, 0), pfm.original_amount) else 0 end`;
+        const creditExpr = `case when pfm.direction in ('credit', 'outflow') then coalesce(nullif(pfm.credit_amount, 0), pfm.original_amount) else 0 end`;
+        const directionHaving = filters?.balanceDirection === 'debit'
+            ? `having sum(${debitExpr}) > sum(${creditExpr})`
+            : filters?.balanceDirection === 'credit'
+                ? `having sum(${creditExpr}) > sum(${debitExpr})`
+                : filters?.balanceDirection === 'balanced'
+                    ? `having sum(${debitExpr}) = sum(${creditExpr})`
+                    : '';
+        const result = await pool.query(`
+      select
+        pfm.party_type,
+        pfm.party_id,
+        coalesce(c.code, sr.code, ag.code, '-') as party_code,
+        coalesce(c.name, sr.full_name, ag.name, '-') as party_name,
+        b.name as branch_name,
+        pfm.original_currency as currency_code,
+        coalesce(sum(${debitExpr}), 0)::numeric as total_debit,
+        coalesce(sum(${creditExpr}), 0)::numeric as total_credit,
+        (
+          coalesce(sum(${debitExpr}), 0)
+          - coalesce(sum(${creditExpr}), 0)
+        )::numeric as balance,
+        max(pfm.created_at) as last_movement_at,
+        count(*)::int as movement_count,
+        count(*) over()::int as total_count
+      from party_financial_movements pfm
+      left join customers c on pfm.party_type = 'customer' and c.id = pfm.party_id
+      left join senders_receivers sr on pfm.party_type = 'sender_receiver' and sr.id = pfm.party_id
+      left join agents ag on pfm.party_type = 'agent' and ag.id = pfm.party_id
+      left join branches b on b.id = pfm.branch_id
+      ${whereClause}
+      group by pfm.party_type, pfm.party_id, party_code, party_name, b.name, pfm.original_currency
+      ${directionHaving}
+      order by max(pfm.created_at) desc, party_name asc
+      limit ${limitRef}
+      offset ${offsetRef}
+      `, values);
+        const total = result.rows.length ? Number(result.rows[0].total_count ?? 0) : 0;
+        const rows = result.rows.map((row) => {
+            const { total_count, ...rest } = row;
+            return rest;
+        });
+        return { page, pageSize, total, rows };
+    }
+    async getDetailedAccountStatement(scope, filters) {
+        const scoped = buildScopeWhere(scope, 1, 'pfm', true);
+        const values = [...scoped.values];
+        const conditions = [...scoped.conditions, 'pfm.is_reversal = false'];
+        if (filters?.partyType) {
+            // Explicit party type requested — honour it
+            values.push(filters.partyType);
+            conditions.push(`pfm.party_type = $${values.length}`);
+        }
+        else if (!filters?.includeOperationalParties) {
+            // Default: exclude operational sender_receiver contacts from financial statements
+            conditions.push(`pfm.party_type in ('agent', 'customer')`);
+        }
+        if (filters?.partyId) {
+            values.push(filters.partyId);
+            conditions.push(`pfm.party_id = $${values.length}::uuid`);
+        }
+        if (filters?.branchId) {
+            values.push(filters.branchId);
+            conditions.push(`pfm.branch_id = $${values.length}::uuid`);
+        }
+        if (filters?.currencyCode) {
+            values.push(filters.currencyCode.toUpperCase());
+            conditions.push(`pfm.original_currency = $${values.length}`);
+        }
+        if (filters?.dateFrom) {
+            values.push(filters.dateFrom);
+            conditions.push(`pfm.created_at >= $${values.length}::timestamptz`);
+        }
+        if (filters?.dateTo) {
+            values.push(filters.dateTo);
+            conditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+        }
+        if (filters?.referenceType) {
+            if (filters.referenceType === 'shipment') {
+                conditions.push(`(pfm.shipment_id is not null or pfm.movement_type in ('shipment_charge', 'shipment_shipping_fee', 'sender_collection_trust', 'loading_dues', 'general_collection'))`);
+            }
+            if (filters.referenceType === 'receipt')
+                conditions.push(`pfm.voucher_type = 'receipt'`);
+            if (filters.referenceType === 'payment')
+                conditions.push(`pfm.voucher_type = 'payment'`);
+            if (filters.referenceType === 'expense')
+                conditions.push(`1=0`);
+            if (filters.referenceType === 'settlement')
+                conditions.push(`1=0`);
+        }
+        if (filters?.search?.trim()) {
+            values.push(`%${filters.search.trim()}%`);
+            conditions.push(`(
+        coalesce(c.name, sr.full_name, ag.name, '') ilike $${values.length}
+        or coalesce(c.code, sr.code, ag.code, '') ilike $${values.length}
+        or coalesce(rv.voucher_no, pv.voucher_no, sh.shipment_no, '') ilike $${values.length}
+        or coalesce(pfm.notes, rv.notes, pv.notes, '') ilike $${values.length}
+      )`);
+        }
+        const page = Math.max(1, Number(filters?.page ?? 1));
+        const pageSize = Math.min(1000, Math.max(1, Number(filters?.pageSize ?? 200)));
+        const offset = (page - 1) * pageSize;
+        values.push(String(pageSize));
+        const limitRef = `$${values.length}`;
+        values.push(String(offset));
+        const offsetRef = `$${values.length}`;
+        const whereClause = conditions.length ? `where ${conditions.join(' and ')}` : '';
+        const result = await pool.query(`
+      select
+        pfm.id,
+        pfm.created_at as date,
+        pfm.party_type,
+        pfm.party_id,
+        coalesce(c.name, sr.full_name, ag.name, '-') as party_name,
+        case
+          when pfm.movement_type in ('shipment_charge', 'shipment_shipping_fee', 'sender_collection_trust', 'loading_dues', 'general_collection') then 'shipment'
+          when pfm.voucher_type = 'receipt' then 'receipt'
+          when pfm.voucher_type = 'payment' then 'payment'
+          when pfm.shipment_id is not null then 'shipment'
+          else coalesce(pfm.reference_type, pfm.movement_type::text, 'movement')
+        end as reference_type,
+        coalesce(rv.voucher_no, pv.voucher_no, case when pfm.movement_type in ('shipment_charge', 'shipment_shipping_fee', 'sender_collection_trust', 'loading_dues', 'general_collection') then sh.shipment_no end, '-') as reference_no,
+        sh.shipment_no,
+        coalesce(
+          nullif(trim(pfm.notes), ''),
+          case
+            when pfm.movement_type = 'shipment_charge' and coalesce(sh.shipment_no, '') <> ''
+              then 'أجرة شحن على الشحنة رقم ' || sh.shipment_no
+          end,
+          rv.notes,
+          pv.notes,
+          ''
+        ) as description,
+        case when pfm.direction in ('debit', 'inflow') then coalesce(nullif(pfm.debit_amount, 0), pfm.original_amount) else 0 end::numeric as debit,
+        case when pfm.direction in ('credit', 'outflow') then coalesce(nullif(pfm.credit_amount, 0), pfm.original_amount) else 0 end::numeric as credit,
+        pfm.original_currency as currency_code,
+        case when pfm.voucher_type = 'receipt' then 'cash' when pfm.voucher_type = 'payment' then 'cash' else null end as payment_method,
+        b.name as branch_name,
+        coalesce(u.username, u.full_name, '-') as username,
+        pfm.notes,
+        count(*) over()::int as total_count
+      from party_financial_movements pfm
+      left join receipt_vouchers rv on pfm.voucher_type = 'receipt' and rv.id = pfm.voucher_id
+      left join payment_vouchers pv on pfm.voucher_type = 'payment' and pv.id = pfm.voucher_id
+      left join shipments sh on sh.id = pfm.shipment_id
+      left join branches b on b.id = pfm.branch_id
+      left join users u on u.id = pfm.created_by_user_id
+      left join customers c on pfm.party_type = 'customer' and c.id = pfm.party_id
+      left join senders_receivers sr on pfm.party_type = 'sender_receiver' and sr.id = pfm.party_id
+      left join agents ag on pfm.party_type = 'agent' and ag.id = pfm.party_id
+      ${whereClause}
+      order by pfm.created_at asc, pfm.id asc
+      limit ${limitRef}
+      offset ${offsetRef}
+      `, values);
+        const total = result.rows.length ? Number(result.rows[0].total_count ?? 0) : 0;
+        const rows = result.rows.map((row) => {
+            const { total_count, ...rest } = row;
+            return rest;
+        });
+        return { page, pageSize, total, rows };
+    }
     async listPartyStatementEntries(scope, filters) {
-        const scoped = buildScopeWhere(scope, 1, 'pfm');
+        const scoped = buildScopeWhere(scope, 1, 'pfm', true);
         const values = [...scoped.values];
         const conditions = [...scoped.conditions];
         if (filters?.partyType) {
@@ -190,7 +774,7 @@ export class FinanceRepository {
         return result.rows;
     }
     async getPartyStatementSummary(scope, filters) {
-        const scoped = buildScopeWhere(scope, 1, 'pfm');
+        const scoped = buildScopeWhere(scope, 1, 'pfm', true);
         const values = [...scoped.values];
         const baseConditions = [...scoped.conditions];
         if (filters?.partyType) {
@@ -247,7 +831,7 @@ export class FinanceRepository {
         return result.rows[0];
     }
     async listPartyLedger(scope, filters) {
-        const scoped = buildScopeWhere(scope, 1, 'pfm');
+        const scoped = buildScopeWhere(scope, 1, 'pfm', true);
         const values = [...scoped.values];
         const conditions = [...scoped.conditions];
         if (filters?.partyType) {
@@ -305,7 +889,7 @@ export class FinanceRepository {
         };
     }
     async getPartyCurrencySummary(scope, filters) {
-        const scoped = buildScopeWhere(scope, 1, 'pfm');
+        const scoped = buildScopeWhere(scope, 1, 'pfm', true);
         const values = [...scoped.values];
         const conditions = [...scoped.conditions];
         if (filters?.partyType) {
@@ -352,7 +936,7 @@ export class FinanceRepository {
         return result.rows;
     }
     async getPartyAnalyticsSnapshot(scope, filters) {
-        const scoped = buildScopeWhere(scope, 1, 'pfm');
+        const scoped = buildScopeWhere(scope, 1, 'pfm', true);
         const values = [...scoped.values];
         const conditions = [...scoped.conditions];
         if (filters?.partyType) {
@@ -394,22 +978,41 @@ export class FinanceRepository {
         `, values.slice(0, -1)),
             pool.query(`
         select
-          pfm.party_type,
-          pfm.party_id,
-          count(*)::int as entries_count,
-          coalesce(sum(case when pfm.direction in ('inflow', 'debit') then pfm.base_amount_usd else 0 end), 0)::numeric as inflow_base_usd,
-          coalesce(sum(case when pfm.direction in ('outflow', 'credit') then pfm.base_amount_usd else 0 end), 0)::numeric as outflow_base_usd,
-          (
-            coalesce(sum(case when pfm.direction in ('inflow', 'debit') then pfm.base_amount_usd else 0 end), 0)
-            - coalesce(sum(case when pfm.direction in ('outflow', 'credit') then pfm.base_amount_usd else 0 end), 0)
-          )::numeric as net_base_usd
-        from party_financial_movements pfm
-        ${whereClause}
-        group by pfm.party_type, pfm.party_id
-        order by abs(
-          coalesce(sum(case when pfm.direction in ('inflow', 'debit') then pfm.base_amount_usd else 0 end), 0)
-          - coalesce(sum(case when pfm.direction in ('outflow', 'credit') then pfm.base_amount_usd else 0 end), 0)
-        ) desc, pfm.party_type asc, pfm.party_id asc
+          t.party_type,
+          t.party_id,
+          t.entries_count,
+          t.inflow_base_usd,
+          t.outflow_base_usd,
+          t.net_base_usd,
+          case
+            when t.party_type = 'customer' then c.name
+            when t.party_type = 'sender_receiver' then sr.full_name
+            when t.party_type = 'agent' then a.name
+            else null
+          end as party_name
+        from (
+          select
+            pfm.party_type,
+            pfm.party_id,
+            count(*)::int as entries_count,
+            coalesce(sum(case when pfm.direction in ('inflow', 'debit') then pfm.base_amount_usd else 0 end), 0)::numeric as inflow_base_usd,
+            coalesce(sum(case when pfm.direction in ('outflow', 'credit') then pfm.base_amount_usd else 0 end), 0)::numeric as outflow_base_usd,
+            (
+              coalesce(sum(case when pfm.direction in ('inflow', 'debit') then pfm.base_amount_usd else 0 end), 0)
+              - coalesce(sum(case when pfm.direction in ('outflow', 'credit') then pfm.base_amount_usd else 0 end), 0)
+            )::numeric as net_base_usd
+          from party_financial_movements pfm
+          ${whereClause}
+          group by pfm.party_type, pfm.party_id
+        ) t
+        left join customers c on t.party_type = 'customer' and c.id = t.party_id::uuid
+        left join senders_receivers sr on t.party_type = 'sender_receiver' and sr.id = t.party_id::uuid
+        left join agents a on t.party_type = 'agent' and a.id = t.party_id::uuid
+        where
+          abs(t.net_base_usd) > 0.0001
+          or t.inflow_base_usd > 0.0001
+          or t.outflow_base_usd > 0.0001
+        order by abs(t.net_base_usd) desc, t.party_type asc, t.party_id asc
         limit ${topNRef}
         `, values),
             pool.query(`
@@ -439,14 +1042,52 @@ export class FinanceRepository {
             trend: trend.rows,
         };
     }
+    async applyCashboxBalanceDelta(client, cashboxId, currency, delta) {
+        if (!cashboxId)
+            return;
+        const cur = String(currency || '').toUpperCase();
+        const result = await client.query(`
+      update cashboxes
+      set current_balance = current_balance + $2::numeric, updated_at = now()
+      where id = $1::uuid and currency_code = $3
+      returning id
+      `, [cashboxId, delta, cur]);
+        if (!result.rowCount) {
+            throw new HttpError(400, 'صندوق غير موجود أو العملة لا تطابق عملة الصندوق.');
+        }
+    }
+    /** Resolve cashbox for auto-generated delivery receipts: agent box → company HQ same currency. */
+    async resolveDefaultCashboxForAutoReceipt(client, companyId, agentId, currency) {
+        const cur = String(currency || '').toUpperCase();
+        if (agentId) {
+            const agentBox = await client.query(`
+        select id from cashboxes
+        where company_id = $1::uuid and agent_id = $2::uuid and is_active = true and currency_code = $3
+        order by created_at asc
+        limit 1
+        `, [companyId, agentId, cur]);
+            if (agentBox.rows[0]?.id)
+                return agentBox.rows[0].id;
+        }
+        const hq = await client.query(`
+      select id from cashboxes
+      where company_id = $1::uuid and type = 'COMPANY' and is_active = true and currency_code = $2
+      order by created_at asc
+      limit 1
+      `, [companyId, cur]);
+        return hq.rows[0]?.id ?? null;
+    }
     async insertCashboxAndMovementForReceipt(client, voucher) {
         await client.query(`
       insert into cashbox_transactions(
         transaction_type, source_voucher_type, source_voucher_id, branch_id, agent_id, shipment_id, delivery_id,
-        notes, original_amount, original_currency, exchange_rate_to_usd, base_amount_usd, created_by_user_id
+        notes, original_amount, original_currency, exchange_rate_to_usd, base_amount_usd, created_by_user_id,
+        company_id, cashbox_id, created_at
       ) values(
         'inflow', 'receipt', $1, $2, $3, $4, $5,
-        $6, $7, $8, $9, $10, $11
+        $6, $7, $8, $9, $10, $11,
+        coalesce($12, (select id from companies where is_active = true order by created_at limit 1)),
+        $13, coalesce($14::timestamptz, now())
       )
       on conflict do nothing
       `, [
@@ -461,7 +1102,13 @@ export class FinanceRepository {
             voucher.exchange_rate_to_usd,
             voucher.base_amount_usd,
             voucher.created_by_user_id,
+            voucher.company_id ?? null,
+            voucher.cashbox_id ?? null,
+            voucher.created_at ?? null,
         ]);
+        if (voucher.cashbox_id) {
+            await this.applyCashboxBalanceDelta(client, voucher.cashbox_id, voucher.original_currency, Number(voucher.original_amount));
+        }
         const partyType = voucher.customer_id ? 'customer' : voucher.sender_receiver_id ? 'sender_receiver' : voucher.agent_id ? 'agent' : null;
         const partyId = voucher.customer_id || voucher.sender_receiver_id || voucher.agent_id;
         if (partyType && partyId) {
@@ -469,11 +1116,16 @@ export class FinanceRepository {
         insert into party_financial_movements(
           party_type, party_id, movement_type, voucher_type, voucher_id, shipment_id, delivery_id,
           branch_id, agent_id, direction, notes, original_amount, original_currency, exchange_rate_to_usd,
-          base_amount_usd, created_by_user_id
+          base_amount_usd, created_by_user_id,
+          reference_type, reference_id, reference_no, debit_amount, credit_amount,
+          currency_code, exchange_rate, cashbox_id, payment_method, posted_at
         ) values(
           $1, $2, 'voucher_receipt', 'receipt', $3, $4, $5,
-          $6, $7, 'inflow', $8, $9, $10, $11,
-          $12, $13
+          $6, $7, 'credit', $8, $9, $10, $11,
+          $12, $13,
+          case when $4::uuid is not null then 'SHIPMENT' else 'RECEIPT' end,
+          coalesce($4::uuid, $3::uuid), $14, 0, $9,
+          $10, $11, $15, 'cash', now()
         )
         on conflict do nothing
         `, [
@@ -490,6 +1142,8 @@ export class FinanceRepository {
                 voucher.exchange_rate_to_usd,
                 voucher.base_amount_usd,
                 voucher.created_by_user_id,
+                voucher.voucher_no,
+                voucher.cashbox_id ?? null,
             ]);
         }
     }
@@ -497,10 +1151,13 @@ export class FinanceRepository {
         await client.query(`
       insert into cashbox_transactions(
         transaction_type, source_voucher_type, source_voucher_id, branch_id, agent_id, shipment_id, delivery_id,
-        notes, original_amount, original_currency, exchange_rate_to_usd, base_amount_usd, created_by_user_id
+        notes, original_amount, original_currency, exchange_rate_to_usd, base_amount_usd, created_by_user_id,
+        company_id, cashbox_id
       ) values(
         'outflow', 'payment', $1, $2, $3, $4, $5,
-        $6, $7, $8, $9, $10, $11
+        $6, $7, $8, $9, $10, $11,
+        coalesce($12, (select id from companies where is_active = true order by created_at limit 1)),
+        $13
       )
       on conflict do nothing
       `, [
@@ -515,7 +1172,12 @@ export class FinanceRepository {
             voucher.exchange_rate_to_usd,
             voucher.base_amount_usd,
             voucher.created_by_user_id,
+            voucher.company_id ?? null,
+            voucher.cashbox_id ?? null,
         ]);
+        if (voucher.cashbox_id) {
+            await this.applyCashboxBalanceDelta(client, voucher.cashbox_id, voucher.original_currency, -Number(voucher.original_amount));
+        }
         const partyType = voucher.customer_id ? 'customer' : voucher.sender_receiver_id ? 'sender_receiver' : voucher.agent_id ? 'agent' : null;
         const partyId = voucher.customer_id || voucher.sender_receiver_id || voucher.agent_id;
         if (partyType && partyId) {
@@ -572,12 +1234,14 @@ export class FinanceRepository {
         insert into cashbox_transactions(
           transaction_type, source_voucher_type, source_voucher_id, branch_id, agent_id, shipment_id, delivery_id,
           notes, original_amount, original_currency, exchange_rate_to_usd, base_amount_usd, created_by_user_id,
-          is_reversal, reversal_of_cashbox_transaction_id
+          is_reversal, reversal_of_cashbox_transaction_id, company_id, cashbox_id
         )
         values(
           $1, $2, $3, $4, $5, $6, $7,
           $8, $9, $10, $11, $12, $13,
-          true, $14
+          true, $14,
+          coalesce($15, (select id from companies where is_active = true order by created_at limit 1)),
+          $16
         )
         on conflict do nothing
         `, [
@@ -595,7 +1259,14 @@ export class FinanceRepository {
                 row.base_amount_usd,
                 voucher.created_by_user_id,
                 row.id,
+                row.company_id ?? null,
+                row.cashbox_id ?? null,
             ]);
+            if (row.cashbox_id) {
+                const amt = Number(row.original_amount);
+                const balDelta = row.transaction_type === 'inflow' ? -amt : amt;
+                await this.applyCashboxBalanceDelta(client, row.cashbox_id, row.original_currency, balDelta);
+            }
         }
         const partyOriginals = await client.query(`
       select *
@@ -638,44 +1309,53 @@ export class FinanceRepository {
             ]);
         }
     }
+    async createReceiptVoucherWithClient(client, input) {
+        const effectiveRate = input.exchangeRateToUsd ?? 1;
+        const created = await client.query(`
+      insert into receipt_vouchers(
+        voucher_no, branch_id, agent_id, shipment_id, delivery_id, customer_id, sender_receiver_id,
+        related_entity_type, related_entity_id, status, notes, original_amount, original_currency,
+        exchange_rate_to_usd, base_amount_usd, created_by_user_id, company_id, cashbox_id, created_at, updated_at
+      ) values(
+        $1,$2,$3,$4,$5,$6,$7,
+        $8,$9,$10,$11,$12,$13,
+        $14,$15,$16,
+        coalesce($17::uuid, (select id from companies where is_active = true order by created_at asc limit 1)),
+        $18, coalesce($19::timestamptz, now()), now()
+      )
+      returning *
+      `, [
+            input.voucherNo,
+            input.branchId ?? null,
+            input.agentId ?? null,
+            input.shipmentId ?? null,
+            input.deliveryId ?? null,
+            input.customerId ?? null,
+            input.senderReceiverId ?? null,
+            input.relatedEntityType ?? null,
+            input.relatedEntityId ?? null,
+            input.status,
+            input.notes ?? null,
+            input.originalAmount,
+            input.originalCurrency,
+            effectiveRate,
+            input.baseAmountUsd ?? Number((input.originalAmount * effectiveRate).toFixed(2)),
+            input.createdByUserId ?? null,
+            input.companyId ?? null,
+            input.cashboxId ?? null,
+            input.createdAt ?? null,
+        ]);
+        const voucher = created.rows[0];
+        if (voucher.status === 'confirmed') {
+            await this.insertCashboxAndMovementForReceipt(client, voucher);
+        }
+        return voucher;
+    }
     async createReceiptVoucher(input) {
         const client = await pool.connect();
         try {
             await client.query('begin');
-            const effectiveRate = input.exchangeRateToUsd ?? 1;
-            const created = await client.query(`
-        insert into receipt_vouchers(
-          voucher_no, branch_id, agent_id, shipment_id, delivery_id, customer_id, sender_receiver_id,
-          related_entity_type, related_entity_id, status, notes, original_amount, original_currency,
-          exchange_rate_to_usd, base_amount_usd, created_by_user_id
-        ) values(
-          $1,$2,$3,$4,$5,$6,$7,
-          $8,$9,$10,$11,$12,$13,
-          $14,$15,$16
-        )
-        returning *
-        `, [
-                input.voucherNo,
-                input.branchId ?? null,
-                input.agentId ?? null,
-                input.shipmentId ?? null,
-                input.deliveryId ?? null,
-                input.customerId ?? null,
-                input.senderReceiverId ?? null,
-                input.relatedEntityType ?? null,
-                input.relatedEntityId ?? null,
-                input.status,
-                input.notes ?? null,
-                input.originalAmount,
-                input.originalCurrency,
-                effectiveRate,
-                input.baseAmountUsd ?? Number((input.originalAmount * effectiveRate).toFixed(2)),
-                input.createdByUserId ?? null,
-            ]);
-            const voucher = created.rows[0];
-            if (voucher.status === 'confirmed') {
-                await this.insertCashboxAndMovementForReceipt(client, voucher);
-            }
+            const voucher = await this.createReceiptVoucherWithClient(client, input);
             await client.query('commit');
             return voucher;
         }
@@ -690,10 +1370,130 @@ export class FinanceRepository {
             client.release();
         }
     }
+    async insertShipmentChargeMovement(client, input) {
+        await client.query(`
+      insert into party_financial_movements(
+        party_type, party_id, movement_type, voucher_type, voucher_id, shipment_id,
+        branch_id, agent_id, direction, notes, original_amount, original_currency,
+        exchange_rate_to_usd, base_amount_usd, created_by_user_id,
+        reference_type, reference_id, reference_no,
+        debit_amount, credit_amount, currency_code, exchange_rate, posted_at
+      ) values (
+        $1, $2, 'shipment_charge', null, null, $3,
+        $4, $5, 'debit', $6, $7, $8,
+        $9, $10, $11,
+        'SHIPMENT', $3, $12,
+        $7, 0, $8, $9, now()
+      )
+      `, [
+            input.partyType,
+            input.partyId,
+            input.shipmentId,
+            input.branchId,
+            input.agentId,
+            input.notes,
+            input.amount,
+            input.currency,
+            input.exchangeRateToUsd,
+            input.baseAmountUsd,
+            input.createdByUserId,
+            input.shipmentNo,
+        ]);
+    }
+    async insertShipmentBreakdownMovements(client, input) {
+        const metadata = buildShipmentBreakdownMetadata(input.breakdown);
+        const skipPrepaidShippingFeeOnAgent = input.partyType === 'agent' &&
+            input.breakdown.prepaidAmount > 0 &&
+            input.breakdown.companyShippingFee > 0 &&
+            input.breakdown.prepaidAmount >= input.breakdown.companyShippingFee - 0.0001;
+        const agentShippingFee = skipPrepaidShippingFeeOnAgent ? 0 : input.breakdown.companyShippingFee;
+        const components = [
+            {
+                movementType: 'shipment_shipping_fee',
+                amount: agentShippingFee,
+                notes: `أجور شحن للشركة — الشحنة رقم ${input.shipmentNo}`,
+            },
+            {
+                movementType: 'sender_collection_trust',
+                amount: input.breakdown.senderCollectionAmount,
+                notes: `تحصيل لصالح المرسل${input.senderName ? ` ${input.senderName}` : ''} — الشحنة رقم ${input.shipmentNo}`,
+            },
+            {
+                movementType: 'loading_dues',
+                amount: input.breakdown.loadingDuesAmount,
+                notes: `مستحقات تحميل / إضافي — الشحنة رقم ${input.shipmentNo}`,
+            },
+            {
+                movementType: 'shipment_hawala_trust',
+                amount: input.breakdown.hawalaAmount,
+                notes: `أصل حوالة بعهدة الوكيل — الشحنة رقم ${input.shipmentNo}`,
+            },
+            {
+                movementType: 'shipment_transfer_service_fee',
+                amount: input.breakdown.transferServiceFeeAmount,
+                notes: `أجرة خدمة حوالة مرتبطة بالشحنة — الشحنة رقم ${input.shipmentNo}`,
+            },
+            {
+                movementType: 'general_collection',
+                amount: input.breakdown.generalCollectionAmount,
+                notes: `تحصيل إضافي — الشحنة رقم ${input.shipmentNo}`,
+            },
+        ].filter((component) => component.amount > 0);
+        for (const component of components) {
+            const baseAmountUsd = Number((component.amount * input.exchangeRateToUsd).toFixed(2));
+            await client.query(`
+        insert into party_financial_movements(
+          party_type, party_id, movement_type, voucher_type, voucher_id, shipment_id,
+          branch_id, agent_id, direction, notes, original_amount, original_currency,
+          exchange_rate_to_usd, base_amount_usd, created_by_user_id,
+          reference_type, reference_id, reference_no,
+          debit_amount, credit_amount, currency_code, exchange_rate, posted_at, metadata
+        ) values (
+          $1, $2, $3, null, null, $4,
+          $5, $6, 'debit', $7, $8, $9,
+          $10, $11, $12,
+          'SHIPMENT', $4, $13,
+          $8, 0, $9, $10, now(), $14::jsonb
+        )
+        on conflict do nothing
+        `, [
+                input.partyType,
+                input.partyId,
+                component.movementType,
+                input.shipmentId,
+                input.branchId,
+                input.agentId,
+                component.notes,
+                component.amount,
+                input.currency,
+                input.exchangeRateToUsd,
+                baseAmountUsd,
+                input.createdByUserId,
+                input.shipmentNo,
+                JSON.stringify({ ...metadata, component: component.movementType }),
+            ]);
+        }
+    }
+    async listPartyMovementsForShipment(shipmentId, scope) {
+        const scoped = buildScopeWhere(scope, 2, 'pfm', true);
+        const values = [shipmentId, ...scoped.values];
+        const conditions = ['pfm.shipment_id = $1', ...scoped.conditions];
+        const whereClause = conditions.length ? `where ${conditions.join(' and ')}` : '';
+        const result = await pool.query(`
+      select pfm.* from party_financial_movements pfm
+      ${whereClause}
+      order by pfm.created_at asc, pfm.id asc
+      `, values);
+        return result.rows;
+    }
     async updateReceiptVoucher(id, payload, scope) {
         const existing = await this.getReceiptVoucherById(id, scope);
         if (!existing)
             return null;
+        let nextCashboxId = existing.cashbox_id;
+        if (existing.status === 'draft' && payload.cashboxId !== undefined) {
+            nextCashboxId = payload.cashboxId ?? null;
+        }
         const client = await pool.connect();
         try {
             await client.query('begin');
@@ -707,6 +1507,7 @@ export class FinanceRepository {
           original_currency = coalesce($5, original_currency),
           exchange_rate_to_usd = coalesce($6, exchange_rate_to_usd),
           base_amount_usd = coalesce($7, base_amount_usd),
+          cashbox_id = $10,
           updated_at = now()
         where id = $1
           and (
@@ -724,6 +1525,7 @@ export class FinanceRepository {
                 payload.baseAmountUsd ?? null,
                 expectsUpdatedAt,
                 payload.expectedUpdatedAt ?? null,
+                nextCashboxId ?? null,
             ]);
             const voucher = updated.rows[0];
             const movedToConfirmed = existing.status !== 'confirmed' && voucher.status === 'confirmed';
@@ -745,46 +1547,112 @@ export class FinanceRepository {
             client.release();
         }
     }
+    async updateReceiptVoucherWithClient(client, id, payload) {
+        const existingResult = await client.query(`
+      select * from receipt_vouchers
+      where id = $1
+      for update
+      `, [id]);
+        const existing = existingResult.rows[0];
+        if (!existing)
+            return null;
+        let nextCashboxId = existing.cashbox_id;
+        if (existing.status === 'draft' && payload.cashboxId !== undefined) {
+            nextCashboxId = payload.cashboxId ?? null;
+        }
+        const expectsUpdatedAt = Boolean(payload.expectedUpdatedAt);
+        const updated = await client.query(`
+      update receipt_vouchers
+      set
+        status = coalesce($2, status),
+        notes = coalesce($3, notes),
+        original_amount = coalesce($4, original_amount),
+        original_currency = coalesce($5, original_currency),
+        exchange_rate_to_usd = coalesce($6, exchange_rate_to_usd),
+        base_amount_usd = coalesce($7, base_amount_usd),
+        cashbox_id = $10,
+        updated_at = now()
+      where id = $1
+        and (
+          $8::boolean = false
+          or date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', $9::timestamptz)
+        )
+      returning *
+      `, [
+            id,
+            payload.status ?? null,
+            payload.notes ?? null,
+            payload.originalAmount ?? null,
+            payload.originalCurrency ?? null,
+            payload.exchangeRateToUsd ?? null,
+            payload.baseAmountUsd ?? null,
+            expectsUpdatedAt,
+            payload.expectedUpdatedAt ?? null,
+            nextCashboxId ?? null,
+        ]);
+        const voucher = updated.rows[0];
+        const movedToConfirmed = existing.status !== 'confirmed' && voucher.status === 'confirmed';
+        const movedToCancelled = existing.status === 'confirmed' && voucher.status === 'cancelled';
+        if (movedToConfirmed) {
+            await this.insertCashboxAndMovementForReceipt(client, voucher);
+        }
+        if (movedToCancelled) {
+            await this.createVoucherReversalEntries(client, 'receipt', voucher, `Receipt voucher ${voucher.voucher_no} cancelled`);
+        }
+        return voucher;
+    }
+    async createPaymentVoucherWithClient(client, input) {
+        const effectiveRate = input.exchangeRateToUsd ?? 1;
+        const created = await client.query(`
+      insert into payment_vouchers(
+        voucher_no, branch_id, agent_id, shipment_id, delivery_id, customer_id, sender_receiver_id,
+        related_entity_type, related_entity_id, status, notes, original_amount, original_currency,
+        exchange_rate_to_usd, base_amount_usd, created_by_user_id, company_id, cashbox_id
+      ) values(
+        $1,$2,$3,$4,$5,$6,$7,
+        $8,$9,$10,$11,$12,$13,
+        $14,$15,$16,
+        coalesce($17, (select id from companies where is_active = true order by created_at limit 1)),
+        $18
+      )
+      returning *
+      `, [
+            input.voucherNo,
+            input.branchId ?? null,
+            input.agentId ?? null,
+            input.shipmentId ?? null,
+            input.deliveryId ?? null,
+            input.customerId ?? null,
+            input.senderReceiverId ?? null,
+            input.relatedEntityType ?? null,
+            input.relatedEntityId ?? null,
+            input.status,
+            input.notes ?? null,
+            input.originalAmount,
+            input.originalCurrency,
+            effectiveRate,
+            input.baseAmountUsd ?? Number((input.originalAmount * effectiveRate).toFixed(2)),
+            input.createdByUserId ?? null,
+            input.companyId ?? null,
+            input.cashboxId ?? null,
+        ]);
+        const voucher = created.rows[0];
+        if (voucher.status === 'confirmed') {
+            await this.insertCashboxAndMovementForPayment(client, voucher);
+        }
+        return voucher;
+    }
     async createPaymentVoucher(input) {
         const client = await pool.connect();
         try {
             await client.query('begin');
-            const effectiveRate = input.exchangeRateToUsd ?? 1;
-            const created = await client.query(`
-        insert into payment_vouchers(
-          voucher_no, branch_id, agent_id, shipment_id, delivery_id, customer_id, sender_receiver_id,
-          related_entity_type, related_entity_id, status, notes, original_amount, original_currency,
-          exchange_rate_to_usd, base_amount_usd, created_by_user_id
-        ) values(
-          $1,$2,$3,$4,$5,$6,$7,
-          $8,$9,$10,$11,$12,$13,
-          $14,$15,$16
-        )
-        returning *
-        `, [
-                input.voucherNo,
-                input.branchId ?? null,
-                input.agentId ?? null,
-                input.shipmentId ?? null,
-                input.deliveryId ?? null,
-                input.customerId ?? null,
-                input.senderReceiverId ?? null,
-                input.relatedEntityType ?? null,
-                input.relatedEntityId ?? null,
-                input.status,
-                input.notes ?? null,
-                input.originalAmount,
-                input.originalCurrency,
-                effectiveRate,
-                input.baseAmountUsd ?? Number((input.originalAmount * effectiveRate).toFixed(2)),
-                input.createdByUserId ?? null,
-            ]);
-            const voucher = created.rows[0];
-            if (voucher.status === 'confirmed') {
-                await this.insertCashboxAndMovementForPayment(client, voucher);
-            }
+            const voucher = await this.createPaymentVoucherWithClient(client, input);
             await client.query('commit');
             return voucher;
+        }
+        catch (error) {
+            await client.query('rollback');
+            throw error;
         }
         finally {
             client.release();
@@ -794,6 +1662,10 @@ export class FinanceRepository {
         const existing = await this.getPaymentVoucherById(id, scope);
         if (!existing)
             return null;
+        let nextCashboxId = existing.cashbox_id;
+        if (existing.status === 'draft' && payload.cashboxId !== undefined) {
+            nextCashboxId = payload.cashboxId ?? null;
+        }
         const client = await pool.connect();
         try {
             await client.query('begin');
@@ -807,6 +1679,7 @@ export class FinanceRepository {
           original_currency = coalesce($5, original_currency),
           exchange_rate_to_usd = coalesce($6, exchange_rate_to_usd),
           base_amount_usd = coalesce($7, base_amount_usd),
+          cashbox_id = $10,
           updated_at = now()
         where id = $1
           and (
@@ -824,6 +1697,7 @@ export class FinanceRepository {
                 payload.baseAmountUsd ?? null,
                 expectsUpdatedAt,
                 payload.expectedUpdatedAt ?? null,
+                nextCashboxId ?? null,
             ]);
             const voucher = updated.rows[0];
             const movedToConfirmed = existing.status !== 'confirmed' && voucher.status === 'confirmed';
@@ -840,6 +1714,46 @@ export class FinanceRepository {
         finally {
             client.release();
         }
+    }
+    async updatePaymentVoucherWithClient(client, id, payload) {
+        const existingResult = await client.query(`select * from payment_vouchers where id = $1 for update`, [id]);
+        const existing = existingResult.rows[0];
+        if (!existing)
+            return null;
+        let nextCashboxId = existing.cashbox_id;
+        if (existing.status === 'draft' && payload.cashboxId !== undefined) {
+            nextCashboxId = payload.cashboxId ?? null;
+        }
+        const updated = await client.query(`
+      update payment_vouchers
+      set status = coalesce($2, status),
+          notes = coalesce($3, notes),
+          original_amount = coalesce($4, original_amount),
+          original_currency = coalesce($5, original_currency),
+          exchange_rate_to_usd = coalesce($6, exchange_rate_to_usd),
+          base_amount_usd = coalesce($7, base_amount_usd),
+          cashbox_id = $8,
+          updated_at = now()
+      where id = $1
+      returning *
+      `, [
+            id,
+            payload.status ?? null,
+            payload.notes ?? null,
+            payload.originalAmount ?? null,
+            payload.originalCurrency ?? null,
+            payload.exchangeRateToUsd ?? null,
+            payload.baseAmountUsd ?? null,
+            nextCashboxId ?? null,
+        ]);
+        const voucher = updated.rows[0];
+        if (existing.status !== 'confirmed' && voucher.status === 'confirmed') {
+            await this.insertCashboxAndMovementForPayment(client, voucher);
+        }
+        if (existing.status === 'confirmed' && voucher.status === 'cancelled') {
+            await this.createVoucherReversalEntries(client, 'payment', voucher, `Payment voucher ${voucher.voucher_no} cancelled`);
+        }
+        return voucher;
     }
     async autoGenerateReceiptFromDelivery(deliveryId, createdByUserId, options) {
         const client = await pool.connect();
@@ -868,15 +1782,20 @@ export class FinanceRepository {
                 return { created: false, voucher: existing.rows[0] };
             }
             const voucherNo = `RV-AUTO-${new Date().getFullYear()}-${String(Date.now()).slice(-7)}`;
+            const companyIdForBox = delivery.company_id ??
+                (await client.query(`select id from companies where is_active = true order by created_at asc limit 1`)).rows[0]?.id;
+            const resolvedCashboxId = await this.resolveDefaultCashboxForAutoReceipt(client, companyIdForBox, delivery.agent_id, delivery.original_currency);
             const inserted = await client.query(`
         insert into receipt_vouchers(
           voucher_no, branch_id, agent_id, shipment_id, delivery_id, sender_receiver_id,
           related_entity_type, related_entity_id, status, notes, original_amount, original_currency,
-          exchange_rate_to_usd, base_amount_usd, created_by_user_id
+          exchange_rate_to_usd, base_amount_usd, created_by_user_id, company_id, cashbox_id
         ) values(
           $1,$2,$3,$4,$5,$6,
           'delivery',$5,'confirmed',$7,$8,$9,
-          $10,$11,$12
+          $10,$11,$12,
+          coalesce($13::uuid, (select id from companies where is_active = true order by created_at asc limit 1)),
+          $14
         )
         returning *
         `, [
@@ -892,6 +1811,8 @@ export class FinanceRepository {
                 delivery.exchange_rate_to_usd,
                 delivery.base_amount_usd,
                 createdByUserId ?? delivery.operator_user_id ?? null,
+                delivery.company_id ?? null,
+                resolvedCashboxId,
             ]);
             const voucher = inserted.rows[0];
             await this.insertCashboxAndMovementForReceipt(client, voucher);

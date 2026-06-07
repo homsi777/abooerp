@@ -10,6 +10,8 @@ async function request(baseUrl, path, init) {
         headers['x-branch-id'] = init.scope.branchId;
     if (init?.scope?.agentId)
         headers['x-agent-id'] = init.scope.agentId;
+    if (init?.idempotencyKey)
+        headers['x-idempotency-key'] = init.idempotencyKey;
     const response = await fetch(`${baseUrl}${path}`, {
         ...init,
         headers: {
@@ -29,12 +31,20 @@ async function runAuthScopeSmoke() {
     const server = app.listen(0);
     const baseUrl = `http://127.0.0.1:${server.address().port}`;
     try {
-        const branchResp = await request(baseUrl, '/api/v1/branches');
+        const adminUser = await pool.query(`select id, branch_id from users where username = 'admin' limit 1`);
+        ensure(Boolean(adminUser.rowCount), 'Missing admin user');
+        const adminUserId = adminUser.rows[0].id;
+        const adminBranchId = adminUser.rows[0].branch_id;
+        ensure(Boolean(adminBranchId), 'Admin has no branch scope');
+        const branchResp = await request(baseUrl, '/api/v1/branches', {
+            auth: { userId: adminUserId },
+        });
         ensure(branchResp.status === 200 && branchResp.body.success, 'Cannot list branches');
         const branchA = branchResp.body.data?.[0]?.id;
         ensure(Boolean(branchA), 'Missing branch A');
         const branchBCreate = await request(baseUrl, '/api/v1/branches', {
             method: 'POST',
+            auth: { userId: adminUserId },
             body: JSON.stringify({
                 code: `BR-AUTH-${Date.now()}`,
                 name: 'Auth Scope Branch',
@@ -47,24 +57,25 @@ async function runAuthScopeSmoke() {
         ensure(branchBCreate.status === 201 && branchBCreate.body.success, 'Cannot create branch B');
         const branchB = branchBCreate.body.data?.id;
         ensure(Boolean(branchB), 'Missing branch B');
-        const srResp = await request(baseUrl, '/api/v1/senders-receivers');
+        await pool.query(`insert into user_branches(user_id, branch_id) values($1, $2) on conflict (user_id, branch_id) do nothing`, [adminUserId, branchB]);
+        const srResp = await request(baseUrl, '/api/v1/senders-receivers', {
+            auth: { userId: adminUserId },
+        });
         ensure(srResp.status === 200 && srResp.body.success, 'Cannot list senders/receivers');
         const senderId = srResp.body.data?.[0]?.id;
         const receiverId = srResp.body.data?.[1]?.id || srResp.body.data?.[0]?.id;
         ensure(Boolean(senderId && receiverId), 'Missing sender/receiver');
-        const adminUser = await pool.query(`select id, branch_id from users where username = 'admin' limit 1`);
-        ensure(Boolean(adminUser.rowCount), 'Missing admin user');
-        const adminUserId = adminUser.rows[0].id;
-        const adminBranchId = adminUser.rows[0].branch_id;
-        ensure(Boolean(adminBranchId), 'Admin has no branch scope');
         const roleQuery = await pool.query(`select id from roles where code = 'operator' limit 1`);
         ensure(Boolean(roleQuery.rowCount), 'Missing operator role');
         const operatorRoleId = roleQuery.rows[0].id;
         const scopedUserInsert = await pool.query(`
-      insert into users(username, full_name, email, phone, password_hash, role_id, branch_id, status)
-      values($1, $2, $3, $4, $5, $6, $7, 'active')
+      insert into users(username, full_name, email, phone, password_hash, role_id, role, company_id, branch_id, status)
+      select $1, $2, $3, $4, $5, r.id, r.code, b.company_id, $6, 'active'
+      from roles r
+      join branches b on b.id = $6
+      where r.id = $7
       on conflict (username) do update
-      set branch_id = excluded.branch_id, role_id = excluded.role_id, status = 'active'
+      set branch_id = excluded.branch_id, role_id = excluded.role_id, role = excluded.role, company_id = excluded.company_id, status = 'active'
       returning id
       `, [
             `scope_user_${Date.now()}`,
@@ -72,14 +83,19 @@ async function runAuthScopeSmoke() {
             `scope_${Date.now()}@local.erp`,
             `+963${Math.floor(Math.random() * 900000 + 100000)}`,
             'seed_hash_placeholder',
-            operatorRoleId,
             branchB,
+            operatorRoleId,
         ]);
         const scopedUserId = scopedUserInsert.rows[0].id;
+        await pool.query(`insert into user_branches(user_id, branch_id) values($1, $2) on conflict (user_id, branch_id) do nothing`, [scopedUserId, branchB]);
+        const ts = Date.now();
         const shipmentInAdminBranch = await request(baseUrl, '/api/v1/shipments', {
             method: 'POST',
+            auth: { userId: adminUserId },
+            scope: { branchId: adminBranchId },
+            idempotencyKey: `phase23-shipment-a-${ts}`,
             body: JSON.stringify({
-                shipmentNo: `SHP-AUTH-A-${Date.now()}`,
+                shipmentNo: `SHP-AUTH-A-${ts}`,
                 senderId,
                 receiverId,
                 branchId: adminBranchId,
@@ -95,8 +111,11 @@ async function runAuthScopeSmoke() {
         const shipmentAId = shipmentInAdminBranch.body.data?.id;
         const shipmentInScopeUserBranch = await request(baseUrl, '/api/v1/shipments', {
             method: 'POST',
+            auth: { userId: adminUserId },
+            scope: { branchId: branchB },
+            idempotencyKey: `phase23-shipment-b-${ts}`,
             body: JSON.stringify({
-                shipmentNo: `SHP-AUTH-B-${Date.now()}`,
+                shipmentNo: `SHP-AUTH-B-${ts + 1}`,
                 senderId,
                 receiverId,
                 branchId: branchB,
@@ -120,8 +139,7 @@ async function runAuthScopeSmoke() {
             auth: { userId: scopedUserId },
             scope: { branchId: adminBranchId },
         });
-        ensure(scopedListWithManualOverrideAttempt.status === 200 && scopedListWithManualOverrideAttempt.body.success, 'Scoped user list with override attempt failed');
-        ensure(scopedListWithManualOverrideAttempt.body.data?.some((s) => s.id === shipmentAId) === false, 'Manual branch override bypassed authenticated user scope');
+        ensure(scopedListWithManualOverrideAttempt.status === 403, 'Scoped user should be rejected when x-branch-id targets a branch they are not allowed to access');
         const unknownUserResp = await request(baseUrl, '/api/v1/shipments', {
             auth: { userId: '11111111-1111-4111-8111-111111111111' },
         });

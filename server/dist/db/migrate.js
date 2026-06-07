@@ -10,14 +10,17 @@ async function ensureMigrationTable(client) {
     )
   `);
 }
-async function runMigrations() {
+export async function runMigrations() {
     const client = await pool.connect();
     let lockAcquired = false;
     try {
         await client.query('select pg_advisory_lock($1)', [902001]);
         lockAcquired = true;
         await ensureMigrationTable(client);
-        const migrationsDir = path.resolve(process.cwd(), 'server/src/db/migrations');
+        // In packaged Electron, MIGRATIONS_DIR points to extraResources/migrations
+        const migrationsDir = process.env.MIGRATIONS_DIR
+            ? path.resolve(process.env.MIGRATIONS_DIR)
+            : path.resolve(process.cwd(), 'server/src/db/migrations');
         const files = (await fs.readdir(migrationsDir))
             .filter((file) => file.endsWith('.sql'))
             .sort();
@@ -49,13 +52,17 @@ async function runMigrations() {
         client.release();
     }
 }
-runMigrations()
-    .then(async () => {
-    console.info('[MIGRATION] Completed successfully.');
-    await pool.end();
-})
-    .catch(async (error) => {
-    console.error('[MIGRATION] Aborted.', error);
-    await pool.end();
-    process.exit(1);
-});
+const isDirectExecution = (() => {
+    const entry = String(process.argv[1] || '').replace(/\\/g, '/').toLowerCase();
+    return entry.endsWith('/db/migrate.ts') || entry.endsWith('/db/migrate.js');
+})();
+if (isDirectExecution) {
+    runMigrations()
+        .then(() => {
+        void pool.end();
+    })
+        .catch((error) => {
+        console.error('[MIGRATION] Failed to run migrations', error);
+        void pool.end().finally(() => process.exit(1));
+    });
+}

@@ -97,6 +97,9 @@ export class AuditService {
     list(companyId, filters, scope) {
         return this.repository.listAuditLogs(companyId, filters, scope);
     }
+    listEnriched(companyId, filters, scope) {
+        return this.repository.listAuditLogsEnriched(companyId, filters, scope);
+    }
     getById(id) {
         return this.repository.getAuditLogById(id);
     }

@@ -5,29 +5,41 @@ import { requirePermissions } from '../middleware/authorization.js';
 import { asyncHandler } from '../utils/http.js';
 import { HttpError } from '../utils/errors.js';
 import { AuditService } from '../services/auditService.js';
+const emptyToUndefined = (value) => (value === '' ? undefined : value);
+const emptyToNull = (value) => (value === '' ? null : value);
 const createUserSchema = z.object({
-    username: z.string().min(3),
-    full_name: z.string().min(1),
-    email: z.string().email().optional(),
-    phone: z.string().optional(),
-    password: z.string().min(6),
-    role_id: z.string().uuid(),
+    username: z.string().trim().min(3, 'اسم المستخدم يجب أن يكون 3 أحرف على الأقل.'),
+    full_name: z.string().trim().min(1, 'الاسم الكامل مطلوب.'),
+    email: z.preprocess(emptyToUndefined, z.string().email('البريد الإلكتروني غير صالح.').optional()),
+    phone: z.preprocess(emptyToUndefined, z.string().optional()),
+    password: z.string().min(6, 'كلمة المرور يجب أن تكون 6 أحرف على الأقل.'),
+    role_id: z.string().uuid('الدور المحدد غير صالح.'),
+    user_type: z.enum(['admin', 'employee', 'agent', 'accountant', 'branch_supervisor', 'delivery', 'viewer']).optional(),
+    agent_id: z.preprocess(emptyToNull, z.string().uuid('الوكيل المحدد غير صالح.').nullable().optional()),
     status: z.enum(['active', 'inactive', 'locked']).optional(),
     is_active: z.boolean().optional(),
-    branch_ids: z.array(z.string().uuid()).optional().default([]),
+    branch_ids: z.array(z.string().uuid('أحد الفروع المحددة غير صالح.')).optional().default([]),
 });
 const updateUserSchema = z.object({
-    username: z.string().min(3).optional(),
-    full_name: z.string().min(1).optional(),
-    email: z.string().email().nullable().optional(),
-    phone: z.string().nullable().optional(),
-    password: z.string().min(6).optional(),
-    role_id: z.string().uuid().optional(),
+    username: z.string().trim().min(3, 'اسم المستخدم يجب أن يكون 3 أحرف على الأقل.').optional(),
+    full_name: z.string().trim().min(1, 'الاسم الكامل مطلوب.').optional(),
+    email: z.preprocess(emptyToNull, z.string().email('البريد الإلكتروني غير صالح.').nullable().optional()),
+    phone: z.preprocess(emptyToNull, z.string().nullable().optional()),
+    password: z.preprocess(emptyToUndefined, z.string().min(6, 'كلمة المرور يجب أن تكون 6 أحرف على الأقل.').optional()),
+    role_id: z.string().uuid('الدور المحدد غير صالح.').optional(),
+    user_type: z.enum(['admin', 'employee', 'agent', 'accountant', 'branch_supervisor', 'delivery', 'viewer']).optional(),
+    agent_id: z.preprocess(emptyToNull, z.string().uuid('الوكيل المحدد غير صالح.').nullable().optional()),
     status: z.enum(['active', 'inactive', 'locked']).optional(),
     is_active: z.boolean().optional(),
 });
 const assignBranchesSchema = z.object({
     branchIds: z.array(z.string().uuid()),
+});
+const accessScopeSchema = z.object({
+    role_id: z.string().uuid().optional(),
+    user_type: z.enum(['admin', 'employee', 'agent', 'accountant', 'branch_supervisor', 'delivery', 'viewer']).optional(),
+    agent_id: z.string().uuid().nullable().optional(),
+    branchIds: z.array(z.string().uuid()).default([]),
 });
 function requireCompanyId(req) {
     const companyId = req.requestUserContext?.companyId;
@@ -35,6 +47,14 @@ function requireCompanyId(req) {
         throw new HttpError(403, 'Company scope is required.');
     }
     return companyId;
+}
+function parsePayload(schema, body) {
+    const parsed = schema.safeParse(body);
+    if (!parsed.success) {
+        const firstIssue = parsed.error.issues[0];
+        throw new HttpError(400, firstIssue?.message || 'بيانات الطلب غير مكتملة أو غير صحيحة.');
+    }
+    return parsed.data;
 }
 export function createUserRouter(repository) {
     const router = Router();
@@ -46,7 +66,13 @@ export function createUserRouter(repository) {
     }));
     router.post('/', requirePermissions(['settings.users.write']), asyncHandler(async (req, res) => {
         const companyId = requireCompanyId(req);
-        const payload = createUserSchema.parse(req.body);
+        const payload = parsePayload(createUserSchema, req.body);
+        if (payload.user_type === 'agent' && !payload.agent_id) {
+            throw new HttpError(400, 'هذا المستخدم من نوع وكيل لكنه غير مرتبط بأي وكيل.');
+        }
+        if (payload.user_type !== 'admin' && payload.branch_ids.length === 0) {
+            throw new HttpError(400, 'يجب تحديد فرع واحد على الأقل للمستخدم غير الإداري.');
+        }
         const roleAllowed = await repository.isRoleAllowedForCompany(payload.role_id, companyId);
         if (!roleAllowed) {
             throw new HttpError(403, 'Role is not allowed for your company scope.');
@@ -59,8 +85,10 @@ export function createUserRouter(repository) {
             phone: payload.phone,
             password_hash,
             role_id: payload.role_id,
+            user_type: payload.user_type,
+            agent_id: payload.agent_id,
             status: payload.status,
-            is_active: payload.is_active ?? payload.status === 'active',
+            is_active: payload.is_active ?? (payload.status !== 'inactive' && payload.status !== 'locked'),
         });
         if (payload.branch_ids.length > 0) {
             await repository.assignBranches(created.id, companyId, payload.branch_ids);
@@ -81,7 +109,7 @@ export function createUserRouter(repository) {
     }));
     router.put('/:id', requirePermissions(['settings.users.write']), asyncHandler(async (req, res) => {
         const companyId = requireCompanyId(req);
-        const payload = updateUserSchema.parse(req.body);
+        const payload = parsePayload(updateUserSchema, req.body);
         if (payload.role_id) {
             const roleAllowed = await repository.isRoleAllowedForCompany(payload.role_id, companyId);
             if (!roleAllowed) {
@@ -95,6 +123,8 @@ export function createUserRouter(repository) {
             phone: payload.phone,
             password_hash: payload.password ? await bcrypt.hash(payload.password, 12) : undefined,
             role_id: payload.role_id,
+            user_type: payload.user_type,
+            agent_id: payload.agent_id,
             status: payload.status,
             is_active: payload.is_active,
         });
@@ -142,9 +172,46 @@ export function createUserRouter(repository) {
         });
         res.json({ success: true });
     }));
+    router.post('/:id/access-scope', requirePermissions(['settings.users.write']), asyncHandler(async (req, res) => {
+        const companyId = requireCompanyId(req);
+        const payload = parsePayload(accessScopeSchema, req.body);
+        const targetUserId = String(req.params.id);
+        const user = await repository.getUserById(targetUserId, companyId);
+        if (!user) {
+            res.status(404).json({ success: false, error: 'User not found.' });
+            return;
+        }
+        const nextUserType = payload.user_type ?? user.user_type;
+        const nextAgentId = typeof payload.agent_id === 'undefined' ? user.agent_id : payload.agent_id;
+        if (nextUserType === 'agent' && !nextAgentId) {
+            throw new HttpError(400, 'هذا المستخدم من نوع وكيل لكنه غير مرتبط بأي وكيل.');
+        }
+        if (nextUserType !== 'admin' && payload.branchIds.length === 0) {
+            throw new HttpError(400, 'يجب تحديد فرع واحد على الأقل للمستخدم غير الإداري.');
+        }
+        const data = await repository.setAccessScope(targetUserId, companyId, {
+            role_id: payload.role_id,
+            user_type: payload.user_type,
+            agent_id: payload.agent_id,
+            branch_ids: payload.branchIds,
+        });
+        auditService.logAsync({
+            req,
+            action: 'USER_SCOPE_UPDATED',
+            entityType: 'user',
+            entityId: targetUserId,
+            metadata: {
+                roleId: payload.role_id,
+                userType: payload.user_type,
+                agentId: payload.agent_id,
+                branchIds: payload.branchIds,
+            },
+        });
+        res.json({ success: true, data });
+    }));
     router.post('/:id/branches', requirePermissions(['settings.users.write']), asyncHandler(async (req, res) => {
         const companyId = requireCompanyId(req);
-        const payload = assignBranchesSchema.parse(req.body);
+        const payload = parsePayload(assignBranchesSchema, req.body);
         const targetUserId = String(req.params.id);
         const user = await repository.getUserById(targetUserId, companyId);
         if (!user) {

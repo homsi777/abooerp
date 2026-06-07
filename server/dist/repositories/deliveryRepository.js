@@ -1,8 +1,28 @@
 import { pool } from '../db/pool.js';
 export class DeliveryRepository {
     async list(scope) {
+        if (scope?.financeAgentScope && scope.companyId && scope.agentId && scope.userId) {
+            const result = await pool.query(`
+        select d.*
+        from deliveries d
+        join shipments s on s.id = d.shipment_id and s.deleted_at is null
+        where d.deleted_at is null
+          and d.company_id = $1
+          and (
+            d.agent_id = $2
+            or s.agent_id = $2
+            or s.created_by = $3
+          )
+        order by d.created_at desc
+        `, [scope.companyId, scope.agentId, scope.userId]);
+            return result.rows;
+        }
+        const conditions = ['deleted_at is null'];
         const values = [];
-        const conditions = [];
+        if (scope?.companyId) {
+            values.push(scope.companyId);
+            conditions.push(`company_id = $${values.length}`);
+        }
         if (scope?.branchId) {
             values.push(scope.branchId);
             conditions.push(`branch_id = $${values.length}`);
@@ -11,13 +31,32 @@ export class DeliveryRepository {
             values.push(scope.agentId);
             conditions.push(`agent_id = $${values.length}`);
         }
-        const whereClause = conditions.length ? `where ${conditions.join(' and ')}` : '';
-        const result = await pool.query(`select * from deliveries ${whereClause} order by created_at desc`, values);
+        const result = await pool.query(`select * from deliveries where ${conditions.join(' and ')} order by created_at desc`, values);
         return result.rows;
     }
     async getById(id, scope) {
+        if (scope?.financeAgentScope && scope.companyId && scope.agentId && scope.userId) {
+            const result = await pool.query(`
+        select d.*
+        from deliveries d
+        join shipments s on s.id = d.shipment_id and s.deleted_at is null
+        where d.id = $1
+          and d.deleted_at is null
+          and d.company_id = $2
+          and (
+            d.agent_id = $3
+            or s.agent_id = $3
+            or s.created_by = $4
+          )
+        `, [id, scope.companyId, scope.agentId, scope.userId]);
+            return result.rows[0] ?? null;
+        }
+        const conditions = ['id = $1', 'deleted_at is null'];
         const values = [id];
-        const conditions = ['id = $1'];
+        if (scope?.companyId) {
+            values.push(scope.companyId);
+            conditions.push(`company_id = $${values.length}`);
+        }
         if (scope?.branchId) {
             values.push(scope.branchId);
             conditions.push(`branch_id = $${values.length}`);
@@ -36,9 +75,10 @@ export class DeliveryRepository {
             const result = await client.query(`
         insert into deliveries(
           delivery_no, shipment_id, branch_id, agent_id, operator_user_id, status, recipient_name,
-          received_at, notes, original_amount, original_currency, exchange_rate_to_usd, base_amount_usd
+          received_at, notes, original_amount, original_currency, exchange_rate_to_usd, base_amount_usd,
+          company_id
         )
-        values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
         returning *
         `, [
                 input.deliveryNo,
@@ -54,9 +94,25 @@ export class DeliveryRepository {
                 input.originalCurrency,
                 input.exchangeRateToUsd,
                 input.baseAmountUsd,
+                input.companyId ?? null,
             ]);
             if (input.status === 'delivered') {
-                await client.query("update shipments set status = 'delivered', updated_at = now() where id = $1", [input.shipmentId]);
+                const prev = await client.query('select status from shipments where id = $1 and deleted_at is null for update', [input.shipmentId]);
+                const previousStatus = String(prev.rows[0]?.status ?? 'UNKNOWN');
+                await client.query("update shipments set status = 'DELIVERED', updated_at = now() where id = $1 and deleted_at is null", [input.shipmentId]);
+                await client.query(`
+          insert into shipment_status_history(
+            shipment_id, status, previous_status, next_status, note, changed_by, source, metadata
+          ) values($1, $2, $3, $2, $4, $5, $6, $7::jsonb)
+          `, [
+                    input.shipmentId,
+                    'DELIVERED',
+                    previousStatus,
+                    'Delivery marked delivered',
+                    input.operatorUserId ?? null,
+                    'delivery.create',
+                    JSON.stringify({ deliveryStatus: input.status }),
+                ]);
             }
             await client.query('commit');
             return result.rows[0];
@@ -73,6 +129,7 @@ export class DeliveryRepository {
         const client = await pool.connect();
         try {
             await client.query('begin');
+            const expectsUpdatedAt = Boolean(input.expectedUpdatedAt);
             const result = await client.query(`
         update deliveries
         set
@@ -89,6 +146,11 @@ export class DeliveryRepository {
           base_amount_usd = coalesce($12, base_amount_usd),
           updated_at = now()
         where id = $1
+          and deleted_at is null
+          and (
+            $13::boolean = false
+            or date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', $14::timestamptz)
+          )
         returning *
         `, [
                 id,
@@ -103,6 +165,8 @@ export class DeliveryRepository {
                 input.originalCurrency ?? null,
                 input.exchangeRateToUsd ?? null,
                 input.baseAmountUsd ?? null,
+                expectsUpdatedAt,
+                input.expectedUpdatedAt ?? null,
             ]);
             const updated = result.rows[0] ?? null;
             if (!updated) {
@@ -110,11 +174,57 @@ export class DeliveryRepository {
                 return null;
             }
             if (updated.status === 'delivered') {
-                await client.query("update shipments set status = 'delivered', updated_at = now() where id = $1", [updated.shipment_id]);
+                const prev = await client.query('select status from shipments where id = $1 and deleted_at is null for update', [updated.shipment_id]);
+                const previousStatus = String(prev.rows[0]?.status ?? 'UNKNOWN');
+                await client.query("update shipments set status = 'DELIVERED', updated_at = now() where id = $1 and deleted_at is null", [updated.shipment_id]);
+                await client.query(`
+          insert into shipment_status_history(
+            shipment_id, status, previous_status, next_status, note, changed_by, source, metadata
+          ) values($1, $2, $3, $2, $4, $5, $6, $7::jsonb)
+          `, [
+                    updated.shipment_id,
+                    'DELIVERED',
+                    previousStatus,
+                    'Delivery updated to delivered',
+                    updated.operator_user_id ?? null,
+                    'delivery.update',
+                    JSON.stringify({ deliveryStatus: updated.status }),
+                ]);
             }
             if (updated.status === 'returned') {
-                await client.query("update shipments set status = 'cancelled', updated_at = now() where id = $1 and status <> 'delivered'", [
+                const prev = await client.query('select status from shipments where id = $1 and deleted_at is null for update', [updated.shipment_id]);
+                const previousStatus = String(prev.rows[0]?.status ?? 'UNKNOWN');
+                await client.query("update shipments set status = 'RETURNED', updated_at = now() where id = $1 and deleted_at is null", [updated.shipment_id]);
+                await client.query(`
+          insert into shipment_status_history(
+            shipment_id, status, previous_status, next_status, note, changed_by, source, metadata
+          ) values($1, $2, $3, $2, $4, $5, $6, $7::jsonb)
+          `, [
                     updated.shipment_id,
+                    'RETURNED',
+                    previousStatus,
+                    'Delivery updated to returned',
+                    updated.operator_user_id ?? null,
+                    'delivery.update',
+                    JSON.stringify({ deliveryStatus: updated.status }),
+                ]);
+            }
+            if (updated.status === 'failed') {
+                const prev = await client.query('select status from shipments where id = $1 and deleted_at is null for update', [updated.shipment_id]);
+                const previousStatus = String(prev.rows[0]?.status ?? 'UNKNOWN');
+                await client.query("update shipments set status = 'RETURN_REQUESTED', updated_at = now() where id = $1 and deleted_at is null", [updated.shipment_id]);
+                await client.query(`
+          insert into shipment_status_history(
+            shipment_id, status, previous_status, next_status, note, changed_by, source, metadata
+          ) values($1, $2, $3, $2, $4, $5, $6, $7::jsonb)
+          `, [
+                    updated.shipment_id,
+                    'RETURN_REQUESTED',
+                    previousStatus,
+                    'Delivery updated to failed',
+                    updated.operator_user_id ?? null,
+                    'delivery.update',
+                    JSON.stringify({ deliveryStatus: updated.status }),
                 ]);
             }
             await client.query('commit');
@@ -128,8 +238,14 @@ export class DeliveryRepository {
             client.release();
         }
     }
-    async remove(id) {
-        const result = await pool.query('delete from deliveries where id = $1 returning id', [id]);
+    async remove(id, scope) {
+        const conditions = ['id = $1', 'deleted_at is null'];
+        const values = [id];
+        if (scope?.companyId) {
+            values.push(scope.companyId);
+            conditions.push(`company_id = $${values.length}`);
+        }
+        const result = await pool.query(`update deliveries set deleted_at = now() where ${conditions.join(' and ')} returning id`, values);
         return Boolean(result.rowCount);
     }
 }

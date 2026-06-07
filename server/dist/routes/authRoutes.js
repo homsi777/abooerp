@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../utils/http.js';
+import { HttpError } from '../utils/errors.js';
 import { pool } from '../db/pool.js';
+import { LinkedDeviceRepository } from '../repositories/linkedDeviceRepository.js';
+const deviceRepo = new LinkedDeviceRepository();
 const loginSchema = z.object({
     username: z.string().min(1),
     password: z.string().min(1),
@@ -24,6 +27,59 @@ function resolveIp(req) {
         return xff.split(',')[0]?.trim();
     return req.ip;
 }
+function isLocalIp(ip) {
+    if (!ip)
+        return false;
+    return (ip === '127.0.0.1' ||
+        ip === '::1' ||
+        ip === '::ffff:127.0.0.1' ||
+        ip === 'localhost');
+}
+function envFlag(name) {
+    return String(process.env[name] ?? '').trim().toLowerCase() === 'true';
+}
+function configuredWebOrigins() {
+    return new Set(String(process.env.WEB_PUBLIC_ORIGINS ?? '')
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean));
+}
+function isAllowedWebOrigin(req) {
+    if (!envFlag('WEB_MODE_ENABLED') && !envFlag('DISABLE_DEVICE_AUTH_FOR_WEB'))
+        return false;
+    const origin = String(req.headers.origin ?? '').trim();
+    return Boolean(origin) && configuredWebOrigins().has(origin);
+}
+function isAllowedMobileClient(req) {
+    if (!envFlag('MOBILE_MODE_ENABLED'))
+        return false;
+    return String(req.headers['x-client-type'] ?? '').trim().toLowerCase() === 'mobile';
+}
+async function checkDeviceAuthorization(req) {
+    // Browser/VPS and native mobile clients use JWT auth without Electron device identity.
+    // Each bypass is opt-in through server configuration; Electron/LAN checks remain intact.
+    if (isAllowedWebOrigin(req) || isAllowedMobileClient(req))
+        return;
+    const ip = resolveIp(req);
+    // Server machine (localhost) is always allowed — skip device check
+    if (isLocalIp(ip))
+        return;
+    const machineId = String(req.headers['x-device-id'] ?? '').trim();
+    // No device ID header and it's a LAN request → require registration
+    if (!machineId) {
+        throw new HttpError(403, 'DEVICE_NOT_REGISTERED');
+    }
+    const device = await deviceRepo.findByMachineId(machineId);
+    if (!device) {
+        throw new HttpError(403, 'DEVICE_NOT_REGISTERED');
+    }
+    if (device.is_blocked) {
+        throw new HttpError(403, 'DEVICE_BLOCKED');
+    }
+    if (!device.is_approved) {
+        throw new HttpError(403, 'DEVICE_PENDING_APPROVAL');
+    }
+}
 export function createAuthRouter(service) {
     const router = Router();
     router.get('/branches', asyncHandler(async (_req, res) => {
@@ -36,6 +92,8 @@ export function createAuthRouter(service) {
         res.json({ success: true, data: result.rows });
     }));
     router.post('/login', asyncHandler(async (req, res) => {
+        // ── Device authorization check (LAN clients only) ──────────────────────
+        await checkDeviceAuthorization(req);
         const payload = loginSchema.parse(req.body);
         const data = await service.login({
             username: payload.username,

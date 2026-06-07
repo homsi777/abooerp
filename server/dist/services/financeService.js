@@ -2,6 +2,7 @@ import { HttpError } from '../utils/errors.js';
 import { computeBaseAmountUsd } from '../utils/money.js';
 import { env } from '../config/env.js';
 import { ExchangeRateRepository } from '../repositories/exchangeRateRepository.js';
+import { ProfitLossReportService } from './profitLossReportService.js';
 const allowedVoucherTransitions = {
     draft: ['confirmed', 'cancelled'],
     confirmed: ['cancelled'],
@@ -11,6 +12,7 @@ const DASHBOARD_CACHE_TTL_MS = env.DASHBOARD_CACHE_TTL_MS;
 export class FinanceService {
     repository;
     dashboardPackageCache = new Map();
+    profitLossReportService = new ProfitLossReportService();
     dashboardPackageInFlight = new Map();
     dashboardCacheMetrics = {
         hits: 0,
@@ -32,6 +34,29 @@ export class FinanceService {
     exchangeRateRepository = new ExchangeRateRepository();
     constructor(repository) {
         this.repository = repository;
+    }
+    async validateConfirmedCashbox(cashboxId, originalCurrency, companyId, scope) {
+        if (!cashboxId) {
+            throw new HttpError(400, 'يجب اختيار صندوق لتأكيد السند.');
+        }
+        if (!companyId) {
+            throw new HttpError(400, 'نطاق الشركة مطلوب للتحقق من الصندوق.');
+        }
+        const box = await this.repository.getCashboxById(cashboxId, { companyId });
+        if (!box || String(box.company_id) !== String(companyId)) {
+            throw new HttpError(403, 'هذا الصندوق غير مرتبط بحساب الشركة الحالية.');
+        }
+        if (box.is_active === false) {
+            throw new HttpError(400, 'الصندوق غير نشط ولا يمكن استخدامه في السند.');
+        }
+        if (String(box.currency_code).toUpperCase() !== String(originalCurrency).toUpperCase()) {
+            throw new HttpError(400, 'عملة السند لا تطابق عملة الصندوق.');
+        }
+        if (scope?.financeAgentScope && scope.agentId) {
+            if (box.type !== 'AGENT' || String(box.agent_id) !== String(scope.agentId)) {
+                throw new HttpError(403, 'هذا الصندوق غير مرتبط بحساب الوكيل الحالي.');
+            }
+        }
     }
     async resolveExchangeRateToUsd(options) {
         const normalizedCurrency = String(options.originalCurrency || '').toUpperCase();
@@ -243,6 +268,101 @@ export class FinanceService {
     listCashboxTransactions(scope) {
         return this.repository.listCashboxTransactions(scope);
     }
+    listCashboxes(scope, filters) {
+        return this.repository.listCashboxes(scope, filters);
+    }
+    getCashboxById(id, scope) {
+        return this.repository.getCashboxById(id, scope);
+    }
+    async createCashbox(input, scope) {
+        if (scope?.companyId && input.companyId !== scope.companyId) {
+            throw new HttpError(403, 'لا يمكن إنشاء صندوق خارج شركة المستخدم.');
+        }
+        if (input.openingBalance != null && input.openingBalance < 0) {
+            throw new HttpError(400, 'الرصيد الافتتاحي لا يمكن أن يكون سالباً.');
+        }
+        if (input.type === 'AGENT' && !input.agentId) {
+            throw new HttpError(400, 'صندوق الوكيل يتطلب تحديد الوكيل.');
+        }
+        if (input.type === 'BRANCH' && !input.branchId) {
+            throw new HttpError(400, 'صندوق الفرع يتطلب تحديد الفرع.');
+        }
+        if (input.type === 'COMPANY' && (input.agentId || input.branchId)) {
+            throw new HttpError(400, 'صندوق الشركة لا يُربط بفرع أو وكيل.');
+        }
+        let parentCashboxId = input.parentCashboxId;
+        if (input.type === 'BRANCH') {
+            const branchCode = await this.repository.resolveBranchCode(input.branchId, input.companyId);
+            if (branchCode !== 'BR-ALEPPO') {
+                throw new HttpError(400, 'يُسمح فقط بصندوق فرعي واحد مرتبط بفرع حلب الرئيسي (رمز الفرع BR-ALEPPO). باقي الفروع تستخدم صناديق الوكلاء والصندوق العام.');
+            }
+            const existingBranchCb = await this.repository.findActiveBranchCashboxUsd(input.companyId);
+            if (existingBranchCb && String(existingBranchCb.branch_id) !== String(input.branchId)) {
+                throw new HttpError(409, 'يوجد صندوق فرعي USD نشط آخر. يُسمح بصندوق فرع حلب واحد فقط.');
+            }
+            if (parentCashboxId == null) {
+                parentCashboxId = await this.ensureCompanyGeneralCashboxUsd(input.companyId);
+            }
+        }
+        else if (input.type === 'AGENT') {
+            if (parentCashboxId == null) {
+                parentCashboxId = await this.ensureCompanyGeneralCashboxUsd(input.companyId);
+            }
+        }
+        else {
+            parentCashboxId = null;
+        }
+        return this.repository.createCashbox({
+            ...input,
+            parentCashboxId: parentCashboxId ?? null,
+        });
+    }
+    /** إنشاء الصندوق العام USD إن لم يوجد — للشركات الجديدة وربط صناديق الوكلاء */
+    async ensureCompanyGeneralCashboxUsd(companyId) {
+        const found = await this.repository.findDefaultCompanyCashboxUsdId(companyId);
+        if (found)
+            return found;
+        const row = await this.repository.createCashbox({
+            companyId,
+            code: 'CASH-GENERAL-USD',
+            name: 'الصندوق العام',
+            type: 'COMPANY',
+            currencyCode: 'USD',
+            parentCashboxId: null,
+            notes: 'أُنشئ تلقائياً',
+        });
+        if (!row?.id) {
+            throw new HttpError(500, 'تعذر إنشاء الصندوق العام.');
+        }
+        return String(row.id);
+    }
+    /** صندوق USD افتراضي لكل وكيل جديد — مرتبط بالصندوق العام */
+    async ensureDefaultAgentCashbox(companyId, agent) {
+        const existing = await this.repository.findAnyAgentCashbox(companyId, agent.id);
+        if (existing)
+            return existing;
+        const safe = agent.code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 40) || 'AGENT';
+        const code = `CASH-AG-${safe}-USD`;
+        return this.createCashbox({
+            companyId,
+            branchId: agent.branch_id,
+            agentId: agent.id,
+            code,
+            name: `صندوق ${agent.name}`,
+            type: 'AGENT',
+            currencyCode: 'USD',
+            notes: 'أُنشئ تلقائياً مع الوكيل',
+        }, undefined);
+    }
+    async updateCashbox(id, input, scope) {
+        return this.repository.updateCashbox(id, input, scope);
+    }
+    listCashboxMovementsForCashbox(cashboxId, scope) {
+        return this.repository.listCashboxMovementsForCashbox(cashboxId, scope);
+    }
+    getCashboxStatement(cashboxId, scope, filters) {
+        return this.repository.getCashboxStatement(cashboxId, scope, filters);
+    }
     listPartyFinancialMovements(scope) {
         return this.repository.listPartyFinancialMovements(scope);
     }
@@ -257,6 +377,18 @@ export class FinanceService {
     }
     getPartyCurrencySummary(scope, filters) {
         return this.repository.getPartyCurrencySummary(scope, filters);
+    }
+    getDebitCreditSummary(scope, filters) {
+        return this.repository.getDebitCreditSummary(scope, filters);
+    }
+    getDetailedAccountStatement(scope, filters) {
+        return this.repository.getDetailedAccountStatement(scope, filters);
+    }
+    getProfitLossReport(scope, filters) {
+        if (!filters?.fromAt || !filters?.toAt) {
+            throw new HttpError(400, 'fromAt and toAt are required for profit and loss report.');
+        }
+        return this.profitLossReportService.buildReport(scope, filters);
     }
     async getPartyStatementPackage(scope, filters) {
         const [summary, currencySummary, ledger] = await Promise.all([
@@ -392,7 +524,17 @@ export class FinanceService {
             status: input.status || 'draft',
             exchangeRateToUsd,
             baseAmountUsd: computeBaseAmountUsd(input.originalAmount, exchangeRateToUsd),
+            companyId: input.companyId ?? fxContext?.companyId,
+            branchId: input.branchId ?? scope?.branchId,
+            agentId: input.agentId ?? scope?.agentId,
         };
+        if (payload.status === 'confirmed') {
+            const internalPayment = ['expense', 'salary_record', 'cashbox_transfer', 'manual_party'].includes(String(payload.relatedEntityType ?? ''));
+            if (!internalPayment && !payload.customerId && !payload.senderReceiverId && !payload.agentId) {
+                throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
+            }
+            await this.validateConfirmedCashbox(payload.cashboxId, payload.originalCurrency, fxContext?.companyId, scope);
+        }
         const created = await this.repository.createReceiptVoucher(payload);
         this.invalidateDashboardCache();
         await this.persistDashboardCacheMetrics();
@@ -402,6 +544,19 @@ export class FinanceService {
         const existing = await this.repository.getReceiptVoucherById(id, scope);
         if (!existing)
             return null;
+        const nextStatus = (payload.status ?? existing.status);
+        const nextCashboxId = existing.status === 'draft' && payload.cashboxId !== undefined ? payload.cashboxId : existing.cashbox_id;
+        const nextCurrency = payload.originalCurrency ?? existing.original_currency;
+        if (nextStatus === 'confirmed') {
+            const nextCustomerId = payload.customerId ?? existing.customer_id;
+            const nextSenderReceiverId = payload.senderReceiverId ?? existing.sender_receiver_id;
+            const nextAgentId = payload.agentId ?? existing.agent_id;
+            const internalPayment = ['expense', 'salary_record', 'cashbox_transfer', 'manual_party'].includes(String(payload.relatedEntityType ?? existing.related_entity_type ?? ''));
+            if (!internalPayment && !nextCustomerId && !nextSenderReceiverId && !nextAgentId) {
+                throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
+            }
+            await this.validateConfirmedCashbox(nextCashboxId, String(nextCurrency), fxContext?.companyId, scope);
+        }
         if (payload.status) {
             const current = existing.status;
             const next = payload.status;
@@ -457,7 +612,20 @@ export class FinanceService {
             status: input.status || 'draft',
             exchangeRateToUsd,
             baseAmountUsd: computeBaseAmountUsd(input.originalAmount, exchangeRateToUsd),
+            companyId: input.companyId ?? fxContext?.companyId,
+            branchId: input.branchId ?? scope?.branchId,
+            agentId: input.agentId ?? scope?.agentId,
         };
+        if (payload.status === 'confirmed') {
+            const isInternalPayment = payload.relatedEntityType === 'expense' ||
+                payload.relatedEntityType === 'salary_record' ||
+                payload.relatedEntityType === 'cashbox_transfer' ||
+                payload.relatedEntityType === 'manual_party';
+            if (!isInternalPayment && !payload.customerId && !payload.senderReceiverId && !payload.agentId) {
+                throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
+            }
+            await this.validateConfirmedCashbox(payload.cashboxId, payload.originalCurrency, fxContext?.companyId, scope);
+        }
         const created = await this.repository.createPaymentVoucher(payload);
         this.invalidateDashboardCache();
         await this.persistDashboardCacheMetrics();
@@ -467,6 +635,23 @@ export class FinanceService {
         const existing = await this.repository.getPaymentVoucherById(id, scope);
         if (!existing)
             return null;
+        const nextStatus = (payload.status ?? existing.status);
+        const nextCashboxId = existing.status === 'draft' && payload.cashboxId !== undefined ? payload.cashboxId : existing.cashbox_id;
+        const nextCurrency = payload.originalCurrency ?? existing.original_currency;
+        if (nextStatus === 'confirmed') {
+            const nextCustomerId = payload.customerId ?? existing.customer_id;
+            const nextSenderReceiverId = payload.senderReceiverId ?? existing.sender_receiver_id;
+            const nextAgentId = payload.agentId ?? existing.agent_id;
+            const nextRelatedEntityType = payload.relatedEntityType ?? existing.related_entity_type;
+            const isInternalPayment = nextRelatedEntityType === 'expense' ||
+                nextRelatedEntityType === 'salary_record' ||
+                nextRelatedEntityType === 'cashbox_transfer' ||
+                nextRelatedEntityType === 'manual_party';
+            if (!isInternalPayment && !nextCustomerId && !nextSenderReceiverId && !nextAgentId) {
+                throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
+            }
+            await this.validateConfirmedCashbox(nextCashboxId, String(nextCurrency), fxContext?.companyId, scope);
+        }
         if (payload.status) {
             const current = existing.status;
             const next = payload.status;

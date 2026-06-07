@@ -10,13 +10,18 @@ export async function loadUserContextByUserId(userId) {
       u.status,
       u.is_active,
       u.agent_id,
+      coalesce(u.user_type, 'employee') as user_type,
       u.company_id
+      ,a.governorate as agent_governorate
+      ,a.city as agent_city
+      ,a.area as agent_area
     from users u
     join roles r on r.id = u.role_id
+    left join agents a on a.id = u.agent_id
     left join role_permissions rp on rp.role_id = u.role_id
     left join permissions p on p.id = rp.permission_id and p.is_active = true
     where u.id = $1
-    group by u.id, u.username, u.role_id, r.code, u.status, u.is_active, u.agent_id, u.company_id
+    group by u.id, u.username, u.role_id, r.code, u.status, u.is_active, u.agent_id, u.user_type, u.company_id, a.governorate, a.city, a.area
     `, [userId]);
     if (!userResult.rowCount) {
         return null;
@@ -65,6 +70,7 @@ export async function loadUserContextByUserId(userId) {
         roleId: user.role_id,
         roleCode: user.role_code,
         permissions: user.permissions ?? [],
+        userType: user.user_type ?? 'employee',
         status: user.status,
         companyId,
         baseCurrency,
@@ -72,6 +78,9 @@ export async function loadUserContextByUserId(userId) {
         scope: {
             branchId: effectiveBranchId ?? undefined,
             agentId: user.agent_id ?? undefined,
+            agentGovernorate: user.agent_governorate ?? undefined,
+            agentCity: user.agent_city ?? undefined,
+            agentArea: user.agent_area ?? undefined,
         },
     };
 }
@@ -81,9 +90,11 @@ export function toAuthUserDto(context) {
         username: context.username,
         role: context.roleCode,
         permissions: context.permissions,
+        userType: context.userType,
         companyId: context.companyId,
         baseCurrency: context.baseCurrency,
         branchId: context.activeBranchId ?? context.scope.branchId ?? null,
         allowedBranchIds: context.allowedBranchIds,
+        agentId: context.scope.agentId ?? null,
     };
 }

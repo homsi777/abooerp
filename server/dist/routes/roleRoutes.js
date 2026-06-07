@@ -42,7 +42,7 @@ export function createRoleRouter(repository) {
             },
         });
     }));
-    router.post('/', requirePermissions(['settings.roles.write']), asyncHandler(async (req, res) => {
+    router.post('/', requirePermissions(['settings.roles.write', 'permissions.manage']), asyncHandler(async (req, res) => {
         const companyId = requireCompanyId(req);
         const payload = createRoleSchema.parse(req.body);
         const data = await repository.createRole(companyId, payload);
@@ -58,7 +58,7 @@ export function createRoleRouter(repository) {
         });
         res.status(201).json({ success: true, data });
     }));
-    router.put('/:id', requirePermissions(['settings.roles.write']), asyncHandler(async (req, res) => {
+    router.put('/:id', requirePermissions(['settings.roles.write', 'permissions.manage']), asyncHandler(async (req, res) => {
         const companyId = requireCompanyId(req);
         const payload = updateRoleSchema.parse(req.body);
         const data = await repository.updateRole(String(req.params.id), companyId, payload);
@@ -77,7 +77,7 @@ export function createRoleRouter(repository) {
         });
         res.json({ success: true, data });
     }));
-    router.delete('/:id', requirePermissions(['settings.roles.write']), asyncHandler(async (req, res) => {
+    router.delete('/:id', requirePermissions(['settings.roles.write', 'permissions.manage']), asyncHandler(async (req, res) => {
         const companyId = requireCompanyId(req);
         const ok = await repository.deleteRole(String(req.params.id), companyId);
         if (!ok) {
@@ -92,7 +92,7 @@ export function createRoleRouter(repository) {
         });
         res.json({ success: true });
     }));
-    router.post('/:id/permissions', requirePermissions(['settings.roles.write']), asyncHandler(async (req, res) => {
+    router.post('/:id/permissions', requirePermissions(['settings.roles.write', 'permissions.manage']), asyncHandler(async (req, res) => {
         const companyId = requireCompanyId(req);
         const roleId = String(req.params.id);
         const role = await repository.getRoleById(roleId, companyId);

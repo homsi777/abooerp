@@ -20,7 +20,7 @@ export function requireIdempotencyKey(routeKey) {
       on conflict do nothing
       `, [companyId, userId, routeKey, idempotencyKey]);
         if ((result.rowCount ?? 0) === 0) {
-            res.status(409).json({ success: false, error: 'Duplicate execution blocked by idempotency key guard.' });
+            res.status(409).json({ success: false, error: 'تم منع تكرار نفس الطلب. يرجى إعادة المحاولة.' });
             return;
         }
         res.on('finish', async () => {

@@ -1130,6 +1130,20 @@ body {
   color: #64748b;
 }
 
+.quick-ledger-stat-warn {
+  grid-column: 1 / -1;
+  background: #fef2f2 !important;
+  border-top: 1px solid #fecaca !important;
+}
+
+.quick-ledger-stat-warn strong {
+  color: #b91c1c !important;
+}
+
+.quick-ledger-stat-warn span {
+  color: #991b1b !important;
+}
+
 .quick-ledger-table-shell {
   height: calc(100vh - 290px);
   overflow: auto;

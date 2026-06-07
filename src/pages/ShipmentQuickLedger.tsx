@@ -152,7 +152,75 @@ function normalizeReceiptNo(value: string) {
 function findLocalDuplicateReceipt(rows: LedgerRow[], receiptNo: string, excludeRowId: number) {
   const key = normalizeReceiptNo(receiptNo);
   if (!key) return undefined;
-  return rows.find((row) => row.id !== excludeRowId && normalizeReceiptNo(row.receiptNo) === key);
+  return rows.find(
+    (row) => row.id !== excludeRowId && normalizeReceiptNo(row.receiptNo) === key,
+  );
+}
+
+function findReceiptConflictForRow(row: LedgerRow, allRows: LedgerRow[]): LedgerRow | null {
+  return findLocalDuplicateReceipt(allRows, row.receiptNo, row.id) ?? null;
+}
+
+function describeReceiptConflict(
+  rows: LedgerRow[],
+  row: LedgerRow,
+  other: LedgerRow,
+): string {
+  const receipt = normalizeName(row.receiptNo);
+  const otherLabel = other.serverRowNo ?? other.id;
+  if (other.postedShipmentId) {
+    return `رقم الإيصال «${receipt}» محفوظ مسبقاً (سطر ${otherLabel}) — احذف أو عدّل السطر المكرر`;
+  }
+  return `رقم الإيصال «${receipt}» مكرر مع سطر ${otherLabel} في نفس الدفتر`;
+}
+
+function findDuplicateWithinBatch(rowsToPost: LedgerRow[]): { row: LedgerRow; other: LedgerRow } | null {
+  const seen = new Map<string, LedgerRow>();
+  for (const row of rowsToPost) {
+    const key = normalizeReceiptNo(row.receiptNo);
+    if (!key) continue;
+    const prior = seen.get(key);
+    if (prior) return { row, other: prior };
+    seen.set(key, row);
+  }
+  return null;
+}
+
+function findReceiptConflictWithPosted(
+  rowsToPost: LedgerRow[],
+  allRows: LedgerRow[],
+): { row: LedgerRow; other: LedgerRow } | null {
+  for (const row of rowsToPost) {
+    const key = normalizeReceiptNo(row.receiptNo);
+    if (!key) continue;
+    const postedConflict = allRows.find(
+      (other) =>
+        other.id !== row.id &&
+        other.postedShipmentId &&
+        normalizeReceiptNo(other.receiptNo) === key,
+    );
+    if (postedConflict) return { row, other: postedConflict };
+  }
+  return null;
+}
+
+function findReceiptConflictWithUnposted(
+  rowsToPost: LedgerRow[],
+  allRows: LedgerRow[],
+): { row: LedgerRow; other: LedgerRow } | null {
+  for (const row of rowsToPost) {
+    const key = normalizeReceiptNo(row.receiptNo);
+    if (!key) continue;
+    const other = allRows.find(
+      (candidate) =>
+        candidate.id !== row.id &&
+        !candidate.postedShipmentId &&
+        !rowsToPost.some((batchRow) => batchRow.id === candidate.id) &&
+        normalizeReceiptNo(candidate.receiptNo) === key,
+    );
+    if (other) return { row, other };
+  }
+  return null;
 }
 
 function isRowStarted(row: LedgerRow) {
@@ -679,17 +747,23 @@ export default function ShipmentQuickLedger() {
   );
 
   const duplicateReceiptRowIds = useMemo(() => {
-    const byKey = new Map<string, number[]>();
+    const byKey = new Map<string, LedgerRow[]>();
     for (const row of rows) {
       const key = normalizeReceiptNo(row.receiptNo);
       if (!key) continue;
       const list = byKey.get(key) ?? [];
-      list.push(row.id);
+      list.push(row);
       byKey.set(key, list);
     }
     const dupIds = new Set<number>();
-    for (const ids of byKey.values()) {
-      if (ids.length > 1) ids.forEach((id) => dupIds.add(id));
+    for (const group of byKey.values()) {
+      if (group.length <= 1) continue;
+      const unposted = group.filter((row) => !row.postedShipmentId);
+      if (unposted.length >= 2) {
+        unposted.forEach((row) => dupIds.add(row.id));
+      } else if (unposted.length === 1) {
+        dupIds.add(unposted[0].id);
+      }
     }
     return dupIds;
   }, [rows]);
@@ -1023,10 +1097,13 @@ export default function ShipmentQuickLedger() {
     if (field === 'receiptNo') {
       const normalized = normalizeName(value);
       if (normalized) {
-        const dup = findLocalDuplicateReceipt(rowsRef.current, normalized, id);
-        if (dup) {
-          showToast(`رقم الإيصال «${normalized}» مستخدم في سطر آخر`, 'error');
-          return;
+        const self = rowsRef.current.find((entry) => entry.id === id);
+        if (self) {
+          const dup = findReceiptConflictForRow({ ...self, receiptNo: normalized }, rowsRef.current);
+          if (dup) {
+            showToast(describeReceiptConflict(rowsRef.current, { ...self, receiptNo: normalized }, dup), 'error');
+            return;
+          }
         }
       }
     }
@@ -1162,8 +1239,9 @@ export default function ShipmentQuickLedger() {
     const row = rowsRef.current.find((r) => r.id === displayRowId);
     if (!row) return;
     if (!shouldPersistRow(row)) return;
-    if (findLocalDuplicateReceipt(rowsRef.current, row.receiptNo, displayRowId)) {
-      showToast(`رقم الإيصال «${normalizeName(row.receiptNo)}» مكرر — لن يُحفظ السطر`, 'error');
+    const dup = findReceiptConflictForRow(row, rowsRef.current);
+    if (dup) {
+      showToast(describeReceiptConflict(rowsRef.current, row, dup), 'error');
       return;
     }
 
@@ -1181,8 +1259,9 @@ export default function ShipmentQuickLedger() {
     const task = (async () => {
       const latestRow = rowsRef.current.find((r) => r.id === displayRowId);
       if (!latestRow || !shouldPersistRow(latestRow)) return;
-      if (findLocalDuplicateReceipt(rowsRef.current, latestRow.receiptNo, displayRowId)) {
-        showToast(`رقم الإيصال «${normalizeName(latestRow.receiptNo)}» مكرر — لن يُحفظ السطر`, 'error');
+      const dup = findReceiptConflictForRow(latestRow, rowsRef.current);
+      if (dup) {
+        showToast(describeReceiptConflict(rowsRef.current, latestRow, dup), 'error');
         return;
       }
 
@@ -1767,11 +1846,19 @@ export default function ShipmentQuickLedger() {
         return;
       }
 
-      const duplicateInBatch = rowsToPost.find((row) =>
-        findLocalDuplicateReceipt(rows, row.receiptNo, row.id),
-      );
-      if (duplicateInBatch) {
-        showToast(`رقم الإيصال «${normalizeName(duplicateInBatch.receiptNo)}» مكرر في الدفتر`, 'error');
+      const batchDup = findDuplicateWithinBatch(rowsToPost);
+      if (batchDup) {
+        showToast(describeReceiptConflict(rows, batchDup.row, batchDup.other), 'error');
+        return;
+      }
+      const postedDup = findReceiptConflictWithPosted(rowsToPost, rows);
+      if (postedDup) {
+        showToast(describeReceiptConflict(rows, postedDup.row, postedDup.other), 'error');
+        return;
+      }
+      const unpostedDup = findReceiptConflictWithUnposted(rowsToPost, rows);
+      if (unpostedDup) {
+        showToast(describeReceiptConflict(rows, unpostedDup.row, unpostedDup.other), 'error');
         return;
       }
 
@@ -1794,7 +1881,9 @@ export default function ShipmentQuickLedger() {
         const effectiveDriverId = row.sessionDriverId ?? trip.driverId;
         const rowNo =
           row.serverRowNo ?? nextServerRowNoForDriver(workingRows, effectiveDriverId) ?? row.id;
-        const saved = await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
+        let saved: RemoteDailyLedgerRow;
+        try {
+          saved = await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
           branchId: activeBranchId,
           ledgerDate: trip.date,
           lineLabel: trip.line,
@@ -1817,6 +1906,14 @@ export default function ShipmentQuickLedger() {
           transferServiceFeeUsd: parseUsd(row.transferServiceFee),
           notes: row.notes || null,
         });
+        } catch (error) {
+          const label = row.serverRowNo ?? row.id;
+          showToast(
+            `السطر ${label}: ${error instanceof Error ? error.message : 'تعذر حفظ السطر'}`,
+            'error',
+          );
+          throw error;
+        }
         upsertedRowIds.push(saved.id);
         workingRows = workingRows.map((r) =>
           r.id === row.id
@@ -2057,6 +2154,12 @@ export default function ShipmentQuickLedger() {
         <div><strong>{stats.missing}</strong><span>ناقصة (إيصال+جهة+مرسل+مستلم)</span></div>
         <div><strong>{stats.saved}</strong><span>محفوظة</span></div>
         <div><strong>{stats.totalCollect.toLocaleString()}</strong><span>إجمالي الدولار</span></div>
+        {duplicateReceiptRowIds.size > 0 && (
+          <div className="quick-ledger-stat-warn">
+            <strong>{duplicateReceiptRowIds.size}</strong>
+            <span>إيصال مكرر — عدّل أو احذف الأسطر المظللة</span>
+          </div>
+        )}
       </section>
 
       <section className="quick-ledger-table-shell">

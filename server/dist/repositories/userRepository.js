@@ -2,6 +2,15 @@ import { pool } from '../db/pool.js';
 export class UserRepository {
     async listUsers(companyId) {
         const result = await pool.query(`
+      with user_branch_scope as (
+        select
+          ub.user_id,
+          coalesce(array_agg(distinct ub.branch_id) filter (where ub.branch_id is not null), '{}'::uuid[])::text[] as branch_ids
+        from user_branches ub
+        join branches b on b.id = ub.branch_id
+        where b.company_id = $1
+        group by ub.user_id
+      )
       select
         u.id,
         u.username,
@@ -11,23 +20,37 @@ export class UserRepository {
         u.role_id,
         r.code as role_code,
         r.name as role_name,
+        coalesce(u.user_type, 'employee') as user_type,
+        u.agent_id,
+        a.name as agent_name,
         u.company_id,
         u.status,
         u.is_active,
-        coalesce(array_agg(distinct ub.branch_id) filter (where ub.branch_id is not null), '{}'::uuid[])::text[] as branch_ids,
+        coalesce(ubs.branch_ids, '{}'::text[]) as branch_ids,
+        u.branch_id as default_branch_id,
+        u.last_login_at::text,
         u.created_at::text,
         u.updated_at::text
       from users u
       join roles r on r.id = u.role_id
-      left join user_branches ub on ub.user_id = u.id
+      left join agents a on a.id = u.agent_id
+      left join user_branch_scope ubs on ubs.user_id = u.id
       where u.company_id = $1
-      group by u.id, r.code, r.name
       order by u.created_at desc
       `, [companyId]);
         return result.rows;
     }
     async getUserById(id, companyId) {
         const result = await pool.query(`
+      with user_branch_scope as (
+        select
+          ub.user_id,
+          coalesce(array_agg(distinct ub.branch_id) filter (where ub.branch_id is not null), '{}'::uuid[])::text[] as branch_ids
+        from user_branches ub
+        join branches b on b.id = ub.branch_id
+        where b.company_id = $2
+        group by ub.user_id
+      )
       select
         u.id,
         u.username,
@@ -37,18 +60,23 @@ export class UserRepository {
         u.role_id,
         r.code as role_code,
         r.name as role_name,
+        coalesce(u.user_type, 'employee') as user_type,
+        u.agent_id,
+        a.name as agent_name,
         u.company_id,
         u.status,
         u.is_active,
-        coalesce(array_agg(distinct ub.branch_id) filter (where ub.branch_id is not null), '{}'::uuid[])::text[] as branch_ids,
+        coalesce(ubs.branch_ids, '{}'::text[]) as branch_ids,
+        u.branch_id as default_branch_id,
+        u.last_login_at::text,
         u.created_at::text,
         u.updated_at::text
       from users u
       join roles r on r.id = u.role_id
-      left join user_branches ub on ub.user_id = u.id
+      left join agents a on a.id = u.agent_id
+      left join user_branch_scope ubs on ubs.user_id = u.id
       where u.id = $1
         and u.company_id = $2
-      group by u.id, r.code, r.name
       `, [id, companyId]);
         return result.rows[0] ?? null;
     }
@@ -72,6 +100,8 @@ export class UserRepository {
         phone,
         password_hash,
         role_id,
+        user_type,
+        agent_id,
         role,
         company_id,
         status,
@@ -84,10 +114,12 @@ export class UserRepository {
         $4,
         $5,
         r.id,
+        coalesce($7, 'employee'),
+        $8,
         r.code,
-        $7,
-        coalesce($8, 'active'),
-        coalesce($9, true)
+        $9,
+        coalesce($10, 'active'),
+        coalesce($11, true)
       from roles r
       where r.id = $6
       returning id
@@ -98,6 +130,8 @@ export class UserRepository {
             data.phone ?? null,
             data.password_hash,
             data.role_id,
+            data.user_type ?? 'employee',
+            data.agent_id ?? null,
             companyId,
             data.status ?? 'active',
             data.is_active ?? true,
@@ -114,9 +148,11 @@ export class UserRepository {
         phone = case when $6::text = '__NULL__' then null else coalesce($6, u.phone) end,
         password_hash = coalesce($7, u.password_hash),
         role_id = coalesce($8, u.role_id),
+        user_type = coalesce($9, u.user_type),
+        agent_id = case when $10::text = '__NULL__' then null else coalesce($10::uuid, u.agent_id) end,
         role = coalesce((select r2.code from roles r2 where r2.id = $8), u.role),
-        status = coalesce($9, u.status),
-        is_active = coalesce($10, u.is_active),
+        status = coalesce($11, u.status),
+        is_active = coalesce($12, u.is_active),
         updated_at = now()
       where u.id = $1
         and u.company_id = $2
@@ -130,6 +166,8 @@ export class UserRepository {
             typeof data.phone === 'undefined' ? null : data.phone ?? '__NULL__',
             data.password_hash ?? null,
             data.role_id ?? null,
+            data.user_type ?? null,
+            typeof data.agent_id === 'undefined' ? null : data.agent_id ?? '__NULL__',
             data.status ?? null,
             data.is_active,
         ]);
@@ -181,6 +219,15 @@ export class UserRepository {
         where id = $1
         `, [userId]);
         }
+    }
+    async setAccessScope(userId, companyId, payload) {
+        await this.updateUser(userId, companyId, {
+            role_id: payload.role_id,
+            user_type: payload.user_type,
+            agent_id: payload.agent_id,
+        });
+        await this.assignBranches(userId, companyId, payload.branch_ids);
+        return this.getUserById(userId, companyId);
     }
     async getUserBranches(userId) {
         const result = await pool.query(`

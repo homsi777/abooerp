@@ -303,6 +303,52 @@ export class DailyLedgerShipmentPostingService {
           ...(amounts.total <= 0 ? { allowZeroAmountNote: 'شحنة مؤكدة بدون أجرة' } : {}),
         };
 
+    const receiptNo = normalizeName(row.receipt_no);
+    const existingShipment = await pool.query<{ id: string; shipment_no: string }>(
+      `
+      select id, shipment_no
+      from shipments
+      where company_id = $1::uuid
+        and deleted_at is null
+        and lower(trim(shipment_no)) = lower($2)
+      limit 1
+      `,
+      [row.company_id, receiptNo],
+    );
+    if (existingShipment.rows[0]) {
+      const shipmentId = existingShipment.rows[0].id;
+      const linked = await pool.query<{ id: string; row_no: number }>(
+        `
+        select id, row_no
+        from daily_ledger_rows
+        where deleted_at is null
+          and posted_shipment_id = $1::uuid
+        `,
+        [shipmentId],
+      );
+      const otherLink = linked.rows.find((entry) => entry.id !== row.id);
+      if (otherLink) {
+        throw new HttpError(
+          409,
+          `رقم الإيصال ${receiptNo} مربوط بسطر دفتر آخر (سطر ${otherLink.row_no}).`,
+        );
+      }
+      const posted = await this.ledgerRepo.markPosted(
+        scope,
+        { rowId: row.id, shipmentId, userId: scope.userId },
+        allowedBranchIds,
+      );
+      if (!posted) {
+        throw new HttpError(409, `تعذر ربط الشحنة الموجودة بالسطر ${row.row_no}.`);
+      }
+      return {
+        rowId: row.id,
+        shipmentId,
+        shipmentNo: String(existingShipment.rows[0].shipment_no ?? receiptNo),
+        agentId,
+      };
+    }
+
     const created = await this.shipmentService.create(
       {
         shipmentNo: normalizeName(row.receipt_no),

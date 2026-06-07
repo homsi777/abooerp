@@ -55,7 +55,7 @@ export class AuthService {
                     userAgent: params.userAgent,
                 },
             });
-            throw new HttpError(403, 'User is inactive.');
+            throw new HttpError(403, 'هذا المستخدم غير مفعّل.');
         }
         if (user.status !== 'active') {
             this.auditService.logAsync({
@@ -74,7 +74,7 @@ export class AuthService {
                     userAgent: params.userAgent,
                 },
             });
-            throw new HttpError(403, `User is not active (${user.status}).`);
+            throw new HttpError(403, `حالة المستخدم لا تسمح بتسجيل الدخول (${user.status}).`);
         }
         const matched = await bcrypt.compare(params.password, user.password_hash);
         if (!matched) {
@@ -118,7 +118,7 @@ export class AuthService {
                     userAgent: params.userAgent,
                 },
             });
-            throw new HttpError(403, 'No branch scope available for this user.');
+            throw new HttpError(403, 'لا يوجد نطاق فرع مرتبط بهذا المستخدم.');
         }
         if (!context.allowedBranchIds.includes(activeBranchId)) {
             this.auditService.logAsync({
@@ -137,7 +137,7 @@ export class AuthService {
                     userAgent: params.userAgent,
                 },
             });
-            throw new HttpError(403, 'Selected branch is not allowed for this user.');
+            throw new HttpError(403, 'الفرع المحدد غير مسموح لهذا المستخدم.');
         }
         const refreshToken = generateRefreshToken();
         const refreshTokenHash = hashRefreshToken(refreshToken);
@@ -148,6 +148,7 @@ export class AuthService {
       returning id
       `, [user.id, refreshTokenHash, params.userAgent ?? null, params.ipAddress ?? null, expiresAt.toISOString()]);
         const sessionId = sessionInsert.rows[0].id;
+        await pool.query(`update users set last_login_at = now(), updated_at = now() where id = $1`, [user.id]);
         const accessToken = signAccessToken({
             sub: context.userId,
             sid: sessionId,
@@ -278,7 +279,7 @@ export class AuthService {
                     userAgent: params.userAgent,
                 },
             });
-            throw new HttpError(403, 'No branch scope available for this user.');
+            throw new HttpError(403, 'لا يوجد نطاق فرع مرتبط بهذا المستخدم.');
         }
         if (!context.allowedBranchIds.includes(activeBranchId)) {
             this.auditService.logAsync({
@@ -297,7 +298,7 @@ export class AuthService {
                     userAgent: params.userAgent,
                 },
             });
-            throw new HttpError(403, 'Selected branch is not allowed for this user.');
+            throw new HttpError(403, 'الفرع المحدد غير مسموح لهذا المستخدم.');
         }
         const nextRefreshToken = generateRefreshToken();
         await pool.query(`

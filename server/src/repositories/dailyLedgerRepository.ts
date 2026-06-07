@@ -11,49 +11,82 @@ async function assertUniqueLedgerReceiptNo(
   client: PoolClient,
   companyId: string,
   receiptNo: string | null | undefined,
+  scope: { branchId: string; ledgerDate: string; lineLabel: string },
   excludeRowId?: string | null,
 ): Promise<void> {
   const normalized = normalizeLedgerReceiptNo(receiptNo);
   if (!normalized) return;
 
-  const ledgerDup = await client.query<{ row_no: number }>(
+  const ledgerDup = await client.query<{
+    row_no: number;
+    ledger_date: string;
+    line_label: string;
+    posted: boolean;
+  }>(
     `
-    select r.row_no
+    select
+      r.row_no,
+      s.ledger_date::text as ledger_date,
+      s.line_label,
+      (r.posted_shipment_id is not null) as posted
     from daily_ledger_rows r
     join daily_ledger_sessions s on s.id = r.session_id
     where s.company_id = $1::uuid
       and s.deleted_at is null
       and r.deleted_at is null
-      and lower(trim(r.receipt_no)) = lower($2)
-      and ($3::uuid is null or r.id <> $3::uuid)
+      and s.branch_id = $2::uuid
+      and s.ledger_date = $3::date
+      and s.line_label = $4
+      and lower(trim(r.receipt_no)) = lower($5)
+      and ($6::uuid is null or r.id <> $6::uuid)
+    order by (r.posted_shipment_id is not null) desc, r.row_no asc
     limit 1
     `,
-    [companyId, normalized, excludeRowId ?? null],
+    [companyId, scope.branchId, scope.ledgerDate, scope.lineLabel, normalized, excludeRowId ?? null],
   );
   if (ledgerDup.rows.length) {
-    throw new HttpError(409, `رقم الإيصال مكرر: ${normalized}`);
+    const hit = ledgerDup.rows[0];
+    const where = hit.posted ? 'محفوظ مسبقاً في هذا الدفتر' : 'في هذا الدفتر';
+    throw new HttpError(
+      409,
+      `رقم الإيصال مكرر ${where} (${hit.ledger_date} — ${hit.line_label} — سطر ${hit.row_no}): ${normalized}`,
+    );
   }
 
-  const shipmentDup = await client.query<{ shipment_no: string }>(
+  const shipmentDup = await client.query<{ id: string; shipment_no: string }>(
     `
-    select shipment_no
+    select id, shipment_no
     from shipments
     where company_id = $1::uuid
       and deleted_at is null
       and lower(trim(shipment_no)) = lower($2)
-      and not exists (
-        select 1
-        from daily_ledger_rows r
-        where r.id = $3::uuid
-          and r.posted_shipment_id = shipments.id
-          and r.deleted_at is null
-      )
     limit 1
     `,
-    [companyId, normalized, excludeRowId ?? null],
+    [companyId, normalized],
   );
-  if (shipmentDup.rows.length) {
-    throw new HttpError(409, `رقم الإيصال مكرر: ${normalized}`);
+  if (!shipmentDup.rows.length) return;
+
+  const shipmentId = shipmentDup.rows[0].id;
+  const linked = await client.query<{ row_no: number; ledger_date: string; line_label: string }>(
+    `
+    select r.row_no, s.ledger_date::text as ledger_date, s.line_label
+    from daily_ledger_rows r
+    join daily_ledger_sessions s on s.id = r.session_id
+    where r.deleted_at is null
+      and s.deleted_at is null
+      and r.posted_shipment_id = $1::uuid
+      and ($2::uuid is null or r.id <> $2::uuid)
+    order by s.ledger_date desc, r.row_no asc
+    limit 1
+    `,
+    [shipmentId, excludeRowId ?? null],
+  );
+  if (linked.rows.length) {
+    const hit = linked.rows[0];
+    throw new HttpError(
+      409,
+      `رقم الإيصال ${normalized} محفوظ كشحنة (${hit.ledger_date} — ${hit.line_label} — سطر ${hit.row_no})`,
+    );
   }
 }
 
@@ -274,7 +307,17 @@ export class DailyLedgerRepository {
     try {
       await client.query('begin');
 
-      await assertUniqueLedgerReceiptNo(client, scope.companyId, input.receiptNo, input.rowId ?? null);
+      await assertUniqueLedgerReceiptNo(
+        client,
+        scope.companyId,
+        input.receiptNo,
+        {
+          branchId: input.branchId,
+          ledgerDate: input.ledgerDate,
+          lineLabel: input.lineLabel,
+        },
+        input.rowId ?? null,
+      );
 
       if (input.rowId) {
         const updated = await client.query<DailyLedgerRowWithSession>(

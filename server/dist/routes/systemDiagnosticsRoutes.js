@@ -3,6 +3,13 @@ import { requirePermissions } from '../middleware/authorization.js';
 import { asyncHandler } from '../utils/http.js';
 import { HttpError } from '../utils/errors.js';
 import { pool } from '../db/pool.js';
+import { ShipmentInventoryMovementRepository } from '../repositories/shipmentInventoryMovementRepository.js';
+import { LinkedDeviceRepository } from '../repositories/linkedDeviceRepository.js';
+import { LicenseRepository } from '../repositories/licenseRepository.js';
+import { TelegramSettingsRepository } from '../repositories/telegramSettingsRepository.js';
+import { getLocalLanAddresses } from '../utils/network.js';
+import { env } from '../config/env.js';
+import { eventBus } from '../events/eventBus.js';
 function requireCompanyId(req) {
     const companyId = req.requestUserContext?.companyId;
     if (!companyId) {
@@ -69,6 +76,44 @@ export function createSystemDiagnosticsRouter(systemSettingsService, backupServi
         const runtimeVersionHeader = String(req.headers['x-runtime-version'] ?? '');
         const deviceIdHeader = String(req.headers['x-device-id'] ?? '');
         const backupDiagnostics = backupService ? await backupService.getDiagnostics(companyId) : null;
+        const inventoryRepo = new ShipmentInventoryMovementRepository();
+        const deviceRepo = new LinkedDeviceRepository();
+        const licenseRepo = new LicenseRepository();
+        const telegramRepo = new TelegramSettingsRepository();
+        const [shipmentInventoryLinked, inventoryCrudReady, inventoryAdjustmentReady, shipmentLabelPersistenceReady, financeCompanyIsolationComplete, cleanStateResult, deviceStats, activeLicense, telegramDiagnostics,] = await Promise.all([
+            inventoryRepo.isLinked(),
+            inventoryRepo.isCrudReady(),
+            inventoryRepo.isAdjustmentReady(),
+            inventoryRepo.isLabelPersistenceReady(),
+            inventoryRepo.isFinanceCompanyIsolationComplete(),
+            pool.query(`
+          select (
+            (select count(*) from shipments          where deleted_at is null) +
+            (select count(*) from manifests          where deleted_at is null) +
+            (select count(*) from deliveries         where deleted_at is null) +
+            (select count(*) from shipment_inventory_movements) +
+            (select count(*) from shipment_labels) +
+            (select count(*) from receipt_vouchers) +
+            (select count(*) from payment_vouchers) +
+            (select count(*) from cashbox_transactions) +
+            (select count(*) from items              where deleted_at is null) +
+            (select count(*) from warehouses         where deleted_at is null)
+          )::text as total
+        `),
+            deviceRepo.getStats(companyId),
+            licenseRepo.findActiveByCompany(companyId),
+            telegramRepo.getDiagnostics(companyId),
+        ]);
+        const systemCleanState = parseInt(cleanStateResult.rows[0]?.total ?? '1', 10) === 0;
+        let licenseQuotaRemaining = null;
+        if (activeLicense && (activeLicense.shipmentLimit != null)) {
+            const usage = await licenseRepo.getUsage(companyId);
+            licenseQuotaRemaining = {
+                shipments: activeLicense.shipmentLimit != null ? Math.max(0, activeLicense.shipmentLimit - usage.shipmentsUsed) : null,
+                deliveries: activeLicense.deliveryLimit != null ? Math.max(0, activeLicense.deliveryLimit - usage.deliveriesUsed) : null,
+                receipts: activeLicense.receiptLimit != null ? Math.max(0, activeLicense.receiptLimit - usage.receiptsUsed) : null,
+            };
+        }
         res.json({
             success: true,
             data: {
@@ -98,6 +143,30 @@ export function createSystemDiagnosticsRouter(systemSettingsService, backupServi
                     deviceId: deviceIdHeader || null,
                 },
                 backup: backupDiagnostics,
+                shipmentInventoryLinked,
+                inventoryCrudReady,
+                inventoryAdjustmentReady,
+                shipmentLabelPersistenceReady,
+                financeCompanyIsolationComplete,
+                systemCleanState,
+                linkedDevicesCount: parseInt(deviceStats?.total ?? '0', 10),
+                approvedDevicesCount: parseInt(deviceStats?.approved ?? '0', 10),
+                pendingDevicesCount: parseInt(deviceStats?.pending ?? '0', 10),
+                licenseActive: activeLicense !== null,
+                licenseType: activeLicense?.licenseType ?? null,
+                cloudEnabled: activeLicense?.cloudEnabled ?? false,
+                licenseQuotaRemaining,
+                telegramActivationConfigured: telegramDiagnostics.activationConfigured,
+                telegramAgentBotsCount: telegramDiagnostics.agentBotsCount,
+                telegramEnabledAgentBotsCount: telegramDiagnostics.enabledAgentBotsCount,
+                // ── LAN Runtime ──────────────────────────────────────────────────────
+                lan: {
+                    serverHost: env.SERVER_HOST,
+                    serverPort: env.SERVER_PORT,
+                    lanAddresses: getLocalLanAddresses(),
+                    realtimeConnectedClients: eventBus.clientCount,
+                    lanFirewallHint: `افتح منفذ TCP ${env.SERVER_PORT} في Windows Firewall إذا لم تستطع الأجهزة الأخرى الاتصال.`,
+                },
             },
         });
     }));

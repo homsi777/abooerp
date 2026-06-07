@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { requireAnyPermissions } from '../middleware/authorization.js';
 import { ReferenceRepository } from '../repositories/referenceRepository.js';
 import { ReferenceService } from '../services/referenceService.js';
 import { createReferenceRouter } from '../routes/referenceRoutes.js';
@@ -39,6 +40,9 @@ const senderReceiverCreateSchema = z.object({
     address: z.string().optional(),
     type: z.enum(['sender', 'receiver', 'both']).default('both'),
     status: statusSchema.optional(),
+    branch_id: z.string().uuid().optional(),
+    agent_id: z.string().uuid().optional(),
+    created_by_user_id: z.string().uuid().optional(),
 });
 const senderReceiverUpdateSchema = senderReceiverCreateSchema.partial();
 const driverCreateSchema = z.object({
@@ -47,6 +51,7 @@ const driverCreateSchema = z.object({
     phone: z.string().optional(),
     license_number: z.string().optional(),
     branch_id: z.string().uuid().optional(),
+    agent_id: z.string().uuid().optional(),
     status: statusSchema.optional(),
 });
 const driverUpdateSchema = driverCreateSchema.partial();
@@ -56,6 +61,8 @@ const vehicleCreateSchema = z.object({
     model: z.string().optional(),
     capacity_kg: z.coerce.number().optional(),
     branch_id: z.string().uuid().optional(),
+    agent_id: z.string().uuid().optional(),
+    driver_id: z.string().uuid().optional().nullable(),
     status: statusSchema.optional(),
 });
 const vehicleUpdateSchema = vehicleCreateSchema.partial();
@@ -78,7 +85,7 @@ const tariffCreateSchema = z.object({
     code: z.string().min(1),
     from_city_id: z.string().uuid(),
     to_city_id: z.string().uuid(),
-    goods_type_id: z.string().uuid(),
+    goods_type_id: z.string().uuid().optional().nullable(),
     price_per_kg: z.coerce.number().nonnegative(),
     minimum_charge: z.coerce.number().nonnegative(),
     valid_from: z.string().min(1),
@@ -104,18 +111,18 @@ export function createReferenceRouters() {
     });
     const sendersReceiversRepository = new ReferenceRepository({
         table: 'senders_receivers',
-        createFields: ['code', 'full_name', 'phone', 'city', 'address', 'type', 'status'],
-        updateFields: ['code', 'full_name', 'phone', 'city', 'address', 'type', 'status'],
+        createFields: ['code', 'full_name', 'phone', 'city', 'address', 'type', 'status', 'branch_id', 'agent_id', 'created_by_user_id'],
+        updateFields: ['code', 'full_name', 'phone', 'city', 'address', 'type', 'status', 'branch_id', 'agent_id'],
     });
     const driversRepository = new ReferenceRepository({
         table: 'drivers',
-        createFields: ['code', 'full_name', 'phone', 'license_number', 'branch_id', 'status'],
-        updateFields: ['code', 'full_name', 'phone', 'license_number', 'branch_id', 'status'],
+        createFields: ['code', 'full_name', 'phone', 'license_number', 'branch_id', 'status', 'agent_id'],
+        updateFields: ['code', 'full_name', 'phone', 'license_number', 'branch_id', 'status', 'agent_id'],
     });
     const vehiclesRepository = new ReferenceRepository({
         table: 'vehicles',
-        createFields: ['code', 'plate_number', 'model', 'capacity_kg', 'branch_id', 'status'],
-        updateFields: ['code', 'plate_number', 'model', 'capacity_kg', 'branch_id', 'status'],
+        createFields: ['code', 'plate_number', 'model', 'capacity_kg', 'branch_id', 'status', 'agent_id', 'driver_id'],
+        updateFields: ['code', 'plate_number', 'model', 'capacity_kg', 'branch_id', 'status', 'agent_id', 'driver_id'],
     });
     const citiesRepository = new ReferenceRepository({
         table: 'cities',
@@ -157,46 +164,69 @@ export function createReferenceRouters() {
             service: new ReferenceService(branchesRepository),
             createSchema: branchCreateSchema,
             updateSchema: branchUpdateSchema,
+            readPermissions: ['settings.branches.read'],
+            writePermissions: ['settings.branches.write'],
         }),
         agents: createReferenceRouter({
             service: new ReferenceService(agentsRepository),
             createSchema: agentCreateSchema,
             updateSchema: agentUpdateSchema,
+            readPermissions: ['settings.agents.read'],
+            writePermissions: ['settings.agents.write'],
         }),
         customers: createReferenceRouter({
             service: new ReferenceService(customersRepository),
             createSchema: customerCreateSchema,
             updateSchema: customerUpdateSchema,
+            readPermissions: ['shipments.read'],
+            writePermissions: ['shipments.write'],
         }),
         sendersReceivers: createReferenceRouter({
             service: new ReferenceService(sendersReceiversRepository),
             createSchema: senderReceiverCreateSchema,
             updateSchema: senderReceiverUpdateSchema,
+            readPermissions: ['parties.view', 'shipments.read'],
+            readMatch: 'any',
+            writePermissions: ['parties.manage', 'shipments.write'],
+            writeMatch: 'any',
         }),
         drivers: createReferenceRouter({
             service: new ReferenceService(driversRepository),
             createSchema: driverCreateSchema,
             updateSchema: driverUpdateSchema,
+            readPermissions: ['drivers.view', 'shipments.read'],
+            readMatch: 'any',
+            writePermissions: ['parties.manage'],
         }),
         vehicles: createReferenceRouter({
             service: new ReferenceService(vehiclesRepository),
             createSchema: vehicleCreateSchema,
             updateSchema: vehicleUpdateSchema,
+            readPermissions: ['vehicles.view', 'shipments.read'],
+            readMatch: 'any',
+            writePermissions: ['parties.manage'],
         }),
         cities: createReferenceRouter({
             service: new ReferenceService(citiesRepository),
             createSchema: cityCreateSchema,
             updateSchema: cityUpdateSchema,
+            readPermissions: ['shipments.read'],
+            writePermissions: ['settings.system.write'],
         }),
         goodsTypes: createReferenceRouter({
             service: new ReferenceService(goodsTypesRepository),
             createSchema: goodsTypeCreateSchema,
             updateSchema: goodsTypeUpdateSchema,
+            readPermissions: ['shipments.read'],
+            writePermissions: ['settings.system.write'],
+            postGuard: requireAnyPermissions(['settings.system.write', 'shipments.write']),
         }),
         tariffs: createReferenceRouter({
             service: new ReferenceService(tariffsRepository),
             createSchema: tariffCreateSchema,
             updateSchema: tariffUpdateSchema,
+            readPermissions: ['finance.read'],
+            writePermissions: ['finance.write'],
         }),
     };
 }
