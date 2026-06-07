@@ -39,6 +39,7 @@ export function createCenterReceiptRouter(service: CenterReceiptService) {
         dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
         dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
         receiptStatus: z.enum(['all', 'pending', 'received']).optional(),
+        driverId: z.string().uuid().optional(),
       });
       const q = querySchema.parse(req.query);
       const rows = await service.listProvincialInbound(scope, {
@@ -46,8 +47,27 @@ export function createCenterReceiptRouter(service: CenterReceiptService) {
         dateFrom: q.dateFrom,
         dateTo: q.dateTo,
         receiptStatus: q.receiptStatus ?? 'all',
+        driverId: q.driverId,
       });
       res.json({ success: true, data: { rows } });
+    }),
+  );
+
+  router.get(
+    '/vehicle-trip-report',
+    requirePermissions(['deliveries.read']),
+    asyncHandler(async (req, res) => {
+      const scope = parseDataScope(req);
+      const querySchema = z.object({
+        driverId: z.string().uuid(),
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      });
+      const q = querySchema.parse(req.query);
+      const result = await service.listVehicleTripReport(scope, {
+        driverId: q.driverId,
+        date: q.date,
+      });
+      res.json({ success: true, data: result });
     }),
   );
 

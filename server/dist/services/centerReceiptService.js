@@ -10,6 +10,9 @@ export class CenterReceiptService {
     listProvincialInbound(scope, filters) {
         return this.repository.listProvincialInbound(scope, filters);
     }
+    listVehicleTripReport(scope, filters) {
+        return this.repository.listVehicleTripReport(scope, filters);
+    }
     async create(input, scope) {
         if (scope?.branchId && input.branchId && input.branchId !== scope.branchId) {
             throw new HttpError(403, 'Cannot receive shipment outside scoped branch.');

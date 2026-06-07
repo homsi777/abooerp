@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useToast } from '../../components/Toast';
 import { httpClient } from '../../lib/api/httpClient';
+import AgentQuickCodesPanel from '../../components/agents/AgentQuickCodesPanel';
+import {
+  AGENT_QUICK_CODE_TEMPLATES,
+  buildQuickCodesFromAgents,
+  listDuplicateActiveGovernorates,
+  normalizeGovernorate,
+  suggestedQuickCodeForGovernorate,
+} from '../../lib/agents/agentQuickCodes';
 
 type BranchOption = {
   id: string;
@@ -64,6 +72,23 @@ export default function AgentsSettingsPage() {
     if (!q) return agents;
     return agents.filter((item) => item.code.toLowerCase().includes(q) || item.name.toLowerCase().includes(q));
   }, [agents, search]);
+
+  const duplicateGovernorates = useMemo(() => listDuplicateActiveGovernorates(agents), [agents]);
+
+  const agentQuickCodeEntries = useMemo(
+    () => buildQuickCodesFromAgents(agents.filter((agent) => agent.is_active)),
+    [agents],
+  );
+
+  const applyGovernorateShortcut = (governorate: string) => {
+    const normalized = normalizeGovernorate(governorate);
+    const suggested = suggestedQuickCodeForGovernorate(normalized, agents);
+    setForm((prev) => ({
+      ...prev,
+      governorate: normalized,
+      code: suggested ?? prev.code,
+    }));
+  };
 
   const loadBranches = async () => {
     const data = await httpClient.get<BranchOption[]>('/branches?includeInactive=true');
@@ -187,6 +212,15 @@ export default function AgentsSettingsPage() {
   return (
     <div className="card">
       <div className="card-header">إدارة الوكلاء</div>
+      {duplicateGovernorates.length > 0 ? (
+        <div className="agents-duplicate-warn mb-3">
+          محافظات بأكثر من وكيل نشط — عطّل المكرر (AGT-…) واترك كود الاختصار الرقمي فقط.
+        </div>
+      ) : null}
+      <div className="card mb-3 agents-shortcuts-card">
+        <div className="card-header">اختصارات الوكلاء (من الأكواد الفعلية)</div>
+        <AgentQuickCodesPanel compact entries={agentQuickCodeEntries} showAgentName />
+      </div>
       <div className="grid grid-cols-4 gap-3 mb-3">
         <input className="form-input" placeholder="بحث بالكود/الاسم" value={search} onChange={(e) => setSearch(e.target.value)} />
         <label className="flex items-center gap-2 text-sm">
@@ -201,7 +235,7 @@ export default function AgentsSettingsPage() {
       <table className="data-grid">
         <thead>
           <tr>
-            <th>الكود</th>
+            <th>كود الاختصار</th>
             <th>الاسم</th>
             <th>المحافظة</th>
             <th>الفرع</th>
@@ -227,8 +261,8 @@ export default function AgentsSettingsPage() {
 
       <div className="grid grid-cols-2 gap-3 mt-4">
         <div className="form-group">
-          <label className="form-label">الكود</label>
-          <input className="form-input w-full" value={form.code} onChange={(e) => setForm((p) => ({ ...p, code: e.target.value }))} />
+          <label className="form-label">الكود (اختصار 1–16)</label>
+          <input className="form-input w-full" list="settings-agent-quick-code-options" value={form.code} onChange={(e) => setForm((p) => ({ ...p, code: e.target.value }))} />
         </div>
         <div className="form-group">
           <label className="form-label">الاسم</label>
@@ -240,7 +274,7 @@ export default function AgentsSettingsPage() {
         </div>
         <div className="form-group">
           <label className="form-label">المحافظة (الوجهة) *</label>
-          <input className="form-input w-full" placeholder="مثل: الرقة — وكيل واحد نشط لكل محافظة" value={form.governorate} onChange={(e) => setForm((p) => ({ ...p, governorate: e.target.value }))} />
+          <input className="form-input w-full" list="settings-agent-governorate-options" placeholder="مثل: الرقة — وكيل واحد نشط لكل محافظة" value={form.governorate} onChange={(e) => applyGovernorateShortcut(e.target.value)} />
         </div>
         <div className="form-group col-span-2">
           <label className="form-label">الفرع</label>
@@ -305,6 +339,16 @@ export default function AgentsSettingsPage() {
           </>
         )}
       </div>
+      <datalist id="settings-agent-governorate-options">
+        {AGENT_QUICK_CODE_TEMPLATES.map((entry) => (
+          <option key={entry.code} value={entry.governorate} />
+        ))}
+      </datalist>
+      <datalist id="settings-agent-quick-code-options">
+        {agentQuickCodeEntries.map((entry) => (
+          <option key={`${entry.code}-${entry.governorate}`} value={entry.code} label={entry.governorate} />
+        ))}
+      </datalist>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Printer, Save, Search, Trash2 } from 'lucide-react';
+import { HelpCircle, Plus, Printer, Save, ScrollText, Search, Trash2 } from 'lucide-react';
 import {
   buildMahmoudPreprintedReceiptHtml,
   mapRemoteLedgerRowToMahmoudReceipt,
@@ -12,6 +12,29 @@ import { isElectronRuntime } from '../lib/runtime/runtimeMode';
 import { useAuth } from '../context/AuthProvider';
 import SmartPartyInput from '../components/SmartPartyInput';
 import AutocompleteInput from '../components/AutocompleteInput';
+import {
+  dedupeAgentsForDestination,
+  pickPreferredAgentForGovernorate,
+} from '../lib/shipping/agentDestinationResolve';
+import {
+  applySaveProgressItemPatch,
+  buildSaveProgressItems,
+  createInitialSaveProgress,
+  failedRowsFromProgressItems,
+  loadFailedSaveRows,
+  persistFailedSaveRows,
+  quickLedgerLog,
+  rowProgressLabel,
+  type FailedSaveRowMap,
+  type SaveProgressItem,
+  type SaveProgressState,
+} from '../lib/shipping/quickLedgerLog';
+import QuickLedgerSaveProgressDialog from '../components/shipping/QuickLedgerSaveProgressDialog';
+import QuickLedgerAgentHelpDialog from '../components/shipping/QuickLedgerAgentHelpDialog';
+import {
+  buildQuickCodesFromAgents,
+  resolveGovernorateFromQuickCode,
+} from '../lib/agents/agentQuickCodes';
 import {
   ledgerRowTotalUsd,
   mergeLedgerRowWithAutoTariff,
@@ -679,6 +702,10 @@ export default function ShipmentQuickLedger() {
   const [deletingRows, setDeletingRows] = useState(false);
   const [loadingRefs, setLoadingRefs] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveProgress, setSaveProgress] = useState<SaveProgressState>(createInitialSaveProgress);
+  const [failedSaveRows, setFailedSaveRows] = useState<FailedSaveRowMap>({});
+  const [agentHelpOpen, setAgentHelpOpen] = useState(false);
+  const [agentHelpLoading, setAgentHelpLoading] = useState(false);
   const [destinationOptions, setDestinationOptions] = useState<string[]>([]);
   const [tariffs, setTariffs] = useState<Tariff[]>([]);
   const [agentSuggestions, setAgentSuggestions] = useState<Record<number, SuggestedAgent[]>>({});
@@ -746,6 +773,10 @@ export default function ShipmentQuickLedger() {
     [visibleRows],
   );
 
+  useEffect(() => {
+    setFailedSaveRows(loadFailedSaveRows(trip.date, trip.line));
+  }, [trip.date, trip.line]);
+
   const duplicateReceiptRowIds = useMemo(() => {
     const byKey = new Map<string, LedgerRow[]>();
     for (const row of rows) {
@@ -767,6 +798,27 @@ export default function ShipmentQuickLedger() {
     }
     return dupIds;
   }, [rows]);
+
+  const issueRowIds = useMemo(() => {
+    const ids = new Set<number>(duplicateReceiptRowIds);
+    for (const rowId of Object.keys(failedSaveRows)) {
+      ids.add(Number(rowId));
+    }
+    return ids;
+  }, [duplicateReceiptRowIds, failedSaveRows]);
+
+  const agentQuickCodeEntries = useMemo(
+    () =>
+      buildQuickCodesFromAgents(
+        catalogAgents.map((agent) => ({
+          code: agent.code,
+          name: agent.name,
+          governorate: agent.governorate,
+          is_active: true,
+        })),
+      ),
+    [catalogAgents],
+  );
 
   const stats = useMemo(() => {
     const meaningful = rows.filter(isRowStarted);
@@ -1040,7 +1092,7 @@ export default function ShipmentQuickLedger() {
           try {
             const list = await httpClient.get<
               Array<{ id: string; code: string; name: string; governorate?: string | null; is_active?: boolean }>
-            >('/agents');
+            >('/agents?includeInactive=false');
             const mapped = list
               .filter((a) => a.is_active !== false)
               .map((a) => ({
@@ -1093,6 +1145,25 @@ export default function ShipmentQuickLedger() {
     if (found) setBranchSearch(found.name);
   }, [activeBranchId, branches]);
 
+  const clearFailedSaveRow = (rowId: number) => {
+    setFailedSaveRows((prev) => {
+      if (!prev[rowId]) return prev;
+      const next = { ...prev };
+      delete next[rowId];
+      persistFailedSaveRows(tripRef.current.date, tripRef.current.line, next);
+      return next;
+    });
+  };
+
+  const mergeFailedSaveRows = (failures: FailedSaveRowMap) => {
+    if (!Object.keys(failures).length) return;
+    setFailedSaveRows((prev) => {
+      const next = { ...prev, ...failures };
+      persistFailedSaveRows(tripRef.current.date, tripRef.current.line, next);
+      return next;
+    });
+  };
+
   const updateRow = (id: number, field: keyof LedgerRow, value: string, skipTariff = false) => {
     if (field === 'receiptNo') {
       const normalized = normalizeName(value);
@@ -1141,6 +1212,9 @@ export default function ShipmentQuickLedger() {
       const becameSavable = after && isRowSavable(after) && (!before || !isRowSavable(before));
       return becameSavable ? appendTrailingEntrySlot(mapped) : mapped;
     });
+    if (field === 'receiptNo' || field === 'destination' || field === 'sender' || field === 'receiver') {
+      clearFailedSaveRow(id);
+    }
     queueRowSave(id);
   };
 
@@ -1240,7 +1314,9 @@ export default function ShipmentQuickLedger() {
     if (!shouldPersistRow(row)) return;
     const dup = findReceiptConflictForRow(row, rowsRef.current);
     if (dup) {
-      showToast(describeReceiptConflict(rowsRef.current, row, dup), 'error');
+      const message = describeReceiptConflict(rowsRef.current, row, dup);
+      quickLedgerLog.log('warn', 'autosave', message, logRowContext(row));
+      showToast(message, 'error');
       return;
     }
 
@@ -1260,7 +1336,9 @@ export default function ShipmentQuickLedger() {
       if (!latestRow || !shouldPersistRow(latestRow)) return;
       const dup = findReceiptConflictForRow(latestRow, rowsRef.current);
       if (dup) {
-        showToast(describeReceiptConflict(rowsRef.current, latestRow, dup), 'error');
+        const message = describeReceiptConflict(rowsRef.current, latestRow, dup);
+        quickLedgerLog.log('warn', 'autosave', message, logRowContext(latestRow));
+        showToast(message, 'error');
         return;
       }
 
@@ -1320,7 +1398,9 @@ export default function ShipmentQuickLedger() {
 
         syncPostedShipmentInBackground(latestRow, saved, currentTrip);
       } catch (error) {
-        showToast(error instanceof Error ? error.message : 'تعذر حفظ السطر', 'error');
+        const message = error instanceof Error ? error.message : 'تعذر حفظ السطر';
+        quickLedgerLog.log('error', 'autosave', message, logRowContext(latestRow));
+        showToast(message, 'error');
         throw error;
       }
     })();
@@ -1388,21 +1468,61 @@ export default function ShipmentQuickLedger() {
     return branches.find((b) => normalizeName(b.name) === o) ?? branches[0];
   };
 
+  const refreshCatalogAgents = async () => {
+    if (user?.userType === 'agent') return;
+    setAgentHelpLoading(true);
+    try {
+      const list = await httpClient.get<
+        Array<{ id: string; code: string; name: string; governorate?: string | null; is_active?: boolean }>
+      >('/agents?includeInactive=false');
+      const mapped: SuggestedAgent[] = list
+        .filter((a) => a.is_active !== false)
+        .map((a) => ({
+          id: syntheticEntityId(a.id),
+          code: a.code,
+          name: a.name,
+          governorate: typeof a.governorate === 'string' ? a.governorate : undefined,
+          city: typeof (a as { city?: string }).city === 'string' ? (a as { city?: string }).city : undefined,
+          area: typeof (a as { area?: string }).area === 'string' ? (a as { area?: string }).area : undefined,
+        }));
+      setCatalogAgents(mapped);
+    } catch (err) {
+      console.warn('[ShipmentQuickLedger] refresh agents catalog failed', err);
+    } finally {
+      setAgentHelpLoading(false);
+    }
+  };
+
+  const openAgentHelp = () => {
+    setAgentHelpOpen(true);
+    void refreshCatalogAgents();
+  };
+
   const lookupAgentsForRow = async (rowId: number, destinationValue: string, originValue: string) => {
     const destination = normalizeName(destinationValue);
     if (!destination) return;
     try {
       const agents = await phase15Gateway.agents.lookupByDestination(destination);
-      const mapped: SuggestedAgent[] = agents.map((a) => ({
-        id: a.id,
+      const mapped: SuggestedAgent[] = dedupeAgentsForDestination(
+        agents.map((a) => ({
+          id: a.id,
+          code: a.code,
+          name: a.name,
+          governorate:
+            typeof (a as { governorate?: unknown }).governorate === 'string'
+              ? (a as { governorate?: string }).governorate
+              : undefined,
+          city: typeof (a as { city?: unknown }).city === 'string' ? (a as { city?: string }).city : undefined,
+          area: typeof (a as { area?: unknown }).area === 'string' ? (a as { area?: string }).area : undefined,
+        })),
+        destination,
+      ).map((a) => ({
+        id: a.id as number,
         code: a.code,
         name: a.name,
-        governorate:
-          typeof (a as { governorate?: unknown }).governorate === 'string'
-            ? (a as { governorate?: string }).governorate
-            : undefined,
-        city: typeof (a as { city?: unknown }).city === 'string' ? (a as { city?: string }).city : undefined,
-        area: typeof (a as { area?: unknown }).area === 'string' ? (a as { area?: string }).area : undefined,
+        governorate: a.governorate,
+        city: a.city,
+        area: a.area,
       }));
       setAgentSuggestions((prev) => ({ ...prev, [rowId]: mapped }));
       if (mapped.length === 1) {
@@ -1481,19 +1601,38 @@ export default function ShipmentQuickLedger() {
         agentId = undefined;
         agentName = '';
       } else {
+        const quickGovernorate = isDigitsOnlyQuickCode(raw)
+          ? resolveGovernorateFromQuickCode(
+              raw,
+              catalogAgents.map((agent) => ({
+                code: agent.code,
+                name: agent.name,
+                governorate: agent.governorate,
+                is_active: true,
+              })),
+            )
+          : null;
+        if (quickGovernorate) {
+          next = quickGovernorate;
+        }
         const unique = dedupeAgentsList([...(agentSuggestions[row.id] || []), ...catalogAgents]);
+        const codeMatch = !quickGovernorate ? matchByEntityCode(unique, raw) : undefined;
+        const nameMatches = codeMatch
+          ? [codeMatch]
+          : unique.filter((a) => {
+              const label = resolveAgentDestinationLabel(a);
+              const normRaw = normalizeName(raw);
+              return (
+                normalizeName(label) === normRaw ||
+                normalizeName(a.name) === normRaw ||
+                normalizeName(a.governorate ?? '') === normRaw ||
+                normalizeName(a.city ?? '') === normRaw
+              );
+            });
         const agent =
-          matchByEntityCode(unique, raw) ??
-          unique.find((a) => {
-            const label = resolveAgentDestinationLabel(a);
-            const normRaw = normalizeName(raw);
-            return (
-              normalizeName(label) === normRaw ||
-              normalizeName(a.name) === normRaw ||
-              normalizeName(a.governorate ?? '') === normRaw ||
-              normalizeName(a.city ?? '') === normRaw
-            );
-          });
+          (nameMatches.length > 1
+            ? pickPreferredAgentForGovernorate(nameMatches)
+            : nameMatches[0]) ?? undefined;
         if (agent) {
           next = resolveAgentDestinationLabel(agent);
           agentId = agent.id;
@@ -1824,8 +1963,17 @@ export default function ShipmentQuickLedger() {
     }
   };
 
+  const logRowContext = (row: LedgerRow) => ({
+    rowLabel: rowProgressLabel(row),
+    receiptNo: row.receiptNo,
+    destination: row.destination,
+  });
+
+  const patchSaveItem = (key: string, patch: Partial<SaveProgressItem>) => {
+    setSaveProgress((prev) => applySaveProgressItemPatch(prev, key, patch));
+  };
+
   const saveRows = async () => {
-    const rowsToPost = rows.filter((row) => isRowComplete(row) && !row.postedShipmentId);
     if (!activeBranchId) {
       showToast('يرجى اختيار الفرع قبل حفظ الشحنات', 'error');
       return;
@@ -1836,10 +1984,85 @@ export default function ShipmentQuickLedger() {
       return;
     }
 
+    const batchId = quickLedgerLog.startBatch({
+      ledgerDate: trip.date,
+      lineLabel: trip.line,
+      branchId: activeBranchId,
+      rowsToPost: 0,
+    });
+
+    setSaveProgress({
+      open: true,
+      phase: 'preparing',
+      phaseLabel: 'جاري تجهيز الحفظ ومزامنة الأسطر...',
+      items: [],
+      completedCount: 0,
+      totalCount: 0,
+      startedAt: new Date().toISOString(),
+      batchId,
+    });
     setSaving(true);
+
+    const failBatch = (
+      phaseLabel: string,
+      message: string,
+      progressItems: SaveProgressItem[],
+      details?: Record<string, unknown>,
+    ) => {
+      quickLedgerLog.log('error', 'validation', message, { details });
+      quickLedgerLog.endBatch('failed', message, details);
+      mergeFailedSaveRows(failedRowsFromProgressItems(progressItems));
+      setSaveProgress((prev) => ({
+        ...prev,
+        items: progressItems,
+        phase: 'failed',
+        phaseLabel,
+        summary: message,
+        finishedAt: new Date().toISOString(),
+      }));
+      showToast(message, 'error');
+    };
+
     try {
+      quickLedgerLog.log('info', 'prepare', 'مزامنة الأسطر قبل الحفظ الجماعي');
       await flushPendingRowSaves();
+
+      const currentRows = rowsRef.current;
+      const rowsToPost = currentRows.filter((row) => isRowComplete(row) && !row.postedShipmentId);
+      const alreadyPostedCount = currentRows.filter(
+        (row) => isRowStarted(row) && row.postedShipmentId,
+      ).length;
+      const resumeMode = alreadyPostedCount > 0 && rowsToPost.length > 0;
+
+      quickLedgerLog.log('info', 'prepare', resumeMode ? 'استكمال حفظ متبقٍ' : 'بدء حفظ جديد', {
+        details: { rowsToPost: rowsToPost.length, alreadyPostedCount },
+      });
+
+      const progressItems = buildSaveProgressItems(rowsToPost);
+      setSaveProgress((prev) => ({
+        ...prev,
+        items: progressItems,
+        totalCount: progressItems.length,
+        alreadyPostedCount,
+        phase: !rowsToPost.length ? 'done' : 'validating',
+        phaseLabel: !rowsToPost.length
+          ? 'اكتمل — لا توجد أسطر جديدة للترحيل'
+          : resumeMode
+            ? `استكمال الحفظ — ${rowsToPost.length} سطر متبقٍ (${alreadyPostedCount} مُرحَّل مسبقاً)`
+            : 'التحقق من الإيصالات والسائق...',
+      }));
+
       if (!rowsToPost.length) {
+        quickLedgerLog.endBatch('success', 'لا توجد أسطر جديدة للترحيل — تمت مزامنة التعديلات فقط');
+        setSaveProgress((prev) => ({
+          ...prev,
+          phase: 'done',
+          phaseLabel: 'اكتمل — لا توجد أسطر جديدة للترحيل',
+          summary: 'تمت مزامنة التعديلات على الأسطر.',
+          completedCount: 0,
+          totalCount: 0,
+          finishedAt: new Date().toISOString(),
+        }));
         showToast('تم حفظ التعديلات على الأسطر', 'success');
         await loadRemoteRows();
         return;
@@ -1847,17 +2070,45 @@ export default function ShipmentQuickLedger() {
 
       const batchDup = findDuplicateWithinBatch(rowsToPost);
       if (batchDup) {
-        showToast(describeReceiptConflict(rows, batchDup.row, batchDup.other), 'error');
+        const message = describeReceiptConflict(currentRows, batchDup.row, batchDup.other);
+        const items = progressItems.map((item) => {
+          if (item.key === String(batchDup.row.id)) {
+            return { ...item, status: 'error' as const, message };
+          }
+          if (item.key === String(batchDup.other.id)) {
+            return { ...item, status: 'error' as const, message: 'مكرر مع سطر آخر' };
+          }
+          return item;
+        });
+        failBatch('فشل التحقق — إيصال مكرر داخل الدفعة', message, items, {
+          receiptNo: batchDup.row.receiptNo,
+          row: rowProgressLabel(batchDup.row),
+        });
         return;
       }
-      const postedDup = findReceiptConflictWithPosted(rowsToPost, rows);
+      const postedDup = findReceiptConflictWithPosted(rowsToPost, currentRows);
       if (postedDup) {
-        showToast(describeReceiptConflict(rows, postedDup.row, postedDup.other), 'error');
+        const message = describeReceiptConflict(currentRows, postedDup.row, postedDup.other);
+        const items = progressItems.map((item) =>
+          item.key === String(postedDup.row.id) ? { ...item, status: 'error' as const, message } : item,
+        );
+        failBatch('فشل التحقق — إيصال محفوظ مسبقاً', message, items, {
+          receiptNo: postedDup.row.receiptNo,
+          row: rowProgressLabel(postedDup.row),
+          postedRow: rowProgressLabel(postedDup.other),
+        });
         return;
       }
-      const unpostedDup = findReceiptConflictWithUnposted(rowsToPost, rows);
+      const unpostedDup = findReceiptConflictWithUnposted(rowsToPost, currentRows);
       if (unpostedDup) {
-        showToast(describeReceiptConflict(rows, unpostedDup.row, unpostedDup.other), 'error');
+        const message = describeReceiptConflict(currentRows, unpostedDup.row, unpostedDup.other);
+        const items = progressItems.map((item) =>
+          item.key === String(unpostedDup.row.id) ? { ...item, status: 'error' as const, message } : item,
+        );
+        failBatch('فشل التحقق — إيصال مكرر', message, items, {
+          receiptNo: unpostedDup.row.receiptNo,
+          row: rowProgressLabel(unpostedDup.row),
+        });
         return;
       }
 
@@ -1866,67 +2117,134 @@ export default function ShipmentQuickLedger() {
         return !fleet.driverId;
       });
       if (rowsMissingDriver.length) {
-        showToast(
-          'يرجى اختيار السائق (من أعلى الدفتر) أو التأكد أن السطر مرتبط بسائق — مطلوب لحفظ الشحنات الجديدة.',
-          'error',
+        const message =
+          'يرجى اختيار السائق (من أعلى الدفتر) أو التأكد أن السطر مرتبط بسائق — مطلوب لحفظ الشحنات الجديدة.';
+        const items = progressItems.map((item) =>
+          rowsMissingDriver.some((row) => String(row.id) === item.key)
+            ? { ...item, status: 'error' as const, message: 'السائق مطلوب' }
+            : item,
         );
+        failBatch('فشل التحقق — السائق مطلوب', message, items, {
+          missingDriverCount: rowsMissingDriver.length,
+        });
         return;
       }
 
-      let workingRows = [...rows];
+      setSaveProgress((prev) => ({
+        ...prev,
+        phase: 'upserting',
+        phaseLabel: resumeMode
+          ? `استكمال الحفظ في الدفتر (0 / ${rowsToPost.length})...`
+          : `حفظ الأسطر في الدفتر (0 / ${rowsToPost.length})...`,
+      }));
+
+      let workingRows = [...currentRows];
       const upsertedRowIds: string[] = [];
-      for (const row of rowsToPost) {
+      const savedDbIdByDisplayId = new Map<number, string>();
+      let progressSnapshot = progressItems;
+      for (let index = 0; index < rowsToPost.length; index += 1) {
+        const row = rowsToPost[index];
+        const itemKey = String(row.id);
+
+        if (row.dbId) {
+          upsertedRowIds.push(row.dbId);
+          savedDbIdByDisplayId.set(row.id, row.dbId);
+          progressSnapshot = progressSnapshot.map((item) =>
+            item.key === itemKey
+              ? { ...item, status: 'saved' as const, message: 'محفوظ مسبقاً — استكمال الترحيل' }
+              : item,
+          );
+          setSaveProgress((prev) => ({
+            ...applySaveProgressItemPatch(prev, itemKey, {
+              status: 'saved',
+              message: 'محفوظ مسبقاً — استكمال الترحيل',
+            }),
+            phaseLabel: resumeMode
+              ? `استكمال الحفظ في الدفتر (${index + 1} / ${rowsToPost.length})...`
+              : `حفظ الأسطر في الدفتر (${index + 1} / ${rowsToPost.length})...`,
+          }));
+          continue;
+        }
+
+        patchSaveItem(itemKey, { status: 'running', message: 'جاري الحفظ...' });
+        setSaveProgress((prev) => ({
+          ...prev,
+          phaseLabel: resumeMode
+            ? `استكمال الحفظ في الدفتر (${index + 1} / ${rowsToPost.length})...`
+            : `حفظ الأسطر في الدفتر (${index + 1} / ${rowsToPost.length})...`,
+        }));
+
         const fleet = resolveFleetForLedgerRow(row, trip, drivers, vehicles);
         const effectiveDriverId = row.sessionDriverId ?? trip.driverId;
         const rowNo =
           row.serverRowNo ?? nextServerRowNoForDriver(workingRows, effectiveDriverId) ?? row.id;
-        let saved: RemoteDailyLedgerRow;
         try {
-          saved = await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
-          branchId: activeBranchId,
-          ledgerDate: trip.date,
-          lineLabel: trip.line,
-          originLabel: origin,
-          tripNo: trip.tripNo || null,
-          ...(row.dbId ? { rowId: row.dbId } : {}),
-          ...fleet,
-          rowNo,
-          receiptNo: row.receiptNo || null,
-          destination: row.destination,
-          parcelType: row.parcelType,
-          parcelCount: Number(row.parcelCount) || null,
-          weightKg: parseWeightKg(row.weightKg) ?? null,
-          senderName: row.sender,
-          receiverName: row.receiver,
-          collectAmountUsd: parseUsd(row.collectAmount),
-          prepaidAmountUsd: parseUsd(row.prepaidAmount),
-          hawalaAmountUsd: parseUsd(row.receiverCollect),
-          feesAmountUsd: 0,
-          transferServiceFeeUsd: parseUsd(row.transferServiceFee),
-          notes: row.notes || null,
-        });
-        } catch (error) {
-          const label = row.serverRowNo ?? row.id;
-          showToast(
-            `السطر ${label}: ${error instanceof Error ? error.message : 'تعذر حفظ السطر'}`,
-            'error',
+          const saved = await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
+            branchId: activeBranchId,
+            ledgerDate: trip.date,
+            lineLabel: trip.line,
+            originLabel: origin,
+            tripNo: trip.tripNo || null,
+            ...(row.dbId ? { rowId: row.dbId } : {}),
+            ...fleet,
+            rowNo,
+            receiptNo: row.receiptNo || null,
+            destination: row.destination,
+            parcelType: row.parcelType,
+            parcelCount: Number(row.parcelCount) || null,
+            weightKg: parseWeightKg(row.weightKg) ?? null,
+            senderName: row.sender,
+            receiverName: row.receiver,
+            collectAmountUsd: parseUsd(row.collectAmount),
+            prepaidAmountUsd: parseUsd(row.prepaidAmount),
+            hawalaAmountUsd: parseUsd(row.receiverCollect),
+            feesAmountUsd: 0,
+            transferServiceFeeUsd: parseUsd(row.transferServiceFee),
+            notes: row.notes || null,
+          });
+          upsertedRowIds.push(saved.id);
+          savedDbIdByDisplayId.set(row.id, saved.id);
+          patchSaveItem(itemKey, { status: 'saved', message: `حُفظ — dbId=${saved.id.slice(0, 8)}` });
+          quickLedgerLog.log('success', 'upsert', 'تم حفظ السطر في الدفتر', {
+            ...logRowContext(row),
+            details: { rowId: saved.id, rowNo: saved.row_no },
+          });
+          workingRows = workingRows.map((r) =>
+            r.id === row.id
+              ? {
+                  ...r,
+                  dbId: saved.id,
+                  serverRowNo: saved.row_no,
+                  sessionDriverId: saved.driver_id
+                    ? syntheticEntityId(saved.driver_id)
+                    : trip.driverId || r.sessionDriverId,
+                }
+              : r,
           );
-          throw error;
+          setRows(workingRows);
+          clearFailedSaveRow(row.id);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'تعذر حفظ السطر';
+          progressSnapshot = progressSnapshot.map((item) =>
+            item.key === itemKey ? { ...item, status: 'error' as const, message } : item,
+          );
+          patchSaveItem(itemKey, { status: 'error', message });
+          quickLedgerLog.log('error', 'upsert', message, logRowContext(row));
+          setRows(workingRows);
+          failBatch(`توقف الحفظ عند السطر ${rowProgressLabel(row)}`, message, progressSnapshot, {
+            receiptNo: row.receiptNo,
+            row: rowProgressLabel(row),
+          });
+          return;
         }
-        upsertedRowIds.push(saved.id);
-        workingRows = workingRows.map((r) =>
-          r.id === row.id
-            ? {
-                ...r,
-                dbId: saved.id,
-                serverRowNo: saved.row_no,
-                sessionDriverId: saved.driver_id
-                  ? syntheticEntityId(saved.driver_id)
-                  : trip.driverId || r.sessionDriverId,
-              }
-            : r,
-        );
       }
+
+      setSaveProgress((prev) => ({
+        ...prev,
+        phase: 'posting',
+        phaseLabel: resumeMode ? 'استكمال ترحيل الشحنات المتبقية...' : 'ترحيل الشحنات وربطها بالوكلاء...',
+      }));
+      quickLedgerLog.log('info', 'post', `بدء ترحيل ${upsertedRowIds.length} سطر`);
 
       const result = await httpClient.post<{
         posted: Array<{ rowId: string; rowNo: number; shipmentId: string; shipmentNo: string; agentId: string | null }>;
@@ -1940,9 +2258,38 @@ export default function ShipmentQuickLedger() {
       });
 
       const postedByRowId = new Map(result.posted.map((item) => [item.rowId, item]));
+      const skippedByRowId = new Map(result.skipped.map((item) => [item.rowId, item]));
+      const errorsByRowId = new Map(result.errors.map((item) => [item.rowId, item]));
+
+      for (const row of rowsToPost) {
+        const dbId = savedDbIdByDisplayId.get(row.id) ?? row.dbId;
+        if (!dbId) continue;
+        const itemKey = String(row.id);
+        if (errorsByRowId.has(dbId)) {
+          const err = errorsByRowId.get(dbId)!;
+          patchSaveItem(itemKey, { status: 'error', message: err.message });
+          quickLedgerLog.log('error', 'post', err.message, {
+            ...logRowContext(row),
+            details: { rowNo: err.rowNo },
+          });
+        } else if (postedByRowId.has(dbId)) {
+          const posted = postedByRowId.get(dbId)!;
+          patchSaveItem(itemKey, {
+            status: 'posted',
+            message: `شحنة ${posted.shipmentNo}`,
+          });
+          quickLedgerLog.log('success', 'post', `تم ترحيل الشحنة ${posted.shipmentNo}`, logRowContext(row));
+        } else if (skippedByRowId.has(dbId)) {
+          const skipped = skippedByRowId.get(dbId)!;
+          patchSaveItem(itemKey, { status: 'skipped', message: skipped.reason });
+          quickLedgerLog.log('warn', 'post', skipped.reason, logRowContext(row));
+        }
+      }
+
       setRows((prev) =>
         prev.map((row) => {
-          const posted = row.dbId ? postedByRowId.get(row.dbId) : undefined;
+          const dbId = savedDbIdByDisplayId.get(row.id) ?? row.dbId;
+          const posted = dbId ? postedByRowId.get(dbId) : undefined;
           if (!posted) return row;
           return {
             ...row,
@@ -1953,8 +2300,67 @@ export default function ShipmentQuickLedger() {
         }),
       );
 
+      setFailedSaveRows((prev) => {
+        const next = { ...prev };
+        for (const row of rowsToPost) {
+          const dbId = savedDbIdByDisplayId.get(row.id) ?? row.dbId;
+          if (!dbId) continue;
+          if (postedByRowId.has(dbId)) {
+            delete next[row.id];
+          } else if (errorsByRowId.has(dbId)) {
+            next[row.id] = errorsByRowId.get(dbId)!.message;
+          }
+        }
+        persistFailedSaveRows(trip.date, trip.line, next);
+        return next;
+      });
+
+      const summaryParts: string[] = [];
+      if (result.posted.length) summaryParts.push(`مُرحَّل: ${result.posted.length}`);
+      if (result.errors.length) summaryParts.push(`أخطاء: ${result.errors.length}`);
+      if (result.skipped.length) summaryParts.push(`تُخطّى: ${result.skipped.length}`);
+      if (resumeMode && alreadyPostedCount > 0) {
+        summaryParts.unshift(`مُرحَّل سابقاً: ${alreadyPostedCount}`);
+      }
+      const summary = summaryParts.join(' — ') || 'لا توجد أسطر صالحة للترحيل';
+
+      const outcome =
+        result.errors.length > 0
+          ? result.posted.length > 0
+            ? 'partial'
+            : 'failed'
+          : 'success';
+      quickLedgerLog.endBatch(outcome, summary, {
+        posted: result.posted.length,
+        errors: result.errors.length,
+        skipped: result.skipped.length,
+        alreadyPostedCount,
+        resumeMode,
+      });
+
+      setSaveProgress((prev) => ({
+        ...prev,
+        phase: result.errors.length && !result.posted.length ? 'failed' : 'done',
+        phaseLabel:
+          result.errors.length && !result.posted.length
+            ? 'اكتمل مع أخطاء — أصلح الأسطر الحمراء ثم «استكمال الحفظ»'
+            : resumeMode
+              ? 'اكتمل استكمال الحفظ'
+              : 'اكتمل الحفظ',
+        summary,
+        finishedAt: new Date().toISOString(),
+        completedCount: prev.items.filter((item) =>
+          ['saved', 'posted', 'skipped', 'error'].includes(item.status),
+        ).length,
+      }));
+
       if (result.posted.length) {
-        showToast(`تم حفظ ${result.posted.length} شحنة وربطها بالوكيل بنجاح`, 'success');
+        showToast(
+          resumeMode
+            ? `تم استكمال ترحيل ${result.posted.length} شحنة — لم يُعاد حفظ المُرحَّل سابقاً`
+            : `تم حفظ ${result.posted.length} شحنة وربطها بالوكيل بنجاح`,
+          'success',
+        );
       }
       if (result.errors.length) {
         showToast(
@@ -1976,7 +2382,17 @@ export default function ShipmentQuickLedger() {
 
       await loadRemoteRows();
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'تعذر حفظ الشحنات', 'error');
+      const message = error instanceof Error ? error.message : 'تعذر حفظ الشحنات';
+      quickLedgerLog.log('error', 'batch', message);
+      quickLedgerLog.endBatch('failed', message);
+      setSaveProgress((prev) => ({
+        ...prev,
+        phase: 'failed',
+        phaseLabel: 'فشل الحفظ',
+        summary: message,
+        finishedAt: new Date().toISOString(),
+      }));
+      showToast(message, 'error');
     } finally {
       setSaving(false);
     }
@@ -1984,13 +2400,22 @@ export default function ShipmentQuickLedger() {
 
   return (
     <div className="quick-ledger-page" dir="rtl">
+      <button
+        type="button"
+        className="quick-ledger-help-btn"
+        onClick={openAgentHelp}
+        title="اختصارات الوكلاء — ارقام الجهة"
+        aria-label="اختصارات الوكلاء"
+      >
+        <HelpCircle size={22} />
+      </button>
       <section className="quick-ledger-toolbar">
         <div>
           <div className="quick-ledger-eyebrow">إدخال سريع للشحنات</div>
           <h2>دفتر الشحن اليومي</h2>
           <p className="quick-ledger-hint">
             اختر <strong>الخط</strong> لعرض الشحنات المحفوظة فوراً (بدون أسطر فارغة في القائمة). للإدخال الجديد يظهر سطر واحد في الأسفل.
-            «الجهة» = محافظة الوكيل النشط (مثل الرقة) — اضغط Enter أو اخرج من الحقل بعد الكتابة لربط الوكيل تلقائياً.
+            «الجهة» = رقم الاختصار (<strong>؟</strong>) أو اسم المحافظة — مثل <strong>9</strong> للرقة.
           </p>
         </div>
         <div className="quick-ledger-actions">
@@ -2077,9 +2502,17 @@ export default function ShipmentQuickLedger() {
           <button type="button" onClick={() => setCloseConfirmOpen(true)}>
             إغلاق القسم
           </button>
+          <button type="button" onClick={() => quickLedgerLog.download()} title="تنزيل سجل عمليات دفتر الشحن">
+            <ScrollText size={16} />
+            سجل الحفظ
+          </button>
           <button type="button" className="primary" onClick={() => void saveRows()} disabled={saving || loadingRefs}>
             <Save size={16} />
-            {saving ? 'جاري الحفظ...' : 'حفظ الشحنات'}
+            {saving
+              ? 'جاري الحفظ...'
+              : stats.saved > 0 && stats.complete > 0
+                ? `استكمال الحفظ (${stats.complete})`
+                : 'حفظ الشحنات'}
           </button>
         </div>
       </section>
@@ -2159,6 +2592,12 @@ export default function ShipmentQuickLedger() {
             <span>إيصال مكرر — عدّل أو احذف الأسطر المظللة</span>
           </div>
         )}
+        {Object.keys(failedSaveRows).length > 0 && (
+          <div className="quick-ledger-stat-warn">
+            <strong>{Object.keys(failedSaveRows).length}</strong>
+            <span>أسطر بها خطأ في الحفظ — ظل أحمر وامض، أصلحها ثم «استكمال الحفظ»</span>
+          </div>
+        )}
       </section>
 
       <section className="quick-ledger-table-shell">
@@ -2199,8 +2638,16 @@ export default function ShipmentQuickLedger() {
               const posted = Boolean(row.postedShipmentId);
               const deletable = isRowDeletable(row);
               const goodsTypeItems = goodsTypes.map((g) => ({ id: g.id, name: g.name }));
+              const rowIssue = failedSaveRows[row.id]
+                ?? (duplicateReceiptRowIds.has(row.id) ? 'رقم الإيصال مكرر' : undefined);
+              const rowClassName = [
+                locked ? 'saved' : posted ? 'started' : activeRowId === row.id ? 'active' : started ? 'started' : '',
+                issueRowIds.has(row.id) ? 'ledger-row-error' : '',
+              ]
+                .filter(Boolean)
+                .join(' ');
               return (
-                <tr key={row.id} className={locked ? 'saved' : posted ? 'started' : activeRowId === row.id ? 'active' : started ? 'started' : ''}>
+                <tr key={row.id} className={rowClassName} title={rowIssue}>
                   {deleteMode && (
                     <td className="quick-ledger-select-col">
                       <input
@@ -2213,7 +2660,7 @@ export default function ShipmentQuickLedger() {
                       />
                     </td>
                   )}
-                  <td><input className={duplicateReceiptRowIds.has(row.id) ? 'ledger-receipt-duplicate' : undefined} data-ledger-field="true" value={row.receiptNo} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'receiptNo', e.target.value)} title={duplicateReceiptRowIds.has(row.id) ? 'رقم الإيصال مكرر' : undefined} /></td>
+                  <td><input className={duplicateReceiptRowIds.has(row.id) ? 'ledger-receipt-duplicate' : undefined} data-ledger-field="true" value={row.receiptNo} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'receiptNo', e.target.value)} title={rowIssue ?? (duplicateReceiptRowIds.has(row.id) ? 'رقم الإيصال مكرر' : undefined)} /></td>
                   <td className="quick-ledger-dest-cell">
                     <input
                       list="ledger-destination-options"
@@ -2381,6 +2828,19 @@ export default function ShipmentQuickLedger() {
         <span>التاريخ</span>
         <span>التوقيع</span>
       </section>
+
+      <QuickLedgerSaveProgressDialog
+        progress={saveProgress}
+        busy={saving}
+        onClose={() => setSaveProgress(createInitialSaveProgress())}
+        onDownloadLog={() => quickLedgerLog.download()}
+      />
+      <QuickLedgerAgentHelpDialog
+        open={agentHelpOpen}
+        loading={agentHelpLoading}
+        entries={agentQuickCodeEntries}
+        onClose={() => setAgentHelpOpen(false)}
+      />
 
       {deleteConfirmOpen && (
         <div className="quick-ledger-confirm" role="dialog" aria-modal="true">

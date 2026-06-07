@@ -62,13 +62,15 @@ export class ShipmentService {
     };
 
     if (!payload.agentId && this.agentRepository && effectiveCompanyId && payload.destinationCity?.trim()) {
-      const destinationAgents = await this.agentRepository.lookupByDestination(
-        effectiveCompanyId,
-        payload.destinationCity,
-      );
-      if (destinationAgents.length === 1) {
-        payload.agentId = destinationAgents[0].id;
-        payload.destinationCity = resolveAgentDestinationLabel(destinationAgents[0]) || payload.destinationCity;
+      try {
+        const agent = await this.agentRepository.resolveAgentForDestination(
+          effectiveCompanyId,
+          payload.destinationCity,
+        );
+        payload.agentId = agent.id;
+        payload.destinationCity = resolveAgentDestinationLabel(agent) || payload.destinationCity;
+      } catch {
+        /* keep destination without auto agent when ambiguous */
       }
     }
 

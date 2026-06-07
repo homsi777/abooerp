@@ -267,15 +267,12 @@ export class DailyLedgerShipmentPostingService {
       client.release();
     }
 
-    const agents = await this.agentRepository.lookupByDestination(scope.companyId!, normalizeName(row.destination));
-    const agentId = agents.length === 1 ? agents[0].id : undefined;
-    if (!agentId) {
-      throw new HttpError(
-        400,
-        `لا يوجد وكيل واحد فقط للوجهة «${normalizeName(row.destination)}». يرجى ضبط الوكيل في تعريف الوكلاء.`,
-      );
-    }
-    const destinationCity = resolveAgentDestinationLabel(agents[0]) || normalizeName(row.destination);
+    const agent = await this.agentRepository.resolveAgentForDestination(
+      scope.companyId!,
+      normalizeName(row.destination),
+    );
+    const agentId = agent.id;
+    const destinationCity = resolveAgentDestinationLabel(agent) || normalizeName(row.destination);
 
     const amounts = amountsFromLedgerRow(row);
     const accountCustomer = await resolveAccountCustomerBySenderName(row.company_id, row.sender_name ?? '');

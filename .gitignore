@@ -1,5 +1,6 @@
 server-dist/
 server-bundle/
+server/logs/
 resources/
 *.zip
 *.rar

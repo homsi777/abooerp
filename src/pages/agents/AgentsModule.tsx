@@ -1,9 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { HelpCircle } from 'lucide-react';
 import { httpClient } from '../../lib/api/httpClient';
 import { phase3FinanceGateway } from '../../lib/api/phase3FinanceGateway';
 import { normalizeShipmentStatus } from '../../lib/shipments/shipmentStatus';
 import AgentStatementReconciliationPanel from '../../components/agents/AgentStatementReconciliationPanel';
+import AgentQuickCodesPanel from '../../components/agents/AgentQuickCodesPanel';
+import {
+  AGENT_QUICK_CODE_TEMPLATES,
+  buildQuickCodesFromAgents,
+  listDuplicateActiveGovernorates,
+  normalizeGovernorate,
+  suggestedQuickCodeForGovernorate,
+} from '../../lib/agents/agentQuickCodes';
 import {
   getAgentReconciliationMetrics,
   resolveStatementRowReconciliationClass,
@@ -75,6 +84,26 @@ export default function AgentsModule() {
   const [statementLoading, setStatementLoading] = useState(false);
   const [reconciliationSaving, setReconciliationSaving] = useState(false);
   const [filters, setFilters] = useState({ search: '', branchId: '', status: '', city: '', onlyWithBalance: false });
+  const [shortcutsOpen, setShortcutsOpen] = useState(true);
+
+  const duplicateGovernorates = useMemo(() => listDuplicateActiveGovernorates(agents), [agents]);
+
+  const agentQuickCodeEntries = useMemo(
+    () => buildQuickCodesFromAgents(agents),
+    [agents],
+  );
+
+  const governorateDatalistOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const entry of [...agentQuickCodeEntries, ...AGENT_QUICK_CODE_TEMPLATES]) {
+      const key = entry.governorate.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(entry.governorate);
+    }
+    return out;
+  }, [agentQuickCodeEntries]);
 
   const load = async () => {
     setLoading(true);
@@ -159,6 +188,63 @@ export default function AgentsModule() {
       commission_percentage: Number(agent.commission_percentage ?? 0),
       is_active: agent.is_active,
     } : { ...emptyForm });
+  };
+
+  const applyGovernorateShortcut = (governorate: string) => {
+    if (!editing) return;
+    const normalized = normalizeGovernorate(governorate);
+    const suggested = suggestedQuickCodeForGovernorate(normalized, agents);
+    setEditing({
+      ...editing,
+      governorate: normalized,
+      code: suggested ?? editing.code,
+    });
+  };
+
+  const syncCanonicalQuickCodes = async () => {
+    const targets = agents.filter((agent) => {
+      if (!agent.is_active || !agent.governorate?.trim()) return false;
+      const suggested = suggestedQuickCodeForGovernorate(agent.governorate, agents);
+      return Boolean(suggested && agent.code.trim() !== suggested);
+    });
+    if (!targets.length) {
+      setSuccess('جميع أكواد الوكلاء النشطين مطابقة لاختصارات الأرقام.');
+      return;
+    }
+    const preview = targets
+      .map((agent) => `${agent.code} → ${suggestedQuickCodeForGovernorate(agent.governorate!, agents)} (${normalizeGovernorate(agent.governorate!)})`)
+      .join('\n');
+    const ok = window.confirm(
+      `تطبيق الاختصارات الافتراضية (1–16) على ${targets.length} وكيل نشط؟\n\n${preview}\n\nيمكنك دائماً تعديل الكود يدوياً — زر المساعدة في الدفتر يعرض الأكواد الفعلية.`,
+    );
+    if (!ok) return;
+    setSaving(true);
+    setError('');
+    try {
+      for (const agent of targets) {
+        const suggested = suggestedQuickCodeForGovernorate(agent.governorate!, agents);
+        if (!suggested) continue;
+        await httpClient.put(`/agents/${agent.id}`, {
+          code: suggested,
+          name: agent.name,
+          phone: agent.phone || undefined,
+          governorate: normalizeGovernorate(agent.governorate!),
+          city: agent.city || undefined,
+          area: agent.area || undefined,
+          branch_id: agent.branch_id,
+          address: agent.address || undefined,
+          notes: agent.notes || undefined,
+          commission_percentage: Number(agent.commission_percentage ?? 0),
+          is_active: agent.is_active,
+        });
+      }
+      setSuccess(`تم تحديث أكواد ${targets.length} وكيل لتطابق اختصارات الدفتر.`);
+      await load();
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : 'تعذر مزامنة أكواد الاختصار.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const deleteAgentPermanently = async (agent: AgentRecord) => {
@@ -304,21 +390,58 @@ export default function AgentsModule() {
         <div>
           <h2 className="text-xl font-bold">الوكلاء</h2>
           <p className="text-sm text-gray-600">
-            كل وكيل نشط = وجهة واحدة (محافظة). الكود الرقمي (13، 12…) للإدخال السريع في الدفتر.
+            كل وكيل نشط = محافظة واحدة. كود الاختصار (1–16) يُكتب في عمود «الجهة» بالدفتر — نفس الجدول أدناه.
           </p>
         </div>
-        <button type="button" className="toolbar-btn primary" onClick={() => beginEdit()}>إضافة وكيل</button>
+        <div className="flex gap-2 flex-wrap">
+          <button type="button" className="toolbar-btn" onClick={() => setShortcutsOpen((prev) => !prev)}>
+            <HelpCircle size={16} />
+            {shortcutsOpen ? 'إخفاء الاختصارات' : 'اختصارات الأرقام'}
+          </button>
+          <button type="button" className="toolbar-btn" disabled={saving} onClick={() => void syncCanonicalQuickCodes()}>
+            اختصارات افتراضية (1–16)
+          </button>
+          <button type="button" className="toolbar-btn primary" onClick={() => beginEdit()}>إضافة وكيل</button>
+        </div>
       </div>
+
+      {duplicateGovernorates.length > 0 ? (
+        <div className="agents-duplicate-warn">
+          <strong>تنبيه — محافظات بأكثر من وكيل نشط:</strong>
+          <ul className="mt-2 pr-5 list-disc">
+            {duplicateGovernorates.map((group) => (
+              <li key={group.governorate}>
+                {group.governorate}: {group.agents.map((agent) => agent.code).join('، ')} — عطّل المكرر (مثل AGT-…) واترك كود الاختصار فقط.
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {shortcutsOpen ? (
+        <div className="card mb-3 agents-shortcuts-card">
+          <div className="card-header">اختصارات الإدخال السريع — من أكواد الوكلاء الحالية</div>
+          <AgentQuickCodesPanel compact entries={agentQuickCodeEntries} showAgentName />
+        </div>
+      ) : null}
 
       {editing ? (
         <div className="card mb-3">
           <div className="card-header">{editing.id ? 'تعديل وكيل' : 'إضافة وكيل جديد'}</div>
           <div className="grid grid-cols-4 gap-3">
-            <label className="form-group"><span className="form-label">كود الوكيل</span><input className="form-input" placeholder="مثال: 13" value={editing.code} onChange={(e) => setEditing({ ...editing, code: e.target.value })} /></label>
+            <label className="form-group"><span className="form-label">كود الوكيل (اختصار)</span><input className="form-input" placeholder="1–16" value={editing.code} onChange={(e) => setEditing({ ...editing, code: e.target.value })} list="agent-quick-code-options" /></label>
             <label className="form-group"><span className="form-label">اسم الوكيل</span><input className="form-input" value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></label>
             <label className="form-group"><span className="form-label">الهاتف</span><input className="form-input" value={editing.phone} onChange={(e) => setEditing({ ...editing, phone: e.target.value })} /></label>
             <label className="form-group"><span className="form-label">الفرع المرتبط</span><select className="form-select" value={editing.branch_id} onChange={(e) => setEditing({ ...editing, branch_id: e.target.value })}><option value="">اختر الفرع</option>{branches.filter((b: any) => b.is_active !== false).map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
-            <label className="form-group"><span className="form-label">المحافظة (الوجهة) *</span><input className="form-input" placeholder="مثل: الرقة — تطابق عمود الجهة في الدفتر" value={editing.governorate} onChange={(e) => setEditing({ ...editing, governorate: e.target.value })} /></label>
+            <label className="form-group"><span className="form-label">المحافظة (الوجهة) *</span>
+              <input
+                className="form-input"
+                list="agent-governorate-options"
+                placeholder="اختر من القائمة أو اكتب — مثل: الرقة"
+                value={editing.governorate}
+                onChange={(e) => applyGovernorateShortcut(e.target.value)}
+              />
+            </label>
             <label className="form-group"><span className="form-label">المدينة</span><input className="form-input" value={editing.city} onChange={(e) => setEditing({ ...editing, city: e.target.value })} /></label>
             <label className="form-group"><span className="form-label">المنطقة</span><input className="form-input" value={editing.area} onChange={(e) => setEditing({ ...editing, area: e.target.value })} /></label>
             <label className="form-group"><span className="form-label">نسبة عمولة الوكيل (%)</span><input type="number" min="0" max="100" step="0.01" className="form-input" value={editing.commission_percentage ?? 0} onChange={(e) => setEditing({ ...editing, commission_percentage: Number(e.target.value) || 0 })} /></label>
@@ -355,11 +478,12 @@ export default function AgentsModule() {
         {error ? <div className="text-sm text-red-700 mb-2">{error}</div> : null}
         {success ? <div className="text-sm text-emerald-700 mb-2">{success}</div> : null}
         <table className="data-grid">
-          <thead><tr><th>#</th><th>كود الوكيل</th><th>اسم الوكيل</th><th>الهاتف</th><th>الوجهة</th><th>الفرع</th><th>الحالة</th><th>الشحنات</th><th>قيد الطريق</th><th>مسلمة</th><th>الرصيد</th><th>اتجاه الرصيد</th><th>إجراءات</th></tr></thead>
+          <thead><tr><th>#</th><th>كود الاختصار</th><th>اسم الوكيل</th><th>الهاتف</th><th>الوجهة</th><th>الفرع</th><th>الحالة</th><th>الشحنات</th><th>قيد الطريق</th><th>مسلمة</th><th>الرصيد</th><th>اتجاه الرصيد</th><th>إجراءات</th></tr></thead>
           <tbody>
             {rows.map((row, index) => (
-              <tr key={row.id}>
-                <td>{index + 1}</td><td>{row.code}</td><td>{row.name}</td><td>{row.phone || '-'}</td><td>{[row.governorate, row.city, row.area].filter(Boolean).join(' / ') || '-'}</td><td>{row.branchName}</td><td>{row.is_active ? 'نشط' : 'معطل'}</td><td>{row.totalShipments}</td><td>{row.inTransit}</td><td>{row.delivered}</td><td>{row.balance.toLocaleString()}</td><td>{row.balanceDirection}</td>
+              <tr key={row.id} className={row.is_active && duplicateGovernorates.some((group) => group.agents.some((agent) => agent.id === row.id)) ? 'ledger-row-error' : ''}>
+                <td>{index + 1}</td>
+                <td>{row.code}</td><td>{row.name}</td><td>{row.phone || '-'}</td><td>{[row.governorate, row.city, row.area].filter(Boolean).join(' / ') || '-'}</td><td>{row.branchName}</td><td>{row.is_active ? 'نشط' : 'معطل'}</td><td>{row.totalShipments}</td><td>{row.inTransit}</td><td>{row.delivered}</td><td>{row.balance.toLocaleString()}</td><td>{row.balanceDirection}</td>
                 <td>
                   <div className="flex flex-wrap gap-2 text-xs">
                     <Link to={`/agents/${row.id}`}>ملف الوكيل</Link>
@@ -376,6 +500,16 @@ export default function AgentsModule() {
           </tbody>
         </table>
       </div>
+      <datalist id="agent-governorate-options">
+        {governorateDatalistOptions.map((value) => (
+          <option key={value} value={value} />
+        ))}
+      </datalist>
+      <datalist id="agent-quick-code-options">
+        {agentQuickCodeEntries.map((entry) => (
+          <option key={`${entry.code}-${entry.governorate}`} value={entry.code} label={entry.governorate} />
+        ))}
+      </datalist>
       {statementLoading ? <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 text-white">جاري تحميل الكشف...</div> : null}
       {statementModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

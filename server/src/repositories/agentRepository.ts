@@ -1,6 +1,11 @@
 import { pool } from '../db/pool.js';
 import { numericCodeKey, normalizeDestinationKey } from '../utils/agentDestination.js';
 import {
+  dedupeAgentsForDestination,
+  formatAgentCodes,
+  pickPreferredAgentForGovernorate,
+} from '../utils/agentDestinationResolve.js';
+import {
   governorateLookupKey,
   normalizeAgentCode,
   normalizeAgentGovernorate,
@@ -335,7 +340,7 @@ export class AgentRepository {
         and (
           lower(trim(coalesce(a.area, ''))) = $2
           or lower(trim(coalesce(a.city, ''))) = $2
-          or lower(trim(coalesce(a.governorate, ''))) = $2
+          or lower(trim(replace(coalesce(a.governorate, ''), 'وكيل ', ''))) = $2
           or lower(trim(a.code)) = $2
           or (
             $3::text is not null
@@ -347,7 +352,60 @@ export class AgentRepository {
       `,
       [companyId, normalized, numericKey],
     );
-    return result.rows;
+    return dedupeAgentsForDestination(result.rows, destination);
+  }
+
+  async resolveAgentForDestination(companyId: string, destination: string): Promise<AgentRecord> {
+    const trimmed = String(destination ?? '').trim().replace(/\s+/g, ' ');
+    const agents = await this.lookupByDestination(companyId, trimmed);
+    if (agents.length === 1) return agents[0];
+
+    const normalized = normalizeDestinationKey(trimmed);
+    const allMatches = await pool.query<AgentRecord>(
+      `
+      select a.id, a.code, a.name, a.phone, a.governorate, a.city, a.area, a.address, a.notes, a.branch_id, a.telegram_chat_id, a.is_active, a.commission_percentage, a.created_at::text, a.updated_at::text
+      from agents a
+      join branches b on b.id = a.branch_id
+      where b.company_id = $1
+        and a.is_active = true
+        and (
+          lower(trim(coalesce(a.area, ''))) = $2
+          or lower(trim(coalesce(a.city, ''))) = $2
+          or lower(trim(replace(coalesce(a.governorate, ''), 'وكيل ', ''))) = $2
+          or lower(trim(a.code)) = $2
+        )
+      order by a.created_at desc
+      `,
+      [companyId, normalized],
+    );
+
+    if (!allMatches.rows.length) {
+      throw new HttpError(
+        400,
+        `لا يوجد وكيل نشط للوجهة «${trimmed}». أضف وكيلاً نشطاً وحدّد محافظته في تعريف الوكلاء.`,
+      );
+    }
+
+    const byGovernorate = allMatches.rows.filter(
+      (agent) => governorateLookupKey(agent.governorate) === governorateLookupKey(trimmed),
+    );
+    if (byGovernorate.length > 1) {
+      const preferred = pickPreferredAgentForGovernorate(byGovernorate);
+      if (preferred) return preferred;
+      throw new HttpError(
+        400,
+        `يوجد أكثر من وكيل للوجهة «${trimmed}»: ${formatAgentCodes(byGovernorate)}. عطّل الوكيل المكرر أو ادمج التعريفات.`,
+      );
+    }
+
+    if (allMatches.rows.length > 1) {
+      throw new HttpError(
+        400,
+        `تعذر تحديد وكيل واحد للوجهة «${trimmed}» — ${formatAgentCodes(allMatches.rows)}. استخدم كود الوكيل الرقمي أو محافظة واحدة فقط.`,
+      );
+    }
+
+    return allMatches.rows[0];
   }
 
   private async getLastAgentReconciliation(companyId: string, agentId: string) {

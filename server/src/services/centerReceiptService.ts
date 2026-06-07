@@ -16,9 +16,17 @@ export class CenterReceiptService {
       dateFrom?: string;
       dateTo?: string;
       receiptStatus?: 'all' | 'pending' | 'received';
+      driverId?: string;
     },
   ) {
     return this.repository.listProvincialInbound(scope, filters);
+  }
+
+  listVehicleTripReport(
+    scope: DataScope | undefined,
+    filters: { driverId: string; date: string },
+  ) {
+    return this.repository.listVehicleTripReport(scope, filters);
   }
 
   async create(input: CenterReceiptCreateInput, scope?: DataScope) {

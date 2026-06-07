@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requirePermissions } from '../middleware/authorization.js';
 import { parseDataScope } from '../utils/scope.js';
 import { DailyLedgerService } from '../services/dailyLedgerService.js';
+import { appendQuickLedgerClientLogs } from '../services/quickLedgerLogService.js';
 
 const uuid = z.string().uuid();
 
@@ -223,6 +224,45 @@ export function createDailyLedgerRouter(service: DailyLedgerService) {
       }
 
       const result = await service.postPendingShipments(scope, input, allowedBranchIds);
+      res.json({ success: true, data: result });
+    },
+  );
+
+  router.post(
+    '/client-logs',
+    requirePermissions(['shipments.write']),
+    async (req, res) => {
+      const userContext = (req as any).requestUserContext as any;
+      const scope = parseDataScope(req);
+      if (!scope.companyId) {
+        res.status(400).json({ success: false, error: 'Company scope is required.' });
+        return;
+      }
+      const bodySchema = z.object({
+        entries: z
+          .array(
+            z.object({
+              id: z.string(),
+              at: z.string(),
+              level: z.string(),
+              phase: z.string(),
+              message: z.string(),
+              batchId: z.string().optional(),
+              rowLabel: z.string().optional(),
+              receiptNo: z.string().optional(),
+              destination: z.string().optional(),
+              details: z.record(z.string(), z.unknown()).optional(),
+            }),
+          )
+          .min(1)
+          .max(200),
+      });
+      const { entries } = bodySchema.parse(req.body);
+      const result = await appendQuickLedgerClientLogs(
+        scope.companyId,
+        userContext?.userId ?? scope.userId ?? null,
+        entries,
+      );
       res.json({ success: true, data: result });
     },
   );

@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { httpClient } from '../lib/api/httpClient';
 import { centersGateway, type ProvincialInboundRow } from '../lib/api/centersGateway';
+import VehicleTripReportDialog from '../components/shipping/VehicleTripReportDialog';
 import { downloadCsv } from '../lib/export/csvDownload';
 import { formatCurrency } from '../lib/currency/currency';
 import { normalizeShipmentStatus, shipmentStatusLabelAr } from '../lib/shipments/shipmentStatus';
+import {
+  computeProvincialTotals,
+  formatWeightTotal,
+  groupProvincialByAgent,
+} from '../lib/shipping/provincialInboundTotals';
 import { useToast } from '../components/Toast';
 
 const SYRIAN_GOVERNORATES = [
@@ -46,28 +52,6 @@ function defaultDateFrom() {
   return d.toISOString().split('T')[0];
 }
 
-function sumNumeric(values: Array<number | null | undefined>): number {
-  return values.reduce((sum, value) => sum + (Number(value) || 0), 0);
-}
-
-function computeProvincialTotals(rows: ProvincialInboundRow[]) {
-  return {
-    shipments: rows.length,
-    parcelCount: sumNumeric(rows.map((r) => r.parcelCount)),
-    weightKg: sumNumeric(rows.map((r) => r.weightKg)),
-    collectAmount: sumNumeric(rows.map((r) => r.collectAmount)),
-    prepaidAmount: sumNumeric(rows.map((r) => r.prepaidAmount)),
-    hawalaAmount: sumNumeric(rows.map((r) => r.hawalaAmount)),
-    transferServiceFee: sumNumeric(rows.map((r) => r.transferServiceFee)),
-    totalAmount: sumNumeric(rows.map((r) => r.totalAmount)),
-  };
-}
-
-function formatWeightTotal(value: number): string {
-  if (!value) return '0';
-  return value % 1 === 0 ? value.toLocaleString() : value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
-
 export default function Centers() {
   const { showToast } = useToast();
   const [rows, setRows] = useState<ProvincialInboundRow[]>([]);
@@ -78,6 +62,7 @@ export default function Centers() {
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [confirmRow, setConfirmRow] = useState<ProvincialInboundRow | null>(null);
+  const [vehicleReportOpen, setVehicleReportOpen] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -126,6 +111,7 @@ export default function Centers() {
   );
 
   const selectedTotals = useMemo(() => computeProvincialTotals(selectedRows), [selectedRows]);
+  const agentTotals = useMemo(() => groupProvincialByAgent(selectedRows), [selectedRows]);
 
   const completeCenterReceive = async (row: ProvincialInboundRow) => {
     setProcessingId(row.shipmentId);
@@ -216,7 +202,7 @@ export default function Centers() {
           selectedTotals.prepaidAmount,
           selectedTotals.hawalaAmount,
           selectedTotals.transferServiceFee,
-          selectedTotals.totalAmount,
+          selectedTotals.lineTotal,
           '',
           '',
         ],
@@ -236,6 +222,9 @@ export default function Centers() {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          <button className="toolbar-btn primary" type="button" onClick={() => setVehicleReportOpen(true)}>
+            تقرير سيارة
+          </button>
           <button className="toolbar-btn" type="button" onClick={() => void loadData()} disabled={loading}>
             تحديث
           </button>
@@ -330,6 +319,52 @@ export default function Centers() {
               <strong>{selectedRows.filter((r) => r.fromQuickLedger).length.toLocaleString()}</strong>
             </div>
           </section>
+
+          {agentTotals.length > 0 && (
+            <div className="card overflow-auto">
+              <div className="card-header">مجاميع حسب الوكيل — {selectedCenter}</div>
+              <table className="data-grid centers-agent-totals-table">
+                <thead>
+                  <tr>
+                    <th>الوكيل</th>
+                    <th>شحنات</th>
+                    <th>طرود</th>
+                    <th>وزن (كغ)</th>
+                    <th>تحصيل</th>
+                    <th>مسبق</th>
+                    <th>حوالة</th>
+                    <th>أجرة حوالة</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {agentTotals.map((agent) => (
+                    <tr key={agent.key}>
+                      <td>{agent.agentName}</td>
+                      <td>{agent.shipments}</td>
+                      <td>{agent.parcelCount.toLocaleString()}</td>
+                      <td>{formatWeightTotal(agent.weightKg)}</td>
+                      <td>{agent.collectAmount.toLocaleString()}</td>
+                      <td>{agent.prepaidAmount.toLocaleString()}</td>
+                      <td>{agent.hawalaAmount.toLocaleString()}</td>
+                      <td>{agent.transferServiceFee.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="centers-totals-row">
+                    <td><strong>المجموع</strong></td>
+                    <td><strong>{selectedTotals.shipments}</strong></td>
+                    <td><strong>{selectedTotals.parcelCount.toLocaleString()}</strong></td>
+                    <td><strong>{formatWeightTotal(selectedTotals.weightKg)}</strong></td>
+                    <td><strong>{selectedTotals.collectAmount.toLocaleString()}</strong></td>
+                    <td><strong>{selectedTotals.prepaidAmount.toLocaleString()}</strong></td>
+                    <td><strong>{selectedTotals.hawalaAmount.toLocaleString()}</strong></td>
+                    <td><strong>{selectedTotals.transferServiceFee.toLocaleString()}</strong></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
 
           <div className="card overflow-auto">
             <table className="data-grid">
@@ -446,6 +481,12 @@ export default function Centers() {
           </div>
         </div>
       )}
+
+      <VehicleTripReportDialog
+        open={vehicleReportOpen}
+        defaultDate={dateTo}
+        onClose={() => setVehicleReportOpen(false)}
+      />
     </div>
   );
 }

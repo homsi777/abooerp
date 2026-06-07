@@ -904,6 +904,139 @@ body {
   height: 100%;
   min-width: 980px;
   color: #172033;
+  position: relative;
+}
+
+.quick-ledger-help-btn {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #0f766e;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.quick-ledger-help-btn:hover {
+  background: #ecfdf5;
+  border-color: #14b8a6;
+  color: #0d9488;
+}
+
+.quick-ledger-agent-help-panel {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(86vh, 760px);
+  overflow: auto;
+  background: #fff;
+  border-radius: 14px;
+  padding: 18px 20px 16px;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.22);
+}
+
+.quick-ledger-agent-help-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.quick-ledger-agent-help-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #0f766e;
+}
+
+.quick-ledger-agent-help-title-wrap h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #0f172a;
+}
+
+.quick-ledger-agent-help-notes {
+  margin: 14px 0 0;
+  padding-right: 18px;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.agent-quick-codes-panel {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.agent-quick-codes-intro {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #475569;
+}
+
+.agent-quick-codes-empty {
+  margin: 0.5rem 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.agent-quick-codes-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.agent-quick-codes-table th,
+.agent-quick-codes-table td {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 7px 8px;
+  text-align: right;
+}
+
+.agent-quick-codes-table th {
+  background: #eef2f7;
+  color: #334155;
+  font-weight: 700;
+}
+
+.agent-quick-code-badge {
+  display: inline-flex;
+  min-width: 28px;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #ccfbf1;
+  color: #115e59;
+  font-weight: 800;
+}
+
+.agents-duplicate-warn {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.agents-shortcuts-card .card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .quick-ledger-toolbar {
@@ -912,6 +1045,7 @@ body {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 10px;
+  padding-left: 48px;
 }
 
 .quick-ledger-eyebrow {
@@ -1288,6 +1422,28 @@ body {
   color: #991b1b;
 }
 
+.quick-ledger-table tr.ledger-row-error td {
+  animation: ledger-row-error-pulse 1.8s ease-in-out infinite;
+}
+
+.quick-ledger-table tr.ledger-row-error td:first-child {
+  box-shadow: inset 4px 0 0 #dc2626;
+}
+
+@keyframes ledger-row-error-pulse {
+  0%,
+  100% {
+    background-color: rgba(254, 202, 202, 0.28);
+  }
+  50% {
+    background-color: rgba(248, 113, 113, 0.52);
+  }
+}
+
+.quick-ledger-table tr.ledger-row-posted td {
+  background: rgba(220, 252, 231, 0.35);
+}
+
 .quick-ledger-table input:disabled,
 .quick-ledger-table select:disabled {
   color: #466155;
@@ -1413,6 +1569,146 @@ body {
   background: #b91c1c;
   border-color: #b91c1c;
   color: white;
+}
+
+.quick-ledger-save-progress-panel {
+  width: min(920px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: white;
+  border: 1px solid #b6c2d2;
+  border-radius: 8px;
+  padding: 18px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+}
+
+.quick-ledger-save-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.quick-ledger-save-progress-header h3 {
+  font-size: 18px;
+  font-weight: 800;
+  margin: 0;
+}
+
+.quick-ledger-save-progress-close {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: #64748b;
+  padding: 4px;
+}
+
+.quick-ledger-save-progress-phase {
+  font-size: 14px;
+  color: #334155;
+  margin-bottom: 10px;
+}
+
+.quick-ledger-save-progress-resume {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.12);
+  color: #1e40af;
+  font-size: 13px;
+}
+
+.quick-ledger-save-progress-bar-wrap {
+  height: 10px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.quick-ledger-save-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #0f766e, #14b8a6);
+  transition: width 0.25s ease;
+}
+
+.quick-ledger-save-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #64748b;
+  margin: 6px 0 10px;
+}
+
+.quick-ledger-save-progress-summary {
+  font-size: 13px;
+  color: #0f172a;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.quick-ledger-save-progress-list {
+  flex: 1;
+  min-height: 180px;
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid #dbe3ec;
+  border-radius: 6px;
+}
+
+.quick-ledger-save-progress-list table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.quick-ledger-save-progress-list th,
+.quick-ledger-save-progress-list td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #eef2f7;
+  text-align: right;
+}
+
+.quick-ledger-save-progress-list th {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  z-index: 1;
+}
+
+.save-progress-row--running td {
+  background: #ecfeff;
+}
+
+.save-progress-row--saved td,
+.save-progress-row--posted td {
+  background: #f0fdf4;
+}
+
+.save-progress-row--skipped td {
+  background: #fffbeb;
+}
+
+.save-progress-row--error td {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.quick-ledger-save-progress-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.quick-ledger-save-progress-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .quick-ledger-print-form {
@@ -1566,6 +1862,100 @@ body {
   padding: 5px 10px;
   font-size: 12px;
   font-weight: 700;
+}
+
+.centers-agent-totals-table tfoot td {
+  background: #f8fafc;
+  border-top: 2px solid #cbd5e1;
+}
+
+.vehicle-report-panel {
+  width: min(960px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border-radius: 12px;
+  background: #fff;
+  padding: 18px 20px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25);
+}
+
+.vehicle-report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.vehicle-report-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #0f172a;
+}
+
+.vehicle-report-title-wrap h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.vehicle-report-intro {
+  margin: 0 0 14px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.vehicle-report-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+.vehicle-report-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.vehicle-report-meta div {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.vehicle-report-meta span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.vehicle-report-meta strong {
+  display: block;
+  margin-top: 4px;
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.vehicle-report-summary {
+  margin-bottom: 12px;
+}
+
+.vehicle-report-details {
+  margin-bottom: 12px;
+}
+
+.vehicle-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .permissions-command-bar {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { httpClient } from '../../lib/api/httpClient';
 import { phase3FinanceGateway, type BackendCashboxRecord } from '../../lib/api/phase3FinanceGateway';
 import { useToast } from '../../components/Toast';
+import { useAuth } from '../../context/AuthProvider';
 import { useRegisterEscape } from '../../context/EscapeRegistryContext';
 import { downloadCsv } from '../../lib/export/csvDownload';
 import { exportPdfTable } from '../../lib/export/pdfExport';
@@ -228,6 +229,10 @@ type Tab = 'employees' | 'salaries' | 'advances';
 
 export default function FinanceSalaries() {
   const { showToast } = useToast();
+  const { hasPermission } = useAuth();
+  const canManageEmployees = hasPermission('hr.employees.write');
+  const canManageSalaries = hasPermission('hr.salaries.write');
+  const canManageAdvances = hasPermission('hr.advances.write');
   const [activeTab, setActiveTab] = useState<Tab>('employees');
 
   // data
@@ -862,15 +867,15 @@ export default function FinanceSalaries() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-xl font-bold">الرواتب والسلف</h2>
         <div className="flex gap-2">
-          {activeTab === 'employees' && (
+          {activeTab === 'employees' && canManageEmployees && (
             <button type="button" className="toolbar-btn primary" onClick={openCreateEmp}>+ موظف جديد</button>
           )}
-          {activeTab === 'salaries' && (
+          {activeTab === 'salaries' && canManageSalaries && (
             <button type="button" className="toolbar-btn primary" onClick={openCreateSal} disabled={employees.length === 0}>
               + إضافة راتب
             </button>
           )}
-          {activeTab === 'advances' && (
+          {activeTab === 'advances' && canManageAdvances && (
             <button type="button" className="toolbar-btn primary" onClick={openCreateAdv} disabled={employees.length === 0}>
               + سلفة جديدة
             </button>
@@ -897,6 +902,14 @@ export default function FinanceSalaries() {
           </button>
         </div>
       </div>
+
+      {activeTab === 'employees' && !canManageEmployees ? (
+        <div className="card text-sm text-amber-800 bg-amber-50 border border-amber-200 p-3">
+          حسابك يمكنه <strong>عرض</strong> الموظفين فقط. لإضافة موظف جديد يلزم صلاحية{' '}
+          <strong>hr.employees.write</strong> — اطلب من المدير تحديث صلاحيات «محاسب» ثم{' '}
+          <strong>إعادة تسجيل الدخول</strong>.
+        </div>
+      ) : null}
 
       {/* Summary cards (salaries tab) */}
       {activeTab === 'salaries' && summary && (
@@ -1023,11 +1036,19 @@ export default function FinanceSalaries() {
                       </td>
                       <td>
                         <div className="flex flex-wrap gap-1">
-                          <button type="button" className="toolbar-btn text-xs py-0.5 px-2 text-green-800 hover:bg-green-50" title="تسجيل راتب للفترة المحددة في كشف الرواتب" onClick={() => { openQuickSalaryForEmployee(e); setActiveTab('salaries'); }}>تسليم راتب</button>
+                          {canManageSalaries ? (
+                            <button type="button" className="toolbar-btn text-xs py-0.5 px-2 text-green-800 hover:bg-green-50" title="تسجيل راتب للفترة المحددة في كشف الرواتب" onClick={() => { openQuickSalaryForEmployee(e); setActiveTab('salaries'); }}>تسليم راتب</button>
+                          ) : null}
                           <button type="button" className="toolbar-btn text-xs py-0.5 px-2 text-indigo-800 hover:bg-indigo-50" onClick={() => void openEmployeeDossier(e.id)}>ملف الموظف</button>
-                          <button type="button" className="toolbar-btn text-xs py-0.5 px-2 text-amber-800 hover:bg-amber-50" title="سلفة جديدة لهذا الموظف" onClick={() => { openQuickAdvanceForEmployee(e); setActiveTab('advances'); }}>سلفة</button>
-                          <button type="button" className="toolbar-btn text-xs py-0.5 px-2" onClick={() => openEditEmp(e)}>تعديل</button>
-                          <button type="button" className="toolbar-btn text-xs py-0.5 px-2 text-red-600 hover:bg-red-50" onClick={() => deleteEmployee(e.id)}>حذف</button>
+                          {canManageAdvances ? (
+                            <button type="button" className="toolbar-btn text-xs py-0.5 px-2 text-amber-800 hover:bg-amber-50" title="سلفة جديدة لهذا الموظف" onClick={() => { openQuickAdvanceForEmployee(e); setActiveTab('advances'); }}>سلفة</button>
+                          ) : null}
+                          {canManageEmployees ? (
+                            <>
+                              <button type="button" className="toolbar-btn text-xs py-0.5 px-2" onClick={() => openEditEmp(e)}>تعديل</button>
+                              <button type="button" className="toolbar-btn text-xs py-0.5 px-2 text-red-600 hover:bg-red-50" onClick={() => deleteEmployee(e.id)}>حذف</button>
+                            </>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
