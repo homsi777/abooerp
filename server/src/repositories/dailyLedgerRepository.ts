@@ -101,6 +101,129 @@ async function resolveExistingLedgerRowIdByReceipt(
   return existing.rows[0]?.id ?? null;
 }
 
+async function resolveDriverLabel(
+  client: PoolClient,
+  resolvedDriverId: string | null,
+  driverLabel: string | null | undefined,
+): Promise<string | null> {
+  const trimmed = String(driverLabel ?? '').trim().replace(/\s+/g, ' ');
+  if (trimmed) return trimmed;
+  if (!resolvedDriverId) return null;
+  const result = await client.query<{ full_name: string }>(
+    `select full_name from drivers where id = $1::uuid limit 1`,
+    [resolvedDriverId],
+  );
+  const name = String(result.rows[0]?.full_name ?? '').trim().replace(/\s+/g, ' ');
+  return name || null;
+}
+
+async function ensureDriverSession(
+  client: PoolClient,
+  scope: DataScope,
+  input: DailyLedgerUpsertInput,
+  resolvedDriverId: string | null,
+  resolvedDriverLabel: string | null,
+): Promise<DailyLedgerSession> {
+  const session = await client.query<DailyLedgerSession>(
+    `
+    insert into daily_ledger_sessions(
+      company_id, branch_id, ledger_date, line_label, origin_label,
+      trip_no, vehicle_label, driver_label, driver_id, vehicle_id,
+      created_by, updated_by
+    )
+    values($1,$2,$3::date,$4,$5,$6,$7,$8,$9,$10,$11,$11)
+    on conflict (
+      company_id,
+      branch_id,
+      ledger_date,
+      line_label,
+      (coalesce(driver_id, '00000000-0000-0000-0000-000000000000'::uuid))
+    ) where deleted_at is null
+    do update set
+      origin_label = excluded.origin_label,
+      trip_no = coalesce(excluded.trip_no, daily_ledger_sessions.trip_no),
+      vehicle_label = coalesce(excluded.vehicle_label, daily_ledger_sessions.vehicle_label),
+      driver_label = coalesce(excluded.driver_label, daily_ledger_sessions.driver_label),
+      driver_id = coalesce(excluded.driver_id, daily_ledger_sessions.driver_id),
+      vehicle_id = coalesce(excluded.vehicle_id, daily_ledger_sessions.vehicle_id),
+      updated_by = excluded.updated_by,
+      updated_at = now()
+    returning *
+    `,
+    [
+      scope.companyId,
+      input.branchId,
+      input.ledgerDate,
+      input.lineLabel,
+      input.originLabel ?? '',
+      input.tripNo ?? null,
+      input.vehicleLabel ?? null,
+      resolvedDriverLabel,
+      resolvedDriverId,
+      input.vehicleId ?? null,
+      input.userId ?? scope.userId ?? null,
+    ],
+  );
+  return session.rows[0];
+}
+
+async function nextRowNoForSession(client: PoolClient, sessionId: string): Promise<number> {
+  const result = await client.query<{ max_no: number | null }>(
+    `select max(row_no) as max_no from daily_ledger_rows where session_id = $1::uuid and deleted_at is null`,
+    [sessionId],
+  );
+  return (Number(result.rows[0]?.max_no) || 0) + 1;
+}
+
+/** ينقل السطر إلى جلسة السائق إذا كان محفوظاً في جلسة «بدون سائق» أو سائق مختلف */
+async function migrateRowToDriverSessionIfNeeded(
+  client: PoolClient,
+  scope: DataScope,
+  rowId: string,
+  input: DailyLedgerUpsertInput,
+  resolvedDriverId: string | null,
+  resolvedDriverLabel: string | null,
+): Promise<void> {
+  if (!resolvedDriverId) return;
+
+  const current = await client.query<{ session_id: string; driver_id: string | null }>(
+    `
+    select r.session_id, s.driver_id
+    from daily_ledger_rows r
+    join daily_ledger_sessions s on s.id = r.session_id
+    join branches b on b.id = s.branch_id
+    where r.id = $1::uuid
+      and r.deleted_at is null
+      and s.deleted_at is null
+      and b.company_id = $2::uuid
+    `,
+    [rowId, scope.companyId],
+  );
+  if (!current.rows.length) return;
+
+  const { session_id: currentSessionId, driver_id: currentDriverId } = current.rows[0];
+  if (currentDriverId === resolvedDriverId) return;
+
+  const targetSession = await ensureDriverSession(
+    client,
+    scope,
+    input,
+    resolvedDriverId,
+    resolvedDriverLabel,
+  );
+  if (targetSession.id === currentSessionId) return;
+
+  const nextRowNo = await nextRowNoForSession(client, targetSession.id);
+  await client.query(
+    `
+    update daily_ledger_rows
+    set session_id = $2::uuid, row_no = $3, updated_at = now()
+    where id = $1::uuid
+    `,
+    [rowId, targetSession.id, nextRowNo],
+  );
+}
+
 export type DailyLedgerSession = {
   id: string;
   company_id: string;
@@ -432,6 +555,22 @@ export class DailyLedgerRepository {
       );
 
       if (effectiveRowId) {
+        const resolvedDriverId =
+          input.driverId ?? (await resolveDriverIdByLabel(client, input.driverLabel));
+        const resolvedDriverLabel = await resolveDriverLabel(
+          client,
+          resolvedDriverId,
+          input.driverLabel,
+        );
+        await migrateRowToDriverSessionIfNeeded(
+          client,
+          scope,
+          effectiveRowId,
+          input,
+          resolvedDriverId,
+          resolvedDriverLabel,
+        );
+
         const updated = await client.query<DailyLedgerRowWithSession>(
           `
           update daily_ledger_rows r
@@ -505,49 +644,21 @@ export class DailyLedgerRepository {
 
       const resolvedDriverId =
         input.driverId ?? (await resolveDriverIdByLabel(client, input.driverLabel));
-
-      const session = await client.query<DailyLedgerSession>(
-        `
-        insert into daily_ledger_sessions(
-          company_id, branch_id, ledger_date, line_label, origin_label,
-          trip_no, vehicle_label, driver_label, driver_id, vehicle_id,
-          created_by, updated_by
-        )
-        values($1,$2,$3::date,$4,$5,$6,$7,$8,$9,$10,$11,$11)
-        on conflict (
-          company_id,
-          branch_id,
-          ledger_date,
-          line_label,
-          (coalesce(driver_id, '00000000-0000-0000-0000-000000000000'::uuid))
-        ) where deleted_at is null
-        do update set
-          origin_label = excluded.origin_label,
-          trip_no = coalesce(excluded.trip_no, daily_ledger_sessions.trip_no),
-          vehicle_label = coalesce(excluded.vehicle_label, daily_ledger_sessions.vehicle_label),
-          driver_label = coalesce(excluded.driver_label, daily_ledger_sessions.driver_label),
-          driver_id = coalesce(excluded.driver_id, daily_ledger_sessions.driver_id),
-          vehicle_id = coalesce(excluded.vehicle_id, daily_ledger_sessions.vehicle_id),
-          updated_by = excluded.updated_by,
-          updated_at = now()
-        returning *
-        `,
-        [
-          scope.companyId,
-          input.branchId,
-          input.ledgerDate,
-          input.lineLabel,
-          input.originLabel ?? '',
-          input.tripNo ?? null,
-          input.vehicleLabel ?? null,
-          input.driverLabel ?? null,
-          resolvedDriverId,
-          input.vehicleId ?? null,
-          input.userId ?? scope.userId ?? null,
-        ],
+      const resolvedDriverLabel = await resolveDriverLabel(
+        client,
+        resolvedDriverId,
+        input.driverLabel,
       );
 
-      const sessionId = session.rows[0].id;
+      const session = await ensureDriverSession(
+        client,
+        scope,
+        input,
+        resolvedDriverId,
+        resolvedDriverLabel,
+      );
+
+      const sessionId = session.id;
 
       const row = await client.query<DailyLedgerRowWithSession>(
         `
@@ -617,15 +728,15 @@ export class DailyLedgerRepository {
           input.transferServiceFeeUsd ?? 0,
           input.notes ?? null,
           input.userId ?? scope.userId ?? null,
-          session.rows[0].branch_id,
-          session.rows[0].ledger_date,
-          session.rows[0].line_label,
-          session.rows[0].origin_label,
-          session.rows[0].trip_no,
-          session.rows[0].vehicle_label,
-          session.rows[0].driver_label,
-          session.rows[0].driver_id,
-          session.rows[0].vehicle_id,
+          session.branch_id,
+          session.ledger_date,
+          session.line_label,
+          session.origin_label,
+          session.trip_no,
+          session.vehicle_label,
+          session.driver_label,
+          session.driver_id,
+          session.vehicle_id,
         ],
       );
 

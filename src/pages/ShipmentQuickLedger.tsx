@@ -386,13 +386,13 @@ function remoteRowMatchesDriver(
   remote: RemoteDailyLedgerRow,
   filters: { driverBackendId?: string; driverName?: string },
 ) {
+  if (filters.driverBackendId && remote.driver_id === filters.driverBackendId) return true;
   const driverLabel = normalizeName(remote.driver_label ?? '');
-  return Boolean(
-    (filters.driverBackendId && remote.driver_id === filters.driverBackendId) ||
-      (filters.driverName &&
-        (driverLabel === normalizeName(filters.driverName) ||
-          driverLabel.includes(normalizeName(filters.driverName)) ||
-          normalizeName(filters.driverName).includes(driverLabel))),
+  if (!driverLabel) return false;
+  if (!filters.driverName) return false;
+  const driverName = normalizeName(filters.driverName);
+  return (
+    driverLabel === driverName || driverLabel.includes(driverName) || driverName.includes(driverLabel)
   );
 }
 

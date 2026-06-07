@@ -100,7 +100,7 @@ async function main() {
   } else {
     for (const s of allSessions.rows) {
       console.log(
-        `  • rows=${s.row_count}  line="${s.line_label}"  driver_id=${s.driver_id ?? 'NULL'}  driver_label="${s.driver_label ?? ''}"`,
+        `  • id=${s.id}  rows=${s.row_count}  line="${s.line_label}"  driver_id=${s.driver_id ?? 'NULL'}  driver_label="${s.driver_label ?? ''}"`,
       );
     }
   }
@@ -179,8 +179,14 @@ async function main() {
         and dls.ledger_date = $2::date
         and (
           dls.driver_id = $1::uuid
-          or ${labelNorm('coalesce(dls.driver_label, \'\')')} like '%' || ${labelNorm('$3')} || '%'
-          or ${labelNorm('$3')} like '%' || ${labelNorm('coalesce(dls.driver_label, \'\')')} || '%'
+          or (
+            nullif(trim(dls.driver_label), '') is not null
+            and (
+              ${labelNorm('dls.driver_label')} = ${labelNorm('$3')}
+              or ${labelNorm('dls.driver_label')} like '%' || ${labelNorm('$3')} || '%'
+              or ${labelNorm('$3')} like '%' || ${labelNorm('dls.driver_label')} || '%'
+            )
+          )
         )
       group by dls.id
       order by row_count desc
@@ -189,7 +195,19 @@ async function main() {
     );
 
     if (!sessions.rows.length) {
-      console.log('  ❌ لا جلسات مرتبطة بهذا السائق في هذا التاريخ (حتى بالبحث بالاسم).');
+      console.log('  ❌ لا جلسات مرتبطة بهذا السائق في هذا التاريخ.');
+      const orphan = allSessions.rows.find(
+        (s) => !s.driver_id && !String(s.driver_label ?? '').trim(),
+      );
+      if (orphan) {
+        console.log(
+          `\n  ⚠️  يوجد ${orphan.row_count} سطر في جلسة «بدون سائق» (id=${orphan.id}) — هذا سبب التقرير الفارغ.`,
+        );
+        console.log('  لإصلاحها (إذا كل الأسطر لهذا السائق):');
+        console.log(
+          `  node server/scripts/assignDriverToOrphanSession.cjs "${driverName}" ${ledgerDate} "${orphan.line_label}"`,
+        );
+      }
       continue;
     }
 
@@ -208,15 +226,11 @@ async function main() {
       where r.deleted_at is null
         and dls.deleted_at is null
         and dls.ledger_date = $2::date
-        and (
-          dls.driver_id = $1::uuid
-          or ${labelNorm('coalesce(dls.driver_label, \'\')')} like '%' || ${labelNorm('$3')} || '%'
-          or ${labelNorm('$3')} like '%' || ${labelNorm('coalesce(dls.driver_label, \'\')')} || '%'
-        )
+        and dls.id = any($4::uuid[])
       order by dls.line_label, r.row_no
       limit 8
       `,
-      [driverId, ledgerDate, driverName],
+      [driverId, ledgerDate, driverName, sessions.rows.map((s) => s.id)],
     );
 
     console.log('  عينة من الأسطر:');

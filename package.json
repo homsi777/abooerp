@@ -27,6 +27,7 @@
     "server:restore-backup": "node server/scripts/restoreBackup.cjs",
     "server:inspect-ledger": "node server/scripts/inspectLedgerReceipts.cjs",
     "server:inspect-driver": "node server/scripts/inspectDriverLedger.cjs",
+    "server:assign-driver-session": "node server/scripts/assignDriverToOrphanSession.cjs",
     "dev:free-ports": "node server/scripts/freeDevPorts.cjs",
     "server:bootstrap": "npm run server:db:ensure && npm run server:migrate && npm run server:seed",
     "server:check": "tsc -p server/tsconfig.json --noEmit",
