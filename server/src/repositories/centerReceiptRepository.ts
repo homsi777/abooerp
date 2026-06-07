@@ -314,7 +314,7 @@ export class CenterReceiptRepository {
         dls.driver_id is null
         and nullif(trim(dls.driver_label), '') is not null
         and trim(dls.driver_label) ilike (
-          select trim(coalesce(dr.name, ''))
+          select trim(coalesce(dr.full_name, ''))
           from drivers dr
           where dr.id = ${driverParam}::uuid
           limit 1
