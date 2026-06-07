@@ -7,6 +7,23 @@ function normalizeLedgerReceiptNo(value: string | null | undefined): string {
   return String(value ?? '').trim().replace(/\s+/g, ' ');
 }
 
+/** يعلّم الجلسة بأنها تحتاج إعادة طباعة إذا كانت قد طُبعت مسبقاً (تعديل/إضافة بعد الطباعة) */
+async function markSessionReprintIfPrinted(
+  client: PoolClient,
+  sessionId: string | null | undefined,
+  reason: string,
+): Promise<void> {
+  if (!sessionId) return;
+  await client.query(
+    `
+    update daily_ledger_sessions
+    set reprint_required = true, reprint_reason = $2, updated_at = now()
+    where id = $1::uuid and printed_at is not null and reprint_required = false and deleted_at is null
+    `,
+    [sessionId, reason],
+  );
+}
+
 async function assertUniqueLedgerReceiptNo(
   client: PoolClient,
   companyId: string,
@@ -131,6 +148,7 @@ export type DailyLedgerRow = {
 };
 
 export type DailyLedgerRowWithSession = DailyLedgerRow & {
+  session_id: string;
   branch_id: string;
   ledger_date: string;
   line_label: string;
@@ -140,6 +158,9 @@ export type DailyLedgerRowWithSession = DailyLedgerRow & {
   driver_label: string | null;
   driver_id: string | null;
   vehicle_id: string | null;
+  session_printed_at: string | null;
+  session_reprint_required: boolean | null;
+  session_reprint_reason: string | null;
 };
 
 export interface DailyLedgerRowListFilters {
@@ -279,7 +300,10 @@ export class DailyLedgerRepository {
         s.vehicle_label,
         s.driver_label,
         s.driver_id,
-        s.vehicle_id
+        s.vehicle_id,
+        s.printed_at as session_printed_at,
+        s.reprint_required as session_reprint_required,
+        s.reprint_reason as session_reprint_reason
       from daily_ledger_rows r
       join daily_ledger_sessions s on s.id = r.session_id
       where ${conditions.join(' and ')}
@@ -290,6 +314,88 @@ export class DailyLedgerRepository {
       values,
     );
     return result.rows;
+  }
+
+  /** الجلسات المخصّصة لأسطر معيّنة (تُستخدم لتعليم إعادة الطباعة عند النقل) */
+  async getSessionIdsForRows(companyId: string, rowIds: string[]): Promise<string[]> {
+    if (!rowIds.length) return [];
+    const result = await pool.query<{ session_id: string }>(
+      `
+      select distinct r.session_id
+      from daily_ledger_rows r
+      join daily_ledger_sessions s on s.id = r.session_id
+      where r.id = any($1::uuid[]) and s.company_id = $2::uuid and s.deleted_at is null
+      `,
+      [rowIds, companyId],
+    );
+    return result.rows.map((row) => row.session_id);
+  }
+
+  /** يسجّل حدث طباعة لجلسة ويحدّث حقول الطباعة ويمسح علامة "أعد الطباعة" */
+  async recordSessionPrint(
+    scope: DataScope,
+    input: {
+      sessionId: string;
+      printType?: string;
+      printScope?: string;
+      rowCount?: number;
+      piecesCount?: number;
+      weightKg?: number;
+    },
+  ): Promise<void> {
+    if (!scope.companyId) throw new HttpError(400, 'Company scope is required.');
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      const session = await client.query<{ id: string }>(
+        `select id from daily_ledger_sessions where id = $1::uuid and company_id = $2::uuid and deleted_at is null for update`,
+        [input.sessionId, scope.companyId],
+      );
+      if (!session.rowCount) {
+        await client.query('rollback');
+        return;
+      }
+      await client.query(
+        `
+        update daily_ledger_sessions
+        set
+          printed_at = coalesce(printed_at, now()),
+          last_printed_at = now(),
+          printed_by = coalesce($2::uuid, printed_by),
+          print_count = print_count + 1,
+          reprint_required = false,
+          reprint_reason = null,
+          updated_at = now()
+        where id = $1::uuid
+        `,
+        [input.sessionId, scope.userId ?? null],
+      );
+      await client.query(
+        `
+        insert into daily_ledger_print_events(
+          company_id, session_id, print_type, print_scope,
+          row_count, pieces_count, weight_kg, printed_by
+        )
+        values($1,$2,$3,$4,$5,$6,$7,$8)
+        `,
+        [
+          scope.companyId,
+          input.sessionId,
+          input.printType ?? 'session',
+          input.printScope ?? null,
+          input.rowCount ?? 0,
+          input.piecesCount ?? 0,
+          input.weightKg ?? 0,
+          scope.userId ?? null,
+        ],
+      );
+      await client.query('commit');
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async upsertRow(scope: DataScope, input: DailyLedgerUpsertInput): Promise<DailyLedgerRowWithSession> {
@@ -391,6 +497,7 @@ export class DailyLedgerRepository {
             'تعذر تحديث السطر — ربما تم تحميله على بيان أو لا ينتمي للفرع المحدد.',
           );
         }
+        await markSessionReprintIfPrinted(client, updated.rows[0].session_id, 'تعديل سطر بعد الطباعة');
         await client.query('commit');
         return updated.rows[0];
       }
@@ -518,6 +625,7 @@ export class DailyLedgerRepository {
         ],
       );
 
+      await markSessionReprintIfPrinted(client, sessionId, 'إضافة/تعديل سطر بعد الطباعة');
       await client.query('commit');
       return row.rows[0];
     } catch (error) {

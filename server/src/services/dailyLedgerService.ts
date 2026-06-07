@@ -53,4 +53,18 @@ export class DailyLedgerService {
   deleteRows(scope: DataScope, rowIds: string[], allowedBranchIds: string[]) {
     return this.repo.deleteRows(scope, { rowIds, userId: scope.userId }, allowedBranchIds);
   }
+
+  recordSessionPrint(
+    scope: DataScope,
+    input: {
+      sessionId: string;
+      printType?: string;
+      printScope?: string;
+      rowCount?: number;
+      piecesCount?: number;
+      weightKg?: number;
+    },
+  ) {
+    return this.repo.recordSessionPrint(scope, input);
+  }
 }

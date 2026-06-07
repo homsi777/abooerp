@@ -48,6 +48,7 @@ type LedgerRow = {
   id: number;
   serverRowNo?: number;
   sessionDriverId?: number;
+  sessionId?: string;
   dbId?: string;
   updatedAt?: string;
   postedShipmentId?: string | null;
@@ -115,6 +116,10 @@ type RemoteDailyLedgerRow = {
   driver_label: string | null;
   driver_id?: string | null;
   vehicle_id?: string | null;
+  session_id?: string | null;
+  session_printed_at?: string | null;
+  session_reprint_required?: boolean | null;
+  session_reprint_reason?: string | null;
 };
 
 type SuggestedAgent = { id: number; code: string; name: string; governorate?: string; city?: string; area?: string };
@@ -536,6 +541,25 @@ function buildQuickLedgerPrintHtml(
     tripNo?: string;
   },
 ) {
+  const num = (value: string): number => {
+    const n = Number(String(value).replace(/[^\d.-]/g, ''));
+    return Number.isFinite(n) ? n : 0;
+  };
+  const totals = rows.reduce(
+    (acc, row) => {
+      acc.pieces += num(row.parcelCount);
+      acc.weightKg += num(row.weightKg);
+      acc.collect += num(row.collectAmount);
+      acc.prepaid += num(row.prepaidAmount);
+      acc.hawala += num(row.hawalaAmount);
+      acc.fee += num(row.transferServiceFee);
+      return acc;
+    },
+    { pieces: 0, weightKg: 0, collect: 0, prepaid: 0, hawala: 0, fee: 0 },
+  );
+  const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const tons = (totals.weightKg / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 });
+
   const bodyRows = rows
     .map(
       (row) => `<tr>
@@ -553,6 +577,17 @@ function buildQuickLedgerPrintHtml(
 </tr>`,
     )
     .join('');
+
+  const footRow = `<tr class="totals-row">
+<td colspan="3">الإجمالي — ${rows.length} سطر / ${tons} طن</td>
+<td class="col-count">${fmt(totals.pieces)}</td>
+<td class="col-weight">${fmt(totals.weightKg)}</td>
+<td colspan="2"></td>
+<td class="col-money">${fmt(totals.collect)}</td>
+<td class="col-money">${fmt(totals.prepaid)}</td>
+<td class="col-money">${fmt(totals.hawala)}</td>
+<td class="col-money">${fmt(totals.fee)}</td>
+</tr>`;
 
   return `<!doctype html>
 <html lang="ar" dir="rtl">
@@ -580,6 +615,8 @@ function buildQuickLedgerPrintHtml(
     .col-party { width: 15%; text-align: right; }
     .col-money { width: 6.5%; direction: ltr; font-size: 12px; }
     th.col-money { font-size: 10px; line-height: 1.1; padding: 2px 1px; }
+    tfoot { display: table-footer-group; }
+    tr.totals-row td { background: #dce8e5; font-weight: 800; text-align: center; }
   </style>
 </head>
 <body>
@@ -588,6 +625,8 @@ function buildQuickLedgerPrintHtml(
     <div><strong>السائق:</strong> ${escapePrintHtml(meta.driverName)}</div>
     <div><strong>المركبة:</strong> ${escapePrintHtml(meta.vehicleLabel)}</div>
     <div><strong>عدد الأسطر:</strong> ${rows.length}</div>
+    <div><strong>إجمالي الوزن:</strong> ${fmt(totals.weightKg)} كغ / ${tons} طن</div>
+    <div><strong>عدد الطرود:</strong> ${fmt(totals.pieces)}</div>
     ${meta.lineLabel ? `<div><strong>الخط:</strong> ${escapePrintHtml(meta.lineLabel)}</div>` : ''}
     ${meta.tripNo ? `<div><strong>رقم الرحلة:</strong> ${escapePrintHtml(meta.tripNo)}</div>` : ''}
   </div>
@@ -610,6 +649,9 @@ function buildQuickLedgerPrintHtml(
     <tbody>
       ${bodyRows}
     </tbody>
+    <tfoot>
+      ${footRow}
+    </tfoot>
   </table>
 </body>
 </html>`;
@@ -705,6 +747,11 @@ export default function ShipmentQuickLedger() {
   const [printDateFrom, setPrintDateFrom] = useState(new Date().toISOString().split('T')[0]);
   const [printDateTo, setPrintDateTo] = useState(new Date().toISOString().split('T')[0]);
   const [printLoading, setPrintLoading] = useState(false);
+  const [printScope, setPrintScope] = useState<'driver' | 'date' | 'agent' | 'session'>('driver');
+  const [printDestinationFilter, setPrintDestinationFilter] = useState('');
+  const [reprintRequired, setReprintRequired] = useState(false);
+  const [remoteRowsRaw, setRemoteRowsRaw] = useState<RemoteDailyLedgerRow[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedDeleteRowIds, setSelectedDeleteRowIds] = useState<number[]>([]);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -793,12 +840,16 @@ export default function ShipmentQuickLedger() {
   const visibleRows = useMemo(() => {
     const blankNewEntries = rows.filter((row) => !row.dbId && !row.loadedAt && !isRowStarted(row));
     const trailingBlank = blankNewEntries.length ? blankNewEntries[blankNewEntries.length - 1] : null;
-    const displayable = rows.filter(
+    let displayable = rows.filter(
       (row) => isRowStarted(row) || (trailingBlank != null && row.id === trailingBlank.id),
     );
+    // عند تحديد إرسالية: اعرض أسطرها فقط + أسطر الإدخال الجديدة غير المحفوظة
+    if (activeSessionId) {
+      displayable = displayable.filter((row) => row.sessionId === activeSessionId || !row.dbId);
+    }
     if (!normalizeName(searchQuick)) return displayable;
     return displayable.filter((row) => matchesQuickLedgerSearch(searchQuick, ledgerRowSearchFields(row)));
-  }, [rows, searchQuick]);
+  }, [rows, searchQuick, activeSessionId]);
 
   const deletableVisibleRows = useMemo(
     () => visibleRows.filter(isRowDeletable),
@@ -844,6 +895,99 @@ export default function ShipmentQuickLedger() {
       destinations: [...destinations],
     };
   }, [selectedTransferRows]);
+
+  /** إرساليات/جلسات اليوم — مشتقّة من الأسطر المحمّلة (بدون أثر على البيانات) */
+  const daySessions = useMemo(() => {
+    const groups = new Map<
+      string,
+      {
+        id: string;
+        driverLabel: string;
+        vehicleLabel: string;
+        driverBackendId: string | null;
+        vehicleBackendId: string | null;
+        earliest: string;
+        rowsCount: number;
+        piecesCount: number;
+        weightKg: number;
+        collect: number;
+        prepaid: number;
+        freight: number;
+        reprintRequired: boolean;
+      }
+    >();
+    for (const row of remoteRowsRaw) {
+      const sessionId = row.session_id;
+      if (!sessionId) continue;
+      const existing =
+        groups.get(sessionId) ??
+        {
+          id: sessionId,
+          driverLabel: normalizeName(row.driver_label ?? '') || 'بدون سائق',
+          vehicleLabel: normalizeName(row.vehicle_label ?? '') || '—',
+          driverBackendId: row.driver_id ?? null,
+          vehicleBackendId: row.vehicle_id ?? null,
+          earliest: row.created_at ?? '',
+          rowsCount: 0,
+          piecesCount: 0,
+          weightKg: 0,
+          collect: 0,
+          prepaid: 0,
+          freight: 0,
+          reprintRequired: false,
+        };
+      existing.rowsCount += 1;
+      existing.piecesCount += Number(row.parcel_count) || 0;
+      existing.weightKg += parseWeightKg(row.weight_kg ?? '') ?? 0;
+      const c = parseUsd(String(row.collect_amount_usd ?? '')) + parseUsd(String(row.fees_amount_usd ?? ''));
+      const p = parseUsd(String(row.prepaid_amount_usd ?? ''));
+      existing.collect += c;
+      existing.prepaid += p;
+      existing.freight += p > 0 ? p : 0;
+      if (row.session_reprint_required === true) existing.reprintRequired = true;
+      if (row.created_at && (!existing.earliest || row.created_at < existing.earliest)) {
+        existing.earliest = row.created_at;
+      }
+      groups.set(sessionId, existing);
+    }
+    return [...groups.values()]
+      .sort((a, b) => {
+        const cmp = String(a.earliest).localeCompare(String(b.earliest));
+        if (cmp !== 0) return cmp;
+        return a.id.localeCompare(b.id);
+      })
+      .map((session, index) => ({ ...session, displayNo: index + 1 }));
+  }, [remoteRowsRaw]);
+
+  const dayTotals = useMemo(
+    () =>
+      daySessions.reduce(
+        (acc, session) => {
+          acc.sessionsCount += 1;
+          acc.rowsCount += session.rowsCount;
+          acc.piecesCount += session.piecesCount;
+          acc.weightKg += session.weightKg;
+          acc.collect += session.collect;
+          acc.prepaid += session.prepaid;
+          acc.freight += session.freight;
+          return acc;
+        },
+        { sessionsCount: 0, rowsCount: 0, piecesCount: 0, weightKg: 0, collect: 0, prepaid: 0, freight: 0 },
+      ),
+    [daySessions],
+  );
+
+  const activeSession = useMemo(
+    () => (activeSessionId ? daySessions.find((s) => s.id === activeSessionId) ?? null : null),
+    [daySessions, activeSessionId],
+  );
+
+  // إن اختفت الجلسة النشطة (تغيّر التاريخ مثلاً) أعِد للعرض الكامل
+  useEffect(() => {
+    if (activeSessionId && !daySessions.some((s) => s.id === activeSessionId)) {
+      setActiveSessionId(null);
+    }
+  }, [daySessions, activeSessionId]);
 
   useEffect(() => {
     setFailedSaveRows(loadFailedSaveRows(trip.date, trip.line));
@@ -972,13 +1116,17 @@ export default function ShipmentQuickLedger() {
     if (!user) return false;
     if (user.userType === 'admin' || user.role === 'admin') return true;
     if (['general_manager', 'branch_manager'].includes(user.role)) return true;
-    return hasPermission('shipments.ledger.past_dates');
+    return hasPermission('shipments.ledger.past_dates') || hasPermission('daily_ledger.backdate.create');
   }, [user, hasPermission]);
+
+  /** يعمل المستخدم على تاريخ سابق — تنبيه أن الإدخال تصحيح ويستلزم إعادة الطباعة */
+  const isBackdateMode = useMemo(() => Boolean(trip.date && trip.date < todayIso), [trip.date, todayIso]);
 
   const mapRemoteRowToLocal = (remote: RemoteDailyLedgerRow, displayId: number): LedgerRow => ({
     id: displayId,
     serverRowNo: remote.row_no,
     sessionDriverId: remote.driver_id ? syntheticEntityId(remote.driver_id) : undefined,
+    sessionId: remote.session_id ?? undefined,
     dbId: remote.id,
     updatedAt: remote.updated_at,
     postedShipmentId: remote.posted_shipment_id,
@@ -1090,7 +1238,10 @@ export default function ShipmentQuickLedger() {
       }
 
       if (generation !== loadGenerationRef.current) return;
-      setRows(buildDisplayRowsFromRemote([...byId.values()]));
+      const remoteValues = [...byId.values()];
+      setReprintRequired(remoteValues.some((row) => row.session_reprint_required === true));
+      setRemoteRowsRaw(remoteValues);
+      setRows(buildDisplayRowsFromRemote(remoteValues));
     } catch (error) {
       if (generation === loadGenerationRef.current) {
         showToast(error instanceof Error ? error.message : 'تعذر تحديث دفتر الشحن اليومي من الشبكة', 'error');
@@ -1849,12 +2000,13 @@ export default function ShipmentQuickLedger() {
     navigate('/shipments');
   };
 
-  const openPrintDialog = () => {
+  const openPrintDialog = (scope?: 'driver' | 'date' | 'agent' | 'session') => {
     setDeleteMode(false);
     setSelectedDeleteRowIds([]);
     setPrintDriverId(trip.driverId || 0);
     setPrintDateFrom(trip.date);
     setPrintDateTo(trip.date);
+    if (scope) setPrintScope(scope);
     setPrintDialogOpen(true);
   };
 
@@ -1862,6 +2014,27 @@ export default function ShipmentQuickLedger() {
     setDeleteMode(false);
     setSelectedDeleteRowIds([]);
     setDeleteConfirmOpen(false);
+  };
+
+  const selectSession = async (sessionId: string | null) => {
+    if (sessionId === activeSessionId) return;
+    // الحفظ التلقائي يضمن عدم فقدان التعديلات قبل تبديل الإرسالية
+    await flushPendingRowSaves();
+    setActiveSessionId(sessionId);
+    if (sessionId) {
+      const session = daySessions.find((s) => s.id === sessionId);
+      if (session) {
+        const driverSynthetic = session.driverBackendId ? syntheticEntityId(session.driverBackendId) : 0;
+        const vehicleSynthetic = session.vehicleBackendId ? syntheticEntityId(session.vehicleBackendId) : 0;
+        setTrip((prev) => ({
+          ...prev,
+          driverId: driverSynthetic || prev.driverId,
+          driver: session.driverLabel,
+          vehicleId: vehicleSynthetic || prev.vehicleId,
+          vehicle: session.vehicleLabel !== '—' ? session.vehicleLabel : prev.vehicle,
+        }));
+      }
+    }
   };
 
   const enterTransferMode = () => {
@@ -1959,6 +2132,7 @@ export default function ShipmentQuickLedger() {
         movedRowsCount: number;
         targetSessionId: string;
       }>('/daily-ledger/transfer/confirm', {
+
         rowIds: dbIds,
         target: {
           ledgerDate: transferDate,
@@ -1968,7 +2142,10 @@ export default function ShipmentQuickLedger() {
         },
         reason: transferReason.trim(),
       });
-      showToast(`تم نقل الإرسالية بنجاح — ${result.movedRowsCount} سطر (${result.transferNo})`, 'success');
+      showToast(
+        `تم نقل الإرسالية بنجاح — ${result.movedRowsCount} سطر (${result.transferNo}). يرجى إعادة طباعة الإرساليات المتأثرة.`,
+        'success',
+      );
       exitTransferMode();
       // الانتقال إلى الإرسالية الجديدة: نفس التاريخ/الخط مع السائق الجديد
       const targetDriver = drivers.find((d) => d.id === transferDriverId);
@@ -1979,6 +2156,8 @@ export default function ShipmentQuickLedger() {
         driver: targetDriver?.name ?? prev.driver,
         vehicleId: transferVehicleId || prev.vehicleId,
       }));
+      // فتح الإرسالية الهدف تلقائياً بعد النقل (المصدر يبقى متاحاً كصندوق آخر)
+      setActiveSessionId(result.targetSessionId ?? null);
       await loadRemoteRows();
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'تعذر نقل الإرسالية', 'error');
@@ -2073,6 +2252,7 @@ export default function ShipmentQuickLedger() {
     rows: RemoteDailyLedgerRow[];
     activeSearch: string;
     selectedDriver: Driver | undefined;
+    scope: 'driver' | 'date' | 'agent' | 'session';
   } | null> => {
     const branchId = activeBranchIdRef.current;
     if (!branchId) {
@@ -2087,17 +2267,32 @@ export default function ShipmentQuickLedger() {
       showToast('تاريخ البداية يجب أن يكون قبل تاريخ النهاية', 'error');
       return null;
     }
-    if (!printDriverId) {
-      showToast('يرجى اختيار السائق قبل الطباعة', 'error');
+
+    let driverBackendId: string | undefined;
+    let selectedDriver: Driver | undefined;
+    if (printScope === 'driver') {
+      if (!printDriverId) {
+        showToast('يرجى اختيار السائق قبل الطباعة', 'error');
+        return null;
+      }
+      driverBackendId = getBackendIdFromSynthetic(printDriverId) ?? undefined;
+      if (!driverBackendId) {
+        showToast('تعذر تحديد السائق', 'error');
+        return null;
+      }
+      selectedDriver = drivers.find((d) => d.id === printDriverId);
+    }
+
+    const destinationFilter = normalizeName(printDestinationFilter).toLowerCase();
+    if (printScope === 'agent' && !destinationFilter) {
+      showToast('يرجى إدخال الجهة/الوكيل للطباعة بالوكيل', 'error');
       return null;
     }
 
-    const driverBackendId = getBackendIdFromSynthetic(printDriverId);
-    if (!driverBackendId) {
-      showToast('تعذر تحديد السائق', 'error');
+    if (printScope === 'session' && !activeSessionId) {
+      showToast('لا توجد إرسالية محددة للطباعة', 'error');
       return null;
     }
-    const selectedDriver = drivers.find((d) => d.id === printDriverId);
 
     const params = new URLSearchParams();
     params.set('branchId', branchId);
@@ -2107,33 +2302,60 @@ export default function ShipmentQuickLedger() {
     const data = await fetchAllDailyLedgerRows(params);
     const activeSearch = searchQuick.trim();
     const rows = sortRemoteLedgerRows(
-      data.filter(
-        (row) =>
-          remoteRowMatchesDriver(row, {
-            driverBackendId,
-            driverName: selectedDriver?.name,
-          }) && matchesQuickLedgerSearch(activeSearch, remoteRowSearchFields(row)),
-      ),
+      data.filter((row) => {
+        // فلترة البحث السريع تُطبّق في كل النطاقات
+        if (!matchesQuickLedgerSearch(activeSearch, remoteRowSearchFields(row))) return false;
+        // النطاق "باليوم" لا يُفلتر بالسائق — يشمل كل السائقين/الجلسات (لا تُفقد أسطر عند تغيير السائق)
+        if (printScope === 'driver') {
+          return remoteRowMatchesDriver(row, { driverBackendId, driverName: selectedDriver?.name });
+        }
+        if (printScope === 'agent') {
+          const dest = normalizeName(row.destination ?? '').toLowerCase();
+          return dest.includes(destinationFilter);
+        }
+        if (printScope === 'session') {
+          return row.session_id === activeSessionId;
+        }
+        return true; // date scope: كل الأسطر
+      }),
     );
 
     if (!rows.length) {
-      showToast(
-        activeSearch
-          ? `لا توجد أسطر للسائق تطابق البحث «${activeSearch}»`
-          : 'لا توجد أسطر لهذا السائق في الفترة المحددة',
-        'info',
-      );
+      showToast('لا توجد أسطر مطابقة لمعايير الطباعة', 'info');
       return null;
     }
 
-    showToast(
-      activeSearch
-        ? `تم جلب ${rows.length} سطر (بحث: ${activeSearch})`
-        : `تم جلب ${rows.length} سطر للطباعة`,
-      'info',
-    );
+    showToast(`تم جلب ${rows.length} سطر للطباعة`, 'info');
 
-    return { rows, activeSearch, selectedDriver };
+    return { rows, activeSearch, selectedDriver, scope: printScope };
+  };
+
+  /** تسجيل حدث الطباعة للجلسات المطبوعة لمسح علامة "أعد الطباعة" وتتبّع الطباعة */
+  const recordPrintForRows = async (
+    printedRows: RemoteDailyLedgerRow[],
+    printScopeLabel: string,
+  ) => {
+    const bySession = new Map<string, { rowCount: number; piecesCount: number; weightKg: number }>();
+    for (const row of printedRows) {
+      const sessionId = row.session_id;
+      if (!sessionId) continue;
+      const agg = bySession.get(sessionId) ?? { rowCount: 0, piecesCount: 0, weightKg: 0 };
+      agg.rowCount += 1;
+      agg.piecesCount += Number(row.parcel_count) || 0;
+      agg.weightKg += parseWeightKg(row.weight_kg ?? '') ?? 0;
+      bySession.set(sessionId, agg);
+    }
+    if (!bySession.size) return;
+    const sessions = [...bySession.entries()].map(([sessionId, agg]) => ({ sessionId, ...agg }));
+    try {
+      await httpClient.post('/daily-ledger/print/record', {
+        sessions,
+        printType: 'session',
+        printScope: printScopeLabel,
+      });
+    } catch {
+      /* تسجيل الطباعة اختياري — لا نُفشل الطباعة بسببه */
+    }
   };
 
   const dispatchHtmlPrint = async (html: string, documentType: string) => {
@@ -2173,29 +2395,41 @@ export default function ShipmentQuickLedger() {
       const prepared = await prepareDriverPrintRows();
       if (!prepared) return;
 
-      const { rows, activeSearch, selectedDriver } = prepared;
+      const { rows, activeSearch, selectedDriver, scope } = prepared;
       const currentTrip = tripRef.current;
       const linkedVehicle = vehicles.find((v) => v.driverId === printDriverId);
-      const vehicleLabel = linkedVehicle
-        ? `${linkedVehicle.plateNumber}${linkedVehicle.model ? ` — ${linkedVehicle.model}` : ''}`
-        : currentTrip.vehicle || '—';
+      const vehicleLabel =
+        scope === 'driver'
+          ? linkedVehicle
+            ? `${linkedVehicle.plateNumber}${linkedVehicle.model ? ` — ${linkedVehicle.model}` : ''}`
+            : currentTrip.vehicle || '—'
+          : scope === 'session'
+            ? activeSession?.vehicleLabel ?? 'كل المركبات'
+            : 'كل المركبات';
       const dateLabel =
         printDateFrom === printDateTo ? printDateFrom : `${printDateFrom} → ${printDateTo}`;
+      const scopeName =
+        scope === 'driver'
+          ? selectedDriver?.name ?? ''
+          : scope === 'agent'
+            ? `وكيل/جهة: ${printDestinationFilter}`
+            : scope === 'session'
+              ? `الإرسالية #${activeSession?.displayNo ?? ''} — ${activeSession?.driverLabel ?? ''}`
+              : 'كل السائقين (اليوم)';
 
       const html = buildQuickLedgerPrintHtml(
         rows.map(remoteRowToPrint),
         {
-          title: activeSearch
-            ? `دفتر الشحن — ${selectedDriver?.name ?? ''} — ${activeSearch}`
-            : `دفتر الشحن — ${selectedDriver?.name ?? ''}`,
+          title: activeSearch ? `دفتر الشحن — ${scopeName} — ${activeSearch}` : `دفتر الشحن — ${scopeName}`,
           dateLabel,
-          driverName: selectedDriver?.name ?? '—',
+          driverName: scope === 'driver' ? selectedDriver?.name ?? '—' : scopeName,
           vehicleLabel,
         },
       );
 
       setPrintDialogOpen(false);
       await dispatchHtmlPrint(html, 'quick_ledger');
+      await recordPrintForRows(rows, `shipments_${scope}`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'تعذر تنفيذ طباعة الشحنات', 'error');
     } finally {
@@ -2209,10 +2443,16 @@ export default function ShipmentQuickLedger() {
       const prepared = await prepareDriverPrintRows();
       if (!prepared) return;
 
-      const { rows, activeSearch, selectedDriver } = prepared;
-      const title = activeSearch
-        ? `إيصالات — ${selectedDriver?.name ?? ''} — ${activeSearch}`
-        : `إيصالات — ${selectedDriver?.name ?? ''}`;
+      const { rows, activeSearch, selectedDriver, scope } = prepared;
+      const scopeName =
+        scope === 'driver'
+          ? selectedDriver?.name ?? ''
+          : scope === 'agent'
+            ? `وكيل/جهة: ${printDestinationFilter}`
+            : scope === 'session'
+              ? `الإرسالية #${activeSession?.displayNo ?? ''} — ${activeSession?.driverLabel ?? ''}`
+              : 'كل السائقين (اليوم)';
+      const title = activeSearch ? `إيصالات — ${scopeName} — ${activeSearch}` : `إيصالات — ${scopeName}`;
 
       const html = buildMahmoudPreprintedReceiptHtml(rows.map(mapRemoteLedgerRowToMahmoudReceipt), {
         title,
@@ -2221,6 +2461,7 @@ export default function ShipmentQuickLedger() {
 
       setPrintDialogOpen(false);
       await dispatchHtmlPrint(html, 'mahmoud_receipt');
+      await recordPrintForRows(rows, `receipts_${scope}`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'تعذر تنفيذ طباعة الإيصالات', 'error');
     } finally {
@@ -2887,6 +3128,79 @@ export default function ShipmentQuickLedger() {
         )}
       </section>
 
+      <section className="quick-ledger-sessions" dir="rtl">
+        <div className="quick-ledger-sessions-tabs">
+          <span className="quick-ledger-sessions-label">إرساليات اليوم:</span>
+          {remoteLoading ? (
+            <span className="quick-ledger-sessions-hint">جاري تحميل إرساليات اليوم...</span>
+          ) : daySessions.length === 0 ? (
+            <span className="quick-ledger-sessions-hint">لا توجد إرساليات لهذا التاريخ</span>
+          ) : (
+            <>
+              <button
+                type="button"
+                className={`quick-ledger-session-box${activeSessionId === null ? ' is-active' : ''}`}
+                onClick={() => void selectSession(null)}
+                title="عرض كل إرساليات التاريخ"
+              >
+                الكل
+              </button>
+              {daySessions.map((session) => (
+                <button
+                  key={session.id}
+                  type="button"
+                  className={`quick-ledger-session-box${activeSessionId === session.id ? ' is-active' : ''}${session.reprintRequired ? ' needs-reprint' : ''}`}
+                  onClick={() => void selectSession(session.id)}
+                  title={`${session.driverLabel} — ${session.vehicleLabel} — ${session.rowsCount} سطر — ${formatWeightKgTons(session.weightKg)}${session.reprintRequired ? ' — تحتاج إعادة طباعة' : ''}`}
+                >
+                  {session.displayNo}
+                  {session.reprintRequired ? ' ⚠' : ''}
+                </button>
+              ))}
+            </>
+          )}
+          {daySessions.length > 0 && (
+            <span className="quick-ledger-sessions-day-total">
+              إجمالي اليوم: {dayTotals.sessionsCount} إرسالية / {dayTotals.rowsCount} سطر / {formatWeightKgTons(dayTotals.weightKg)}
+            </span>
+          )}
+        </div>
+        {activeSession && (
+          <div className="quick-ledger-session-summary">
+            <span>الإرسالية الحالية: <strong>#{activeSession.displayNo}</strong></span>
+            <span>السائق: <strong>{activeSession.driverLabel}</strong></span>
+            <span>المركبة: <strong>{activeSession.vehicleLabel}</strong></span>
+            <span>الأسطر: <strong>{activeSession.rowsCount}</strong></span>
+            <span>الطرود: <strong>{activeSession.piecesCount}</strong></span>
+            <span>الوزن: <strong>{formatWeightKgTons(activeSession.weightKg)}</strong></span>
+            <span>التحصيل: <strong>{activeSession.collect.toLocaleString()}</strong></span>
+            <span>المدفوع مسبقاً: <strong>{activeSession.prepaid.toLocaleString()}</strong></span>
+            <span>أجرة الشحن: <strong>{activeSession.freight.toLocaleString()}</strong></span>
+            <button
+              type="button"
+              className="quick-ledger-session-print-btn"
+              onClick={() => openPrintDialog('session')}
+              title="طباعة الإرسالية الحالية فقط"
+            >
+              <Printer size={14} /> طباعة الإرسالية الحالية
+            </button>
+          </div>
+        )}
+      </section>
+
+      {isBackdateMode && (
+        <div className="quick-ledger-backdate-banner" dir="rtl" role="alert">
+          تنبيه: أنت تعمل على تاريخ سابق ({trip.date}). سيُسجَّل هذا الإدخال كتصحيح على تاريخ سابق،
+          ويُمنع تكرار رقم الإيصال، وتُعلَّم الإرسالية القديمة بإعادة الطباعة عند التعديل.
+        </div>
+      )}
+
+      {reprintRequired && (
+        <div className="quick-ledger-reprint-banner" dir="rtl" role="alert">
+          تم تعديل الإرسالية بعد الطباعة، يرجى إعادة الطباعة.
+        </div>
+      )}
+
       {transferMode && (
         <section className="quick-ledger-transfer-bar" dir="rtl">
           <div className="quick-ledger-transfer-bar-totals">
@@ -3206,32 +3520,58 @@ export default function ShipmentQuickLedger() {
           <div className="quick-ledger-confirm-panel">
             <h3>طباعة</h3>
             <p>
-              اختر نوع الطباعة ثم حدّد السائق والفترة.
+              اختر نطاق الطباعة (بالسائق / باليوم كامل / بالوكيل) ثم الفترة.
               {searchQuick.trim() ? (
                 <>
                   {' '}
-                  البحث النشط: <strong>{searchQuick.trim()}</strong> — تُطبع الأسطر المطابقة فقط (مثل الجهة الرقة).
+                  البحث النشط: <strong>{searchQuick.trim()}</strong> — يُطبَّق على كل النطاقات.
                 </>
               ) : (
-                ' كل أسطر السائق في الفترة.'
+                ' طباعة باليوم تشمل كل السائقين دون فقدان أسطر.'
               )}
             </p>
             <div className="quick-ledger-print-form space-y-3 mb-3">
               <label className="form-group block">
-                <span className="form-label">السائق *</span>
+                <span className="form-label">نطاق الطباعة</span>
                 <select
                   className="form-select w-full"
-                  value={printDriverId || ''}
-                  onChange={(e) => setPrintDriverId(Number(e.target.value))}
+                  value={printScope}
+                  onChange={(e) => setPrintScope(e.target.value as 'driver' | 'date' | 'agent' | 'session')}
                 >
-                  <option value="">— اختر السائق —</option>
-                  {drivers.map((driver) => (
-                    <option key={driver.id} value={driver.id}>
-                      {driver.code ? `${driver.code} — ` : ''}{driver.name}
-                    </option>
-                  ))}
+                  <option value="driver">بالسائق / الإرسالية</option>
+                  <option value="date">باليوم كامل (كل السائقين)</option>
+                  <option value="agent">بالوكيل / الجهة</option>
+                  {activeSessionId && <option value="session">الإرسالية الحالية فقط</option>}
                 </select>
               </label>
+              {printScope === 'driver' && (
+                <label className="form-group block">
+                  <span className="form-label">السائق *</span>
+                  <select
+                    className="form-select w-full"
+                    value={printDriverId || ''}
+                    onChange={(e) => setPrintDriverId(Number(e.target.value))}
+                  >
+                    <option value="">— اختر السائق —</option>
+                    {drivers.map((driver) => (
+                      <option key={driver.id} value={driver.id}>
+                        {driver.code ? `${driver.code} — ` : ''}{driver.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {printScope === 'agent' && (
+                <label className="form-group block">
+                  <span className="form-label">الجهة / الوكيل *</span>
+                  <input
+                    className="form-input w-full"
+                    value={printDestinationFilter}
+                    placeholder="مثال: الرقة"
+                    onChange={(e) => setPrintDestinationFilter(e.target.value)}
+                  />
+                </label>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 <label className="form-group block">
                   <span className="form-label">من تاريخ</span>

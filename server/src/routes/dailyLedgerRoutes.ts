@@ -21,7 +21,10 @@ function assertLedgerDateAllowed(
   const today = todayIsoDate();
   const isAdmin = roleCode === 'admin' || userType === 'admin';
   const isManager = isAdmin || roleCode === 'general_manager' || roleCode === 'branch_manager';
-  const canUsePastDates = isManager || permissions.includes('shipments.ledger.past_dates');
+  const canUsePastDates =
+    isManager ||
+    permissions.includes('shipments.ledger.past_dates') ||
+    permissions.includes('daily_ledger.backdate.create');
   if (ledgerDate > today) {
     throw new Error('لا يمكن إدخال بيانات بتاريخ مستقبلي.');
   }
@@ -365,6 +368,48 @@ export function createDailyLedgerRouter(
         res.status(status).json({
           success: false,
           error: error instanceof Error ? error.message : 'تعذر نقل الإرسالية.',
+        });
+      }
+    },
+  );
+
+  router.post(
+    '/print/record',
+    requirePermissions(['shipments.read']),
+    async (req, res) => {
+      const scope = parseDataScope(req);
+      const bodySchema = z.object({
+        sessions: z
+          .array(
+            z.object({
+              sessionId: uuid,
+              rowCount: z.number().int().min(0).optional(),
+              piecesCount: z.number().int().min(0).optional(),
+              weightKg: z.number().min(0).optional(),
+            }),
+          )
+          .min(1),
+        printType: z.string().optional(),
+        printScope: z.string().optional(),
+      });
+      const input = bodySchema.parse(req.body);
+      try {
+        for (const session of input.sessions) {
+          await service.recordSessionPrint(scope, {
+            sessionId: session.sessionId,
+            printType: input.printType,
+            printScope: input.printScope,
+            rowCount: session.rowCount,
+            piecesCount: session.piecesCount,
+            weightKg: session.weightKg,
+          });
+        }
+        res.json({ success: true, data: { recorded: input.sessions.length } });
+      } catch (error) {
+        const status = (error as { status?: number }).status ?? 500;
+        res.status(status).json({
+          success: false,
+          error: error instanceof Error ? error.message : 'تعذر تسجيل حدث الطباعة.',
         });
       }
     },

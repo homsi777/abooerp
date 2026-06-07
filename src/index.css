@@ -1298,6 +1298,132 @@ body {
   background: #f8fafc;
 }
 
+.quick-ledger-backdate-banner {
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  color: #1e40af;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 8px 0;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.quick-ledger-reprint-banner {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 8px 0;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.quick-ledger-sessions {
+  margin: 8px 0;
+}
+
+.quick-ledger-sessions-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.quick-ledger-sessions-label {
+  font-weight: 700;
+  font-size: 13px;
+  color: #1f2937;
+}
+
+.quick-ledger-sessions-hint {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.quick-ledger-sessions-day-total {
+  margin-inline-start: auto;
+  font-size: 12px;
+  color: #475569;
+  font-weight: 600;
+}
+
+.quick-ledger-session-box {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.quick-ledger-session-box:hover {
+  border-color: #94a3b8;
+  background: #eef2f7;
+}
+
+.quick-ledger-session-box.is-active {
+  background: #0b4f8a;
+  border-color: #0b4f8a;
+  color: #fff;
+}
+
+.quick-ledger-session-box.needs-reprint {
+  border-color: #f59e0b;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.quick-ledger-session-box.needs-reprint.is-active {
+  background: #d97706;
+  border-color: #d97706;
+  color: #fff;
+}
+
+.quick-ledger-session-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #334155;
+}
+
+.quick-ledger-session-summary strong {
+  color: #0b4f8a;
+}
+
+.quick-ledger-session-print-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-inline-start: auto;
+  padding: 6px 12px;
+  border: 1px solid #0b4f8a;
+  background: #fff;
+  color: #0b4f8a;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.quick-ledger-session-print-btn:hover {
+  background: #0b4f8a;
+  color: #fff;
+}
+
 .quick-ledger-transfer-bar {
   background: #eef6ff;
   border: 1px solid #bcd6f5;

@@ -493,6 +493,21 @@ export class DailyLedgerTransferService {
         );
       }
 
+      // تعليم "أعد الطباعة" للجلسات المتأثرة التي سبق طباعتها (المصدر + الهدف)
+      const affectedSessionIds = [...new Set([...sourceSessionIds, targetSessionId])];
+      await client.query(
+        `
+        update daily_ledger_sessions
+        set reprint_required = true,
+            reprint_reason = $2,
+            updated_at = now()
+        where id = any($1::uuid[])
+          and printed_at is not null
+          and deleted_at is null
+        `,
+        [affectedSessionIds, `تم نقل أسطر بعد الطباعة (${transferNo})`],
+      );
+
       const targetSummary = await this.sessionSummary(client, targetSessionId);
       const sourceSummaries: Array<{ sessionId: string; summary: TransferSummary }> = [];
       for (const sessionId of sourceSessionIds) {
