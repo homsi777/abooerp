@@ -201,9 +201,14 @@ const roleTemplates: PermissionTemplate[] = [
     name: 'المحاسب',
     roleCode: 'accountant',
     userType: 'accountant',
-    description: 'المالية والسندات وكشف الحساب والدائن والمدين مع عرض الشحنات كمرجع.',
-    modules: ['المالية', 'السندات', 'الصناديق', 'الدائن والمدين', 'كشف الحساب', 'التقارير المالية'],
-    permissionCodes: ['finance.read','finance.write','finance.view','finance.vouchers.read','finance.vouchers.write','finance.vouchers.manage','finance.debit_credit.view','finance.account_statement.view','finance.cashbox.read','finance.cashbox.write','reports.view','shipments.read','shipments.view'],
+    description: 'المالية والسندات وكشف الحساب والدائن والمدين مع إدارة العملاء الحسابيين.',
+    modules: ['المالية', 'السندات', 'الصناديق', 'الدائن والمدين', 'كشف الحساب', 'التقارير المالية', 'العملاء'],
+    permissionCodes: [
+      'finance.read','finance.write','finance.view','finance.vouchers.read','finance.vouchers.write','finance.vouchers.manage',
+      'finance.debit_credit.view','finance.account_statement.view','finance.cashbox.read','finance.cashbox.write',
+      'reports.view','shipments.read','shipments.view',
+      'customers.view','customers.manage','customers.account.view','customers.account.manage',
+    ],
   },
   {
     code: 'viewer',
@@ -254,6 +259,7 @@ function categoryForPermission(code: string) {
   if (code.startsWith('branches') || code.includes('settings.branches')) return 'الفروع';
   if (code.includes('debit_credit')) return 'الدائن والمدين';
   if (code.includes('account_statement')) return 'كشف الحساب';
+  if (code.startsWith('customers')) return 'العملاء';
   if (code.startsWith('finance')) return 'المالية';
   if (code.startsWith('reports')) return 'التقارير';
   if (code.startsWith('settings')) return 'الإعدادات';

@@ -1,6 +1,61 @@
+import type { PoolClient } from 'pg';
 import { pool } from '../db/pool.js';
 import { HttpError } from '../utils/errors.js';
 import type { DataScope } from '../utils/scope.js';
+
+function normalizeLedgerReceiptNo(value: string | null | undefined): string {
+  return String(value ?? '').trim().replace(/\s+/g, ' ');
+}
+
+async function assertUniqueLedgerReceiptNo(
+  client: PoolClient,
+  companyId: string,
+  receiptNo: string | null | undefined,
+  excludeRowId?: string | null,
+): Promise<void> {
+  const normalized = normalizeLedgerReceiptNo(receiptNo);
+  if (!normalized) return;
+
+  const ledgerDup = await client.query<{ row_no: number }>(
+    `
+    select r.row_no
+    from daily_ledger_rows r
+    join daily_ledger_sessions s on s.id = r.session_id
+    where s.company_id = $1::uuid
+      and s.deleted_at is null
+      and r.deleted_at is null
+      and lower(trim(r.receipt_no)) = lower($2)
+      and ($3::uuid is null or r.id <> $3::uuid)
+    limit 1
+    `,
+    [companyId, normalized, excludeRowId ?? null],
+  );
+  if (ledgerDup.rows.length) {
+    throw new HttpError(409, `رقم الإيصال مكرر: ${normalized}`);
+  }
+
+  const shipmentDup = await client.query<{ shipment_no: string }>(
+    `
+    select shipment_no
+    from shipments
+    where company_id = $1::uuid
+      and deleted_at is null
+      and lower(trim(shipment_no)) = lower($2)
+      and not exists (
+        select 1
+        from daily_ledger_rows r
+        where r.id = $3::uuid
+          and r.posted_shipment_id = shipments.id
+          and r.deleted_at is null
+      )
+    limit 1
+    `,
+    [companyId, normalized, excludeRowId ?? null],
+  );
+  if (shipmentDup.rows.length) {
+    throw new HttpError(409, `رقم الإيصال مكرر: ${normalized}`);
+  }
+}
 
 export type DailyLedgerSession = {
   id: string;
@@ -218,6 +273,8 @@ export class DailyLedgerRepository {
     const client = await pool.connect();
     try {
       await client.query('begin');
+
+      await assertUniqueLedgerReceiptNo(client, scope.companyId, input.receiptNo, input.rowId ?? null);
 
       if (input.rowId) {
         const updated = await client.query<DailyLedgerRowWithSession>(

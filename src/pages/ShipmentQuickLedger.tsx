@@ -51,6 +51,7 @@ type LedgerRow = {
 const LEDGER_FETCH_CHUNK_SIZE = 500;
 const LEDGER_ENTRY_SLOTS = 1;
 const LEDGER_ROWS_ADD_INCREMENT = 1;
+const ROW_SAVE_DEBOUNCE_MS = 280;
 
 function sortRemoteLedgerRows(data: RemoteDailyLedgerRow[]) {
   return [...data].sort((a, b) => {
@@ -142,6 +143,16 @@ function shipmentAmountsFromLedgerRow(row: LedgerRow) {
 
 function normalizeName(value: string) {
   return value.trim().replace(/\s+/g, ' ');
+}
+
+function normalizeReceiptNo(value: string) {
+  return normalizeName(value).toLowerCase();
+}
+
+function findLocalDuplicateReceipt(rows: LedgerRow[], receiptNo: string, excludeRowId: number) {
+  const key = normalizeReceiptNo(receiptNo);
+  if (!key) return undefined;
+  return rows.find((row) => row.id !== excludeRowId && normalizeReceiptNo(row.receiptNo) === key);
 }
 
 function isRowStarted(row: LedgerRow) {
@@ -610,6 +621,7 @@ export default function ShipmentQuickLedger() {
   const [remoteSyncedCount, setRemoteSyncedCount] = useState(0);
   const loadGenerationRef = useRef(0);
   const saveTimersRef = useRef<Record<number, number>>({});
+  const saveInFlightRef = useRef<Record<number, Promise<void>>>({});
   const saveRowToServerRef = useRef<(displayRowId: number) => Promise<void>>(async () => {});
   const [branchSearch, setBranchSearch] = useState('');
   const [trip, setTrip] = useState({
@@ -665,6 +677,22 @@ export default function ShipmentQuickLedger() {
     () => visibleRows.filter(isRowDeletable),
     [visibleRows],
   );
+
+  const duplicateReceiptRowIds = useMemo(() => {
+    const byKey = new Map<string, number[]>();
+    for (const row of rows) {
+      const key = normalizeReceiptNo(row.receiptNo);
+      if (!key) continue;
+      const list = byKey.get(key) ?? [];
+      list.push(row.id);
+      byKey.set(key, list);
+    }
+    const dupIds = new Set<number>();
+    for (const ids of byKey.values()) {
+      if (ids.length > 1) ids.forEach((id) => dupIds.add(id));
+    }
+    return dupIds;
+  }, [rows]);
 
   const stats = useMemo(() => {
     const meaningful = rows.filter(isRowStarted);
@@ -855,11 +883,13 @@ export default function ShipmentQuickLedger() {
           }
         }
         setRemoteSyncedCount(byId.size);
-        setRows(buildDisplayRowsFromRemote([...byId.values()]));
 
         if (batch.length < LEDGER_FETCH_CHUNK_SIZE) break;
         offset += LEDGER_FETCH_CHUNK_SIZE;
       }
+
+      if (generation !== loadGenerationRef.current) return;
+      setRows(buildDisplayRowsFromRemote([...byId.values()]));
     } catch (error) {
       if (generation === loadGenerationRef.current) {
         showToast(error instanceof Error ? error.message : 'تعذر تحديث دفتر الشحن اليومي من الشبكة', 'error');
@@ -989,14 +1019,25 @@ export default function ShipmentQuickLedger() {
     if (found) setBranchSearch(found.name);
   }, [activeBranchId, branches]);
 
-  const updateRow = (id: number, field: keyof LedgerRow, value: string) => {
-    setRows((prev) =>
-      appendTrailingEntrySlot(
-        prev.map((row) => {
+  const updateRow = (id: number, field: keyof LedgerRow, value: string, skipTariff = false) => {
+    if (field === 'receiptNo') {
+      const normalized = normalizeName(value);
+      if (normalized) {
+        const dup = findLocalDuplicateReceipt(rowsRef.current, normalized, id);
+        if (dup) {
+          showToast(`رقم الإيصال «${normalized}» مستخدم في سطر آخر`, 'error');
+          return;
+        }
+      }
+    }
+
+    setRows((prev) => {
+      const before = prev.find((row) => row.id === id);
+      const mapped = prev.map((row) => {
         if (row.id !== id) return row;
         if (field === 'parcelType') {
           const next = { ...row, parcelType: value, collectManual: false };
-          return mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
+          return skipTariff ? next : mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
         }
         if (field === 'collectAmount') {
           return { ...row, collectAmount: value, collectManual: value.trim() !== '' };
@@ -1008,20 +1049,109 @@ export default function ShipmentQuickLedger() {
             next = { ...next, collectAmount: '', collectManual: true };
           } else {
             next = { ...next, collectManual: false };
-            next = mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
+            next = skipTariff ? next : mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
           }
           return next;
         }
         let next: LedgerRow = { ...row, [field]: value };
-        if (field === 'origin' || field === 'destination' || field === 'weightKg') {
+        if (!skipTariff && (field === 'origin' || field === 'destination' || field === 'weightKg')) {
           next = { ...next, collectManual: false };
           next = mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
         }
         return next;
-      }),
-      ),
-    );
+      });
+      const after = mapped.find((row) => row.id === id);
+      const becameSavable = after && isRowSavable(after) && (!before || !isRowSavable(before));
+      return becameSavable ? appendTrailingEntrySlot(mapped) : mapped;
+    });
     queueRowSave(id);
+  };
+
+  const syncPostedShipmentInBackground = (
+    row: LedgerRow,
+    saved: RemoteDailyLedgerRow,
+    currentTrip: typeof trip,
+  ) => {
+    void (async () => {
+      if (!saved.posted_shipment_id || saved.loaded_at) return;
+      const shipmentSyntheticId = syntheticEntityId(saved.posted_shipment_id);
+      const originBranch = resolveTripOrigin(currentTrip.line);
+      const branchForRow = branchForOriginRow(originBranch);
+      if (!branchForRow) return;
+      try {
+        const resolveCustomer = async (name: string, type: 'sender' | 'receiver') => {
+          const list = customersRef.current;
+          const normalized = normalizeName(name);
+          const existing = list.find((customer) => normalizeName(customer.name) === normalized);
+          if (existing) return { customer: existing, list };
+          const created = await phase15Gateway.sendersReceivers.create({
+            name: normalized,
+            phone: '',
+            customerType: type,
+            address: '',
+            balance: 0,
+            creditLimit: 0,
+            notes: '',
+          });
+          const nextList = [...list, created];
+          setCustomers(nextList);
+          return { customer: created, list: nextList };
+        };
+
+        const resolveGoodsType = async (name: string) => {
+          const list = goodsTypesRef.current;
+          const normalized = normalizeName(name);
+          const existing = list.find((item) => normalizeName(item.name) === normalized);
+          if (existing) return { goodsType: existing, list };
+          const created = await phase15Gateway.goodsTypes.create({
+            code: `GT-${Date.now()}`,
+            name: normalized,
+            description: '',
+          });
+          const nextList = [...list, created];
+          setGoodsTypes(nextList);
+          return { goodsType: created, list: nextList };
+        };
+
+        const senderResult = await resolveCustomer(row.sender, 'sender');
+        const receiverResult = await resolveCustomer(row.receiver, 'receiver');
+        const goodsResult = await resolveGoodsType(row.parcelType);
+
+        const amounts = shipmentAmountsFromLedgerRow(row);
+        await phase15Gateway.shipments.update(shipmentSyntheticId, {
+          shipmentNo: normalizeName(row.receiptNo),
+          date: currentTrip.date,
+          branchId: branchForRow.id,
+          branchName: branchForRow.name,
+          agentId: row.agentId,
+          agentName: row.agentName,
+          originName: normalizeName(originBranch),
+          status: 'confirmed',
+          senderId: senderResult.customer.id,
+          senderName: senderResult.customer.name,
+          receiverId: receiverResult.customer.id,
+          receiverName: receiverResult.customer.name,
+          destinationName: normalizeName(row.destination),
+          goodsTypeId: goodsResult.goodsType.id,
+          goodsTypeName: goodsResult.goodsType.name,
+          quantity: Number(row.parcelCount) || 1,
+          weight: parseWeightKg(row.weightKg),
+          freightCharge: amounts.freightCharge,
+          transferFee: amounts.transferFee,
+          hawalaAmount: amounts.hawalaAmount,
+          transferServiceFee: amounts.transferServiceFee,
+          prepaidAmount: amounts.prepaidAmount,
+          discount: 0,
+          total: amounts.total,
+          currency: 'USD',
+          notes: [row.notes, currentTrip.tripNo ? `رقم الرحلة: ${currentTrip.tripNo}` : '', currentTrip.vehicle ? `المركبة: ${currentTrip.vehicle}` : '', currentTrip.driver ? `السائق: ${currentTrip.driver}` : '']
+            .filter(Boolean)
+            .join(' | '),
+        });
+      } catch {
+        /* إذا تعذر تحديث الشحنة، يبقى سطر الدفتر محفوظاً */
+      }
+    })();
   };
 
   const saveRowToServer = async (displayRowId: number) => {
@@ -1032,41 +1162,63 @@ export default function ShipmentQuickLedger() {
     const row = rowsRef.current.find((r) => r.id === displayRowId);
     if (!row) return;
     if (!shouldPersistRow(row)) return;
+    if (findLocalDuplicateReceipt(rowsRef.current, row.receiptNo, displayRowId)) {
+      showToast(`رقم الإيصال «${normalizeName(row.receiptNo)}» مكرر — لن يُحفظ السطر`, 'error');
+      return;
+    }
+
+    const prior = saveInFlightRef.current[displayRowId];
+    if (prior) {
+      try {
+        await prior;
+      } catch {
+        /* السطر السابق فشل — نعيد المحاولة */
+      }
+    }
 
     const origin = resolveTripOrigin(currentTrip.line);
-    const fleet = resolveFleetForLedgerRow(row, currentTrip, driversRef.current, vehiclesRef.current);
-    const effectiveDriverId = row.sessionDriverId ?? currentTrip.driverId;
-    const serverRowNo =
-      row.serverRowNo ??
-      nextServerRowNoForDriver(rowsRef.current, effectiveDriverId) ??
-      row.id;
-    try {
-      const saved = await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
-        branchId,
-        ledgerDate: currentTrip.date,
-        lineLabel: currentTrip.line,
-        originLabel: origin,
-        tripNo: currentTrip.tripNo || null,
-        ...(row.dbId ? { rowId: row.dbId } : {}),
-        ...fleet,
-        rowNo: serverRowNo,
-        receiptNo: row.receiptNo || null,
-        destination: row.destination,
-        parcelType: row.parcelType,
-        parcelCount: Number(row.parcelCount) || null,
-        weightKg: parseWeightKg(row.weightKg) ?? null,
-        senderName: row.sender,
-        receiverName: row.receiver,
-        collectAmountUsd: parseUsd(row.collectAmount),
-        prepaidAmountUsd: parseUsd(row.prepaidAmount),
-        hawalaAmountUsd: parseUsd(row.receiverCollect),
-        feesAmountUsd: 0,
-        transferServiceFeeUsd: parseUsd(row.transferServiceFee),
-        notes: row.notes || null,
-      });
-      setRows((prev) =>
-        appendTrailingEntrySlot(
-          prev.map((r) =>
+
+    const task = (async () => {
+      const latestRow = rowsRef.current.find((r) => r.id === displayRowId);
+      if (!latestRow || !shouldPersistRow(latestRow)) return;
+      if (findLocalDuplicateReceipt(rowsRef.current, latestRow.receiptNo, displayRowId)) {
+        showToast(`رقم الإيصال «${normalizeName(latestRow.receiptNo)}» مكرر — لن يُحفظ السطر`, 'error');
+        return;
+      }
+
+      const latestFleet = resolveFleetForLedgerRow(latestRow, currentTrip, driversRef.current, vehiclesRef.current);
+      const latestDriverId = latestRow.sessionDriverId ?? currentTrip.driverId;
+      const latestRowNo =
+        latestRow.serverRowNo ??
+        nextServerRowNoForDriver(rowsRef.current, latestDriverId) ??
+        latestRow.id;
+
+      try {
+        const saved = await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
+          branchId,
+          ledgerDate: currentTrip.date,
+          lineLabel: currentTrip.line,
+          originLabel: origin,
+          tripNo: currentTrip.tripNo || null,
+          ...(latestRow.dbId ? { rowId: latestRow.dbId } : {}),
+          ...latestFleet,
+          rowNo: latestRowNo,
+          receiptNo: latestRow.receiptNo || null,
+          destination: latestRow.destination,
+          parcelType: latestRow.parcelType,
+          parcelCount: Number(latestRow.parcelCount) || null,
+          weightKg: parseWeightKg(latestRow.weightKg) ?? null,
+          senderName: latestRow.sender,
+          receiverName: latestRow.receiver,
+          collectAmountUsd: parseUsd(latestRow.collectAmount),
+          prepaidAmountUsd: parseUsd(latestRow.prepaidAmount),
+          hawalaAmountUsd: parseUsd(latestRow.receiverCollect),
+          feesAmountUsd: 0,
+          transferServiceFeeUsd: parseUsd(latestRow.transferServiceFee),
+          notes: latestRow.notes || null,
+        });
+        setRows((prev) => {
+          const mapped = prev.map((r) =>
             r.id === displayRowId
               ? {
                   ...r,
@@ -1074,96 +1226,34 @@ export default function ShipmentQuickLedger() {
                   serverRowNo: saved.row_no,
                   sessionDriverId: saved.driver_id
                     ? syntheticEntityId(saved.driver_id)
-                    : effectiveDriverId || r.sessionDriverId,
+                    : latestDriverId || r.sessionDriverId,
                   updatedAt: saved.updated_at,
                   postedShipmentId: saved.posted_shipment_id,
                   loadedAt: saved.loaded_at,
                 }
               : r,
-          ),
-        ),
-      );
+          );
+          const savedRow = mapped.find((r) => r.id === displayRowId);
+          if (savedRow?.dbId && isRowSavable(savedRow)) {
+            return appendTrailingEntrySlot(mapped);
+          }
+          return mapped;
+        });
 
-      if (saved.posted_shipment_id && !saved.loaded_at) {
-        const shipmentSyntheticId = syntheticEntityId(saved.posted_shipment_id);
-        const originBranch = resolveTripOrigin(currentTrip.line);
-        const branchForRow = branchForOriginRow(originBranch)!;
-        try {
-          const resolveCustomer = async (name: string, type: 'sender' | 'receiver') => {
-            const list = customersRef.current;
-            const normalized = normalizeName(name);
-            const existing = list.find((customer) => normalizeName(customer.name) === normalized);
-            if (existing) return { customer: existing, list };
-            const created = await phase15Gateway.sendersReceivers.create({
-              name: normalized,
-              phone: '',
-              customerType: type,
-              address: '',
-              balance: 0,
-              creditLimit: 0,
-              notes: '',
-            });
-            const nextList = [...list, created];
-            setCustomers(nextList);
-            return { customer: created, list: nextList };
-          };
-
-          const resolveGoodsType = async (name: string) => {
-            const list = goodsTypesRef.current;
-            const normalized = normalizeName(name);
-            const existing = list.find((item) => normalizeName(item.name) === normalized);
-            if (existing) return { goodsType: existing, list };
-            const created = await phase15Gateway.goodsTypes.create({
-              code: `GT-${Date.now()}`,
-              name: normalized,
-              description: '',
-            });
-            const nextList = [...list, created];
-            setGoodsTypes(nextList);
-            return { goodsType: created, list: nextList };
-          };
-
-          const senderResult = await resolveCustomer(row.sender, 'sender');
-          const receiverResult = await resolveCustomer(row.receiver, 'receiver');
-          const goodsResult = await resolveGoodsType(row.parcelType);
-
-          const amounts = shipmentAmountsFromLedgerRow(row);
-          await phase15Gateway.shipments.update(shipmentSyntheticId, {
-            shipmentNo: normalizeName(row.receiptNo),
-            date: currentTrip.date,
-            branchId: branchForRow.id,
-            branchName: branchForRow.name,
-            agentId: row.agentId,
-            agentName: row.agentName,
-            originName: normalizeName(originBranch),
-            status: 'confirmed',
-            senderId: senderResult.customer.id,
-            senderName: senderResult.customer.name,
-            receiverId: receiverResult.customer.id,
-            receiverName: receiverResult.customer.name,
-            destinationName: normalizeName(row.destination),
-            goodsTypeId: goodsResult.goodsType.id,
-            goodsTypeName: goodsResult.goodsType.name,
-            quantity: Number(row.parcelCount) || 1,
-            weight: parseWeightKg(row.weightKg),
-            freightCharge: amounts.freightCharge,
-            transferFee: amounts.transferFee,
-            hawalaAmount: amounts.hawalaAmount,
-            transferServiceFee: amounts.transferServiceFee,
-            prepaidAmount: amounts.prepaidAmount,
-            discount: 0,
-            total: amounts.total,
-            currency: 'USD',
-            notes: [row.notes, currentTrip.tripNo ? `رقم الرحلة: ${currentTrip.tripNo}` : '', currentTrip.vehicle ? `المركبة: ${currentTrip.vehicle}` : '', currentTrip.driver ? `السائق: ${currentTrip.driver}` : '']
-              .filter(Boolean)
-              .join(' | '),
-          });
-        } catch {
-          /* إذا تعذر تحديث الشحنة، يبقى سطر الدفتر محفوظاً ولا يمنع المستخدم من المتابعة */
-        }
+        syncPostedShipmentInBackground(latestRow, saved, currentTrip);
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : 'تعذر حفظ السطر', 'error');
+        throw error;
       }
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'تعذر حفظ السطر', 'error');
+    })();
+
+    saveInFlightRef.current[displayRowId] = task;
+    try {
+      await task;
+    } finally {
+      if (saveInFlightRef.current[displayRowId] === task) {
+        delete saveInFlightRef.current[displayRowId];
+      }
     }
   };
   saveRowToServerRef.current = saveRowToServer;
@@ -1172,8 +1262,18 @@ export default function ShipmentQuickLedger() {
     const timer = saveTimersRef.current[rowNo];
     if (timer) window.clearTimeout(timer);
     saveTimersRef.current[rowNo] = window.setTimeout(() => {
+      delete saveTimersRef.current[rowNo];
       void saveRowToServer(rowNo);
-    }, 650);
+    }, ROW_SAVE_DEBOUNCE_MS);
+  };
+
+  const flushRowSave = (rowNo: number) => {
+    const timer = saveTimersRef.current[rowNo];
+    if (timer) {
+      window.clearTimeout(timer);
+      delete saveTimersRef.current[rowNo];
+    }
+    void saveRowToServer(rowNo);
   };
 
   const resolveTripOrigin = (lineValue: string) => {
@@ -1271,7 +1371,7 @@ export default function ShipmentQuickLedger() {
         return mergeRowWithAutoTariff({ ...r, collectManual: false }, tariffs, cities, branches, goodsTypes, trip.date);
       }),
     );
-    if (changed) queueRowSave(rowId);
+    if (changed) flushRowSave(rowId);
   };
 
   const focusNext = (event: KeyboardEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -1352,7 +1452,7 @@ export default function ShipmentQuickLedger() {
       }
       const latest = rowsRef.current.find((r) => r.id === row.id);
       if (latest && shouldPersistRow(latest)) {
-        queueRowSave(row.id);
+        flushRowSave(row.id);
       }
     })();
   };
@@ -1664,6 +1764,14 @@ export default function ShipmentQuickLedger() {
       if (!rowsToPost.length) {
         showToast('تم حفظ التعديلات على الأسطر', 'success');
         await loadRemoteRows();
+        return;
+      }
+
+      const duplicateInBatch = rowsToPost.find((row) =>
+        findLocalDuplicateReceipt(rows, row.receiptNo, row.id),
+      );
+      if (duplicateInBatch) {
+        showToast(`رقم الإيصال «${normalizeName(duplicateInBatch.receiptNo)}» مكرر في الدفتر`, 'error');
         return;
       }
 
@@ -2003,7 +2111,7 @@ export default function ShipmentQuickLedger() {
                       />
                     </td>
                   )}
-                  <td><input data-ledger-field="true" value={row.receiptNo} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onChange={(e) => updateRow(row.id, 'receiptNo', e.target.value)} /></td>
+                  <td><input className={duplicateReceiptRowIds.has(row.id) ? 'ledger-receipt-duplicate' : undefined} data-ledger-field="true" value={row.receiptNo} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'receiptNo', e.target.value)} title={duplicateReceiptRowIds.has(row.id) ? 'رقم الإيصال مكرر' : undefined} /></td>
                   <td className="quick-ledger-dest-cell">
                     <input
                       list="ledger-destination-options"
@@ -2014,13 +2122,13 @@ export default function ShipmentQuickLedger() {
                       onFocus={() => setActiveRowId(row.id)}
                       onKeyDown={(e) => handleSmartFieldKeyDown(e, row, 'destination')}
                       onBlur={(e) => commitDestinationCell(row, e.target.value)}
-                      onChange={(e) => updateRow(row.id, 'destination', e.target.value)}
+                      onChange={(e) => updateRow(row.id, 'destination', e.target.value, true)}
                     />
                   </td>
                   <td className="quick-ledger-parcel-cell col-parcel-type">
                     <AutocompleteInput
                       value={row.parcelType}
-                      onChange={(v) => updateRow(row.id, 'parcelType', v)}
+                      onChange={(v) => updateRow(row.id, 'parcelType', v, true)}
                       onSelect={(item) => {
                         setRows((prev) =>
                           prev.map((r) =>
@@ -2036,7 +2144,7 @@ export default function ShipmentQuickLedger() {
                               : r,
                           ),
                         );
-                        queueRowSave(row.id);
+                        flushRowSave(row.id);
                       }}
                       onAddNew={(name) => {
                         void (async () => {
@@ -2065,7 +2173,7 @@ export default function ShipmentQuickLedger() {
                               );
                               return nextGoods;
                             });
-                            queueRowSave(row.id);
+                            flushRowSave(row.id);
                           } catch (error) {
                             showToast(error instanceof Error ? error.message : 'تعذر إضافة نوع الطرد', 'error');
                           }
@@ -2094,6 +2202,7 @@ export default function ShipmentQuickLedger() {
                             );
                           }),
                         );
+                        flushRowSave(row.id);
                       }}
                     />
                   </td>
@@ -2107,6 +2216,7 @@ export default function ShipmentQuickLedger() {
                       onFocus={() => setActiveRowId(row.id)}
                       onKeyDown={focusNext}
                       onChange={(e) => updateRow(row.id, 'parcelCount', e.target.value)}
+                      onBlur={() => flushRowSave(row.id)}
                     />
                   </td>
                   <td>
@@ -2118,7 +2228,7 @@ export default function ShipmentQuickLedger() {
                       onFocus={() => setActiveRowId(row.id)}
                       onKeyDown={focusNext}
                       onBlur={() => recalcTariffCollectForRowId(row.id)}
-                      onChange={(e) => updateRow(row.id, 'weightKg', e.target.value)}
+                      onChange={(e) => updateRow(row.id, 'weightKg', e.target.value, true)}
                     />
                   </td>
                   <td>
@@ -2148,10 +2258,10 @@ export default function ShipmentQuickLedger() {
                       onKeyDown={focusNext}
                     />
                   </td>
-                  <td><input data-ledger-field="true" inputMode="decimal" value={row.collectAmount} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onChange={(e) => updateRow(row.id, 'collectAmount', e.target.value)} /></td>
-                  <td><input data-ledger-field="true" inputMode="decimal" value={row.prepaidAmount} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onChange={(e) => updateRow(row.id, 'prepaidAmount', e.target.value)} /></td>
-                  <td><input data-ledger-field="true" inputMode="decimal" value={row.receiverCollect} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onChange={(e) => updateRow(row.id, 'receiverCollect', e.target.value)} /></td>
-                  <td><input data-ledger-field="true" inputMode="decimal" value={row.transferServiceFee} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onChange={(e) => updateRow(row.id, 'transferServiceFee', e.target.value)} /></td>
+                  <td><input data-ledger-field="true" inputMode="decimal" value={row.collectAmount} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'collectAmount', e.target.value)} /></td>
+                  <td><input data-ledger-field="true" inputMode="decimal" value={row.prepaidAmount} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'prepaidAmount', e.target.value)} /></td>
+                  <td><input data-ledger-field="true" inputMode="decimal" value={row.receiverCollect} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'receiverCollect', e.target.value)} /></td>
+                  <td><input data-ledger-field="true" inputMode="decimal" value={row.transferServiceFee} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'transferServiceFee', e.target.value)} /></td>
                 </tr>
               );
             })}
