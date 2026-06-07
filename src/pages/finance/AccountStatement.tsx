@@ -4,7 +4,8 @@ import { phase3FinanceGateway } from '../../lib/api/phase3FinanceGateway';
 import { getBackendIdFromSynthetic, phase15Gateway } from '../../lib/api/phase15Gateway';
 import { useToast } from '../../components/Toast';
 import { downloadCsv } from '../../lib/export/csvDownload';
-import { exportPdfTable } from '../../lib/export/pdfExport';
+import FinancialStatementPrintButtons from '../../components/finance/FinancialStatementPrintButtons';
+import { buildDetailedAccountStatementPrintHtml } from '../../lib/export/financialStatementPrint';
 
 type StatementRow = {
   id: string;
@@ -110,7 +111,7 @@ export default function AccountStatement() {
     showToast('تم تنزيل الملف', 'success');
   };
 
-  const exportPdf = async () => {
+  const buildStatementSubtitle = () => {
     const subtitleParts: string[] = [];
     if (filters.partyType) subtitleParts.push(`نوع الطرف: ${filters.partyType}`);
     if (filters.partyId) subtitleParts.push(`معرف: ${filters.partyId}`);
@@ -119,36 +120,16 @@ export default function AccountStatement() {
     if (filters.dateFrom || filters.dateTo) subtitleParts.push(`من ${filters.dateFrom || '—'} إلى ${filters.dateTo || '—'}`);
     if (filters.referenceType) subtitleParts.push(`المرجع: ${filters.referenceType}`);
     if (filters.search.trim()) subtitleParts.push(`بحث: ${filters.search.trim()}`);
-    const subtitle = subtitleParts.length ? subtitleParts.join(' | ') : undefined;
-
-    const result = await exportPdfTable({
-      title: 'كشف حساب تفصيلي',
-      subtitle,
-      defaultFileName: `account-statement-${new Date().toISOString().split('T')[0]}.pdf`,
-      headers: ['#', 'التاريخ', 'نوع الطرف', 'اسم الطرف', 'نوع المرجع', 'رقم المرجع', 'رقم الشحنة', 'البيان', 'مدين', 'دائن', 'الرصيد الجاري', 'العملة', 'طريقة الدفع', 'الفرع', 'المستخدم', 'ملاحظات'],
-      rows: rows.map((r, i) => [
-        i + 1,
-        new Date(r.date).toLocaleString('ar-SY'),
-        r.partyType,
-        r.partyName,
-        r.referenceType,
-        r.referenceNo || '-',
-        r.shipmentNo || '-',
-        r.description || '-',
-        r.debit,
-        r.credit,
-        r.runningBalance,
-        r.currencyCode,
-        r.paymentMethod || '-',
-        r.branchName || '-',
-        r.username || '-',
-        r.notes || '-',
-      ]),
-    });
-
-    if (result.saved) showToast('تم حفظ ملف PDF', 'success');
-    else if (result.message !== 'cancelled') showToast('تعذر إنشاء PDF', 'error');
+    return subtitleParts.length ? subtitleParts.join(' | ') : undefined;
   };
+
+  const buildStatementPrintHtml = () =>
+    buildDetailedAccountStatementPrintHtml({
+      title: 'كشف حساب تفصيلي',
+      subtitle: buildStatementSubtitle(),
+      rows,
+      totals,
+    });
 
   return (
     <div className="h-full flex flex-col">
@@ -178,8 +159,14 @@ export default function AccountStatement() {
           <button className="toolbar-btn primary" onClick={() => void load()}>تطبيق</button>
           <button className="toolbar-btn" onClick={() => setFilters({ partyType: '', partyId: '', branchId: '', currencyCode: '', dateFrom: '', dateTo: '', referenceType: '', search: '' })}>إعادة ضبط</button>
           <button type="button" className="toolbar-btn" onClick={exportCsv}>تصدير Excel (CSV)</button>
-          <button type="button" className="toolbar-btn" onClick={() => void exportPdf()}>تصدير PDF</button>
-          <button type="button" className="toolbar-btn" onClick={() => window.print()}>طباعة</button>
+          <FinancialStatementPrintButtons
+            disabled={loading || rows.length === 0}
+            documentType="account_statement"
+            pdfTitle="كشف حساب تفصيلي"
+            pdfFileName={`account-statement-${new Date().toISOString().split('T')[0]}.pdf`}
+            onBuildHtml={buildStatementPrintHtml}
+            className="flex gap-2"
+          />
         </div>
       </div>
 

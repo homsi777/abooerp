@@ -9,6 +9,8 @@ import {
   getAgentReconciliationMetrics,
   resolveStatementRowReconciliationClass,
 } from '../../lib/agents/agentStatementReconciliation';
+import FinancialStatementPrintButtons from '../../components/finance/FinancialStatementPrintButtons';
+import { buildAgentStatementPrintHtml } from '../../lib/export/financialStatementPrint';
 
 type AgentRecord = {
   id: string;
@@ -187,9 +189,17 @@ export default function AgentProfile() {
       {statement ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] overflow-auto">
-            <div className="flex items-center justify-between border-b p-4">
+            <div className="flex items-center justify-between border-b p-4 gap-2 flex-wrap">
               <h3 className="font-bold text-lg">{statement.title}</h3>
-              <button type="button" className="toolbar-btn" onClick={() => setStatement(null)}>إغلاق</button>
+              <div className="flex gap-2 flex-wrap">
+                <FinancialStatementPrintButtons
+                  documentType="agent_statement"
+                  pdfTitle={statement.title}
+                  pdfFileName={`agent-statement-${statement.kind}-${new Date().toISOString().split('T')[0]}.pdf`}
+                  onBuildHtml={() => buildAgentStatementPrintHtml(statement.kind, statement.data, statement.title)}
+                />
+                <button type="button" className="toolbar-btn" onClick={() => setStatement(null)}>إغلاق</button>
+              </div>
             </div>
             <div className="p-4 space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">

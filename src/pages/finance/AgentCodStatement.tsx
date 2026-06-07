@@ -5,7 +5,8 @@ import { phase15Gateway } from '../../lib/api/phase15Gateway';
 import { useAuth } from '../../context/AuthProvider';
 import { useToast } from '../../components/Toast';
 import { downloadCsv } from '../../lib/export/csvDownload';
-import { exportPdfTable } from '../../lib/export/pdfExport';
+import FinancialStatementPrintButtons from '../../components/finance/FinancialStatementPrintButtons';
+import { buildAgentCodStatementPrintHtml } from '../../lib/export/financialStatementPrint';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 function fmt(n: number, currency = ''): string {
@@ -253,69 +254,63 @@ export default function AgentCodStatement() {
     }
   };
 
-  const exportPdf = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const { rows: allRows, total: totalRows } = await fetchAllForExport(applied);
-      const subtitleParts: string[] = [];
-      if (applied.agentId) subtitleParts.push(`الوكيل: ${applied.agentId.slice(0, 8)}`);
-      if (applied.branchId) subtitleParts.push(`الفرع: ${applied.branchId}`);
-      if (applied.dateFrom || applied.dateTo) subtitleParts.push(`من ${applied.dateFrom || '—'} إلى ${applied.dateTo || '—'}`);
-      if (applied.currencyCode) subtitleParts.push(`العملة: ${applied.currencyCode}`);
-      subtitleParts.push(`عدد الشحنات: ${totalRows}`);
+  const buildCodSubtitle = (f: Filters, totalRows: number) => {
+    const subtitleParts: string[] = [];
+    if (f.agentId) subtitleParts.push(`الوكيل: ${f.agentId.slice(0, 8)}`);
+    if (f.branchId) subtitleParts.push(`الفرع: ${f.branchId}`);
+    if (f.dateFrom || f.dateTo) subtitleParts.push(`من ${f.dateFrom || '—'} إلى ${f.dateTo || '—'}`);
+    if (f.currencyCode) subtitleParts.push(`العملة: ${f.currencyCode}`);
+    subtitleParts.push(`عدد الشحنات: ${totalRows}`);
+    return subtitleParts.join(' | ');
+  };
 
-      const result = await exportPdfTable({
-        title: 'كشف مبالغ عند التسليم لدى الوكيل',
-        subtitle: subtitleParts.join(' | '),
-        defaultFileName: `كشف-مبالغ-التسليم-${new Date().toISOString().split('T')[0]}.pdf`,
-        headers: [
-          '#', 'التاريخ', 'رقم الشحنة',
-          ...(isAgentUser ? [] : ['الوكيل']),
-          'الفرع', 'المرسل', 'المستلم', 'الوجهة',
-          'حالة الشحنة', 'حالة التحصيل', 'العملة',
-          'أجور الشحن', 'تحصيل المرسل', 'مستحقات إضافية', 'دفع مسبق', 'نوع دفع الأجور',
-          'عمولة الوكيل', 'مدين للشركة', 'دائن على الشركة', 'أجرة الحوالة',
-          'إجمالي المطلوب', 'المقبوض', 'المتبقي',
-          'صندوق التحصيل', 'آخر سند قبض', 'ملاحظات',
-        ],
-        rows: allRows.map((r, i) => [
-          i + 1,
-          new Date(r.shipmentDate).toLocaleDateString('ar-SY'),
-          r.shipmentNo,
-          ...(isAgentUser ? [] : [r.agentName]),
-          r.branchName,
-          r.senderName,
-          r.receiverName,
-          r.destination,
-          shipmentStatusLabel(r.shipmentStatus),
-          paymentStatusLabel(r.paymentStatus),
-          r.currencyCode,
-          r.shippingFeeAmount,
-          r.senderCollectionAmount,
-          r.loadingDuesAmount,
-          r.prepaidAmount,
-          r.freightPaymentType === 'PREPAID' ? 'دفع مسبق' : 'تحصيل',
-          r.agentCommissionAmount,
-          r.agentOwesCompany,
-          r.companyOwesAgent,
-          r.transferServiceFee,
-          r.totalDueOnDelivery,
-          r.collectedAmount,
-          r.remainingToCollect,
-          r.collectionCashboxName !== '—' ? r.collectionCashboxName : '',
-          r.lastReceiptVoucherNo !== '—' ? r.lastReceiptVoucherNo : '',
-          r.notes,
-        ]),
-      });
+  const mapCodRowToPrint = (r: AgentCodRow, index: number) => [
+    String(index + 1),
+    new Date(r.shipmentDate).toLocaleDateString('ar-SY'),
+    r.shipmentNo,
+    ...(isAgentUser ? [] : [r.agentName]),
+    r.branchName,
+    r.senderName,
+    r.receiverName,
+    r.destination,
+    shipmentStatusLabel(r.shipmentStatus),
+    paymentStatusLabel(r.paymentStatus),
+    r.currencyCode,
+    fmt(r.shippingFeeAmount),
+    fmt(r.senderCollectionAmount),
+    fmt(r.loadingDuesAmount),
+    fmt(r.prepaidAmount),
+    r.freightPaymentType === 'PREPAID' ? 'دفع مسبق' : 'تحصيل',
+    fmt(r.agentCommissionAmount),
+    fmt(r.agentOwesCompany),
+    fmt(r.companyOwesAgent),
+    fmt(r.transferServiceFee),
+    fmt(r.totalDueOnDelivery),
+    fmt(r.collectedAmount),
+    fmt(r.remainingToCollect),
+    r.collectionCashboxName !== '—' ? r.collectionCashboxName : '',
+    r.lastReceiptVoucherNo !== '—' ? r.lastReceiptVoucherNo : '',
+    r.notes,
+  ];
 
-      if (result.saved) showToast('تم حفظ ملف PDF', 'success');
-      else if (result.message !== 'cancelled') showToast('تعذر إنشاء PDF', 'error');
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : 'تعذر تصدير PDF', 'error');
-    } finally {
-      setLoading(false);
-    }
+  const buildCodPrintHtmlAsync = async () => {
+    const { rows: allRows, total: totalRows } = await fetchAllForExport(applied);
+    const headers = [
+      '#', 'التاريخ', 'رقم الشحنة',
+      ...(isAgentUser ? [] : ['الوكيل']),
+      'الفرع', 'المرسل', 'المستلم', 'الوجهة',
+      'حالة الشحنة', 'حالة التحصيل', 'العملة',
+      'أجور الشحن', 'تحصيل المرسل', 'مستحقات إضافية', 'دفع مسبق', 'نوع دفع الأجور',
+      'عمولة الوكيل', 'مدين للشركة', 'دائن على الشركة', 'أجرة الحوالة',
+      'إجمالي المطلوب', 'المقبوض', 'المتبقي',
+      'صندوق التحصيل', 'آخر سند قبض', 'ملاحظات',
+    ];
+    return buildAgentCodStatementPrintHtml({
+      subtitle: buildCodSubtitle(applied, totalRows),
+      headers,
+      rows: allRows,
+      rowMapper: (row, index) => mapCodRowToPrint(row, index),
+    });
   };
 
   const pageCount = Math.ceil(total / 200);
@@ -422,8 +417,14 @@ export default function AgentCodStatement() {
             </button>
             <button className="toolbar-btn text-sm" onClick={handleReset}>إعادة ضبط</button>
             <button className="toolbar-btn text-sm" onClick={() => void exportCsv()} disabled={loading}>تصدير Excel (CSV)</button>
-            <button className="toolbar-btn text-sm" onClick={() => void exportPdf()} disabled={loading}>تصدير PDF</button>
-            <button className="toolbar-btn text-sm" onClick={() => window.print()} disabled={loading}>طباعة</button>
+            <FinancialStatementPrintButtons
+              disabled={loading}
+              documentType="agent_cod_statement"
+              pdfTitle="كشف مبالغ عند التسليم لدى الوكيل"
+              pdfFileName={`كشف-مبالغ-التسليم-${new Date().toISOString().split('T')[0]}.pdf`}
+              onBuildHtmlAsync={buildCodPrintHtmlAsync}
+              className="flex gap-1"
+            />
           </div>
         </div>
       </div>
