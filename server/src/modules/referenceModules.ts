@@ -216,7 +216,8 @@ export function createReferenceRouters() {
       updateSchema: driverUpdateSchema,
       readPermissions: ['drivers.view', 'shipments.read'],
       readMatch: 'any',
-      writePermissions: ['parties.manage'],
+      writePermissions: ['parties.manage', 'drivers.manage'],
+      writeMatch: 'any',
     }),
     vehicles: createReferenceRouter({
       service: new ReferenceService(vehiclesRepository),
@@ -224,7 +225,8 @@ export function createReferenceRouters() {
       updateSchema: vehicleUpdateSchema,
       readPermissions: ['vehicles.view', 'shipments.read'],
       readMatch: 'any',
-      writePermissions: ['parties.manage'],
+      writePermissions: ['parties.manage', 'vehicles.manage'],
+      writeMatch: 'any',
     }),
     cities: createReferenceRouter({
       service: new ReferenceService(citiesRepository),

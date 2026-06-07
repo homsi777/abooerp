@@ -86,6 +86,15 @@ const permissionArabicMeta: Record<string, { label: string; description: string;
   'shipments.write': { label: 'إضافة وتعديل الشحنات', description: 'يسمح بإنشاء أو تعديل بيانات الشحنات.' },
   'shipments.create': { label: 'إنشاء شحنة', description: 'يسمح بإنشاء شحنة جديدة.' },
   'shipments.update': { label: 'تعديل شحنة', description: 'يسمح بتعديل بيانات الشحنة.' },
+  'shipments.ledger.past_dates': {
+    label: 'تعديل تاريخ دفتر الشحن',
+    description: 'يسمح لمدخل البيانات بفتح دفتر يوم سابق وتعديل أسطره (وليس اليوم فقط).',
+  },
+  'drivers.view': { label: 'عرض السائقين', description: 'يسمح برؤية قائمة السائقين.' },
+  'drivers.manage': { label: 'إدارة السائقين', description: 'يسمح بإضافة وتعديل السائقين.' },
+  'vehicles.view': { label: 'عرض المركبات', description: 'يسمح برؤية قائمة المركبات.' },
+  'vehicles.manage': { label: 'إدارة المركبات', description: 'يسمح بإضافة وتعديل المركبات.' },
+  'parties.manage': { label: 'إدارة الأطراف', description: 'يسمح بإدارة المرسلين والمستلمين والسائقين والمركبات.' },
   'shipments.confirm': { label: 'تأكيد الشحنة', description: 'يسمح بتأكيد الشحنة ضمن دورة العمل.' },
   'shipments.cancel': { label: 'إلغاء الشحنة', description: 'يسمح بإلغاء الشحنة عند توفر شروط الإلغاء.' },
   'shipments.handover_agent': { label: 'تسليم الشحنة للوكيل', description: 'يسمح بتحويل الشحنة إلى الوكيل المسؤول.' },
@@ -185,13 +194,19 @@ const roleTemplates: PermissionTemplate[] = [
     roleCode: 'data_entry',
     userType: 'employee',
     description: 'إدخال وتعديل الشحنات ضمن الفروع المسموحة، مع الحوالات التشغيلية عند منح الصلاحية.',
-    modules: ['دفتر الشحن اليومي', 'إدخال شحنة', 'قائمة الشحنات', 'الحوالات'],
+    modules: ['دفتر الشحن اليومي', 'إدخال شحنة', 'قائمة الشحنات', 'المركبات والسائقون', 'الحوالات'],
     permissionCodes: [
       'shipments.read',
       'shipments.write',
       'shipments.view',
       'shipments.create',
       'shipments.update',
+      'shipments.ledger.past_dates',
+      'drivers.view',
+      'drivers.manage',
+      'vehicles.view',
+      'vehicles.manage',
+      'parties.manage',
       'transfers.read',
       'transfers.write',
     ],
@@ -265,6 +280,7 @@ function categoryForPermission(code: string) {
   if (code.startsWith('settings')) return 'الإعدادات';
   if (code.startsWith('users') || code.startsWith('permissions') || code.includes('settings.users') || code.includes('settings.roles')) return 'المستخدمون والصلاحيات';
   if (code.startsWith('agent_portal')) return 'بوابة الوكيل';
+  if (code.startsWith('drivers') || code.startsWith('vehicles') || code.startsWith('parties')) return 'المركبات والسائقون';
   if (code.startsWith('admin.')) return 'الإدارة العليا';
   return 'أخرى';
 }

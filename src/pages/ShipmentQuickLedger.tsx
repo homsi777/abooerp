@@ -681,7 +681,7 @@ type AgentProfilePayload = {
 export default function ShipmentQuickLedger() {
   const navigate = useNavigate();
   const { showToast } = useToast();
-  const { user, activeBranchId, setActiveBranch } = useAuth();
+  const { user, activeBranchId, setActiveBranch, hasPermission } = useAuth();
   const [rows, setRows] = useState<LedgerRow[]>(() => [createEmptyRow(1)]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [cities, setCities] = useState<City[]>([]);
@@ -897,8 +897,9 @@ export default function ShipmentQuickLedger() {
   const canPickHistoricalDate = useMemo(() => {
     if (!user) return false;
     if (user.userType === 'admin' || user.role === 'admin') return true;
-    return ['general_manager', 'branch_manager'].includes(user.role);
-  }, [user]);
+    if (['general_manager', 'branch_manager'].includes(user.role)) return true;
+    return hasPermission('shipments.ledger.past_dates');
+  }, [user, hasPermission]);
 
   const mapRemoteRowToLocal = (remote: RemoteDailyLedgerRow, displayId: number): LedgerRow => ({
     id: displayId,
@@ -2541,7 +2542,7 @@ export default function ShipmentQuickLedger() {
             onChange={(e) => {
               const next = e.target.value;
               if (!canPickHistoricalDate && next !== todayIso) {
-                showToast('مدخل البيانات يعمل على تاريخ اليوم فقط', 'info');
+                showToast('لا يمكن تغيير التاريخ — يلزم صلاحية تعديل تاريخ الدفتر', 'info');
                 setTrip((prev) => ({ ...prev, date: todayIso }));
                 return;
               }

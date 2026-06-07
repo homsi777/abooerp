@@ -7,19 +7,21 @@ const uuid = z.string().uuid();
 function todayIsoDate() {
     return new Date().toISOString().slice(0, 10);
 }
-function assertLedgerDateAllowed(roleCode, userType, ledgerDate) {
+function assertLedgerDateAllowed(roleCode, userType, ledgerDate, permissions = []) {
     const today = todayIsoDate();
     const isAdmin = roleCode === 'admin' || userType === 'admin';
     const isManager = isAdmin || roleCode === 'general_manager' || roleCode === 'branch_manager';
+    const canUsePastDates = isManager || permissions.includes('shipments.ledger.past_dates');
     if (ledgerDate > today) {
         throw new Error('لا يمكن إدخال بيانات بتاريخ مستقبلي.');
     }
-    if (roleCode === 'data_entry' && ledgerDate !== today) {
-        throw new Error('مدخل البيانات يعمل على تاريخ اليوم فقط. للتواريخ السابقة يستخدم المدير حسابه.');
+    if (ledgerDate !== today && !canUsePastDates) {
+        throw new Error('لا يمكن العمل على تاريخ مختلف عن اليوم — يلزم صلاحية تعديل تاريخ دفتر الشحن.');
     }
-    if (!isManager && ledgerDate < today) {
-        throw new Error('لا يمكن إدخال بيانات بتاريخ سابق إلا من حساب المدير.');
-    }
+}
+function getRequestPermissions(req) {
+    const userContext = req.requestUserContext;
+    return Array.isArray(userContext?.permissions) ? userContext.permissions : [];
 }
 export function createDailyLedgerRouter(service) {
     const router = express.Router();
@@ -115,7 +117,7 @@ export function createDailyLedgerRouter(service) {
         });
         const input = bodySchema.parse(req.body);
         try {
-            assertLedgerDateAllowed(roleCode, userType, input.ledgerDate);
+            assertLedgerDateAllowed(roleCode, userType, input.ledgerDate, getRequestPermissions(req));
         }
         catch (dateError) {
             res.status(400).json({
@@ -173,7 +175,7 @@ export function createDailyLedgerRouter(service) {
         });
         const input = bodySchema.parse(req.body);
         try {
-            assertLedgerDateAllowed(roleCode, userType, input.ledgerDate);
+            assertLedgerDateAllowed(roleCode, userType, input.ledgerDate, getRequestPermissions(req));
         }
         catch (dateError) {
             res.status(400).json({
