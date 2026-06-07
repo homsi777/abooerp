@@ -15,6 +15,13 @@ export type ProvincialAgentTotals = ProvincialTotals & {
   key: string;
   agentId: string | null;
   agentName: string;
+  agentCommissionAmount: number;
+};
+
+export type ProvincialCommissionSummary = {
+  totalCommission: number;
+  missingAgentCount: number;
+  missingRateCount: number;
 };
 
 function sumNumeric(values: Array<number | null | undefined>): number {
@@ -75,10 +82,27 @@ export function groupProvincialByAgent(rows: ProvincialInboundRow[]): Provincial
         key,
         agentId: sample.agentId,
         agentName: agentDisplayName(sample),
+        agentCommissionAmount: sumNumeric(groupRows.map((r) => r.agentCommissionAmount)),
         ...computeProvincialTotals(groupRows),
       };
     })
     .sort((a, b) => b.shipments - a.shipments || a.agentName.localeCompare(b.agentName, 'ar'));
+}
+
+export function computeProvincialCommissionSummary(rows: ProvincialInboundRow[]): ProvincialCommissionSummary {
+  let totalCommission = 0;
+  let missingAgentCount = 0;
+  let missingRateCount = 0;
+  for (const row of rows) {
+    totalCommission += Number(row.agentCommissionAmount ?? 0);
+    if (row.commissionIssue === 'missing_agent') missingAgentCount += 1;
+    else if (row.commissionIssue === 'missing_rate') missingRateCount += 1;
+  }
+  return {
+    totalCommission: Math.round(totalCommission * 100) / 100,
+    missingAgentCount,
+    missingRateCount,
+  };
 }
 
 export function formatWeightTotal(value: number): string {

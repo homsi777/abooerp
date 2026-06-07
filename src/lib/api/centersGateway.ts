@@ -32,6 +32,10 @@ export type ProvincialInboundRow = {
   fromQuickLedger: boolean;
   isPosted?: boolean;
   lineLabel?: string | null;
+  agentCommissionBase?: number;
+  agentCommissionPercentage?: number | null;
+  agentCommissionAmount?: number;
+  commissionIssue?: 'none' | 'missing_agent' | 'missing_rate';
 };
 
 export type VehicleTripReportMeta = {

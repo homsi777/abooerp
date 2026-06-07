@@ -206,7 +206,19 @@ export default function TransferReports() {
   };
 
   const renderDetailTable = (rows: TransferReportRow[]) => (
-    <table className="table w-full text-sm">
+    <table className="data-grid transfer-report-table">
+      <colgroup>
+        <col className="transfer-report-col-date" />
+        <col className="transfer-report-col-name" />
+        <col className="transfer-report-col-name" />
+        <col className="transfer-report-col-amount" />
+        <col className="transfer-report-col-dest" />
+        <col className="transfer-report-col-agents" />
+        <col className="transfer-report-col-shipment" />
+        <col className="transfer-report-col-fee" />
+        <col className="transfer-report-col-status" />
+        <col className="transfer-report-col-voucher" />
+      </colgroup>
       <thead>
         <tr>
           <th>التاريخ</th>
@@ -381,7 +393,19 @@ export default function TransferReports() {
 
       <div className="card flex-1 min-h-0 overflow-auto">
         {reportView === 'by_destination' ? (
-          <table className="table w-full text-sm">
+          <table className="data-grid transfer-report-table">
+            <colgroup>
+              <col className="transfer-report-col-dest" />
+              <col className="transfer-report-col-dest" />
+              <col className="transfer-report-col-currency" />
+              <col className="transfer-report-col-count" />
+              <col className="transfer-report-col-count" />
+              <col className="transfer-report-col-count" />
+              <col className="transfer-report-col-count" />
+              <col className="transfer-report-col-amount" />
+              <col className="transfer-report-col-amount" />
+              <col className="transfer-report-col-amount" />
+            </colgroup>
             <thead>
               <tr>
                 <th>الوجهة</th>

@@ -1,4 +1,43 @@
 import { pool } from '../db/pool.js';
+import { computeAgentCommissionSnapshot, resolveShipmentShippingPrice, } from '../utils/shipmentAgentCommission.js';
+function resolveProvincialRowCommission(row) {
+    const hasAgent = Boolean(row.agent_id);
+    const freightCharge = Number(row.freight_charge ?? 0);
+    const transferFee = Number(row.transfer_fee ?? 0);
+    const baseFromShipment = Number(row.agent_commission_base_amount ?? 0);
+    const base = baseFromShipment > 0
+        ? baseFromShipment
+        : resolveShipmentShippingPrice({ freightCharge, transferFee });
+    const agentPct = Number(row.commission_percentage ?? 0);
+    const snapshotPct = row.agent_commission_percentage_snapshot == null
+        ? null
+        : Number(row.agent_commission_percentage_snapshot);
+    const snapshotAmount = row.agent_commission_amount_snapshot == null
+        ? null
+        : Number(row.agent_commission_amount_snapshot);
+    const commissionPercentage = snapshotPct ?? agentPct;
+    let commissionAmount = snapshotAmount ?? 0;
+    if (snapshotAmount == null && hasAgent && base > 0 && commissionPercentage > 0) {
+        commissionAmount = computeAgentCommissionSnapshot({
+            freightCharge,
+            transferFee,
+            commissionPercentage,
+        }).agentCommissionAmountSnapshot;
+    }
+    let commissionIssue = 'none';
+    if (!hasAgent) {
+        commissionIssue = 'missing_agent';
+    }
+    else if (commissionPercentage <= 0 && commissionAmount <= 0) {
+        commissionIssue = 'missing_rate';
+    }
+    return {
+        agentCommissionBase: base,
+        agentCommissionPercentage: hasAgent ? commissionPercentage : null,
+        agentCommissionAmount: hasAgent ? commissionAmount : 0,
+        commissionIssue,
+    };
+}
 export class CenterReceiptRepository {
     async list(scope) {
         const conditions = ['cr.deleted_at is null'];
@@ -92,6 +131,12 @@ export class CenterReceiptRepository {
         s.original_currency,
         s.agent_id,
         ag.name as agent_name,
+        coalesce(ag.commission_percentage, 0) as agent_commission_percentage,
+        coalesce(s.freight_charge, dlr.prepaid_amount_usd, 0) as freight_charge,
+        coalesce(s.transfer_fee, dlr.collect_amount_usd, 0) as transfer_fee,
+        s.agent_commission_base_amount,
+        s.agent_commission_percentage_snapshot,
+        s.agent_commission_amount_snapshot,
         dls.driver_id,
         dls.driver_label,
         dls.vehicle_label,
@@ -130,40 +175,47 @@ export class CenterReceiptRepository {
       order by coalesce(dls.ledger_date, s.created_at::date) desc, s.created_at desc, s.shipment_no desc
       limit 3000
       `, values);
-        return result.rows.map((row) => ({
-            shipmentId: String(row.shipment_id),
-            shipmentNo: String(row.shipment_no ?? ''),
-            shipmentStatus: String(row.shipment_status ?? ''),
-            shipmentCreatedAt: String(row.shipment_created_at ?? ''),
-            ledgerDate: row.ledger_date ? String(row.ledger_date) : null,
-            ledgerReceiptNo: row.ledger_receipt_no ? String(row.ledger_receipt_no) : null,
-            ledgerDestination: row.ledger_destination ? String(row.ledger_destination) : null,
-            parcelType: row.parcel_type ? String(row.parcel_type) : null,
-            parcelCount: row.parcel_count == null ? null : Number(row.parcel_count),
-            weightKg: row.weight_kg == null ? null : Number(row.weight_kg),
-            senderName: row.sender_name ? String(row.sender_name) : null,
-            receiverName: row.receiver_name ? String(row.receiver_name) : null,
-            collectAmount: Number(row.collect_amount_usd ?? 0),
-            prepaidAmount: Number(row.prepaid_amount_usd ?? 0),
-            hawalaAmount: Number(row.hawala_amount_usd ?? 0),
-            transferServiceFee: Number(row.transfer_service_fee_usd ?? 0),
-            totalAmount: Number(row.collect_amount_usd ?? 0) +
-                Number(row.prepaid_amount_usd ?? 0) +
-                Number(row.hawala_amount_usd ?? 0) +
-                Number(row.transfer_service_fee_usd ?? 0),
-            currencyCode: String(row.original_currency ?? 'USD'),
-            agentId: row.agent_id ? String(row.agent_id) : null,
-            agentName: row.agent_name ? String(row.agent_name) : null,
-            driverId: row.driver_id ? String(row.driver_id) : null,
-            driverLabel: row.driver_label ? String(row.driver_label) : null,
-            vehicleLabel: row.vehicle_label ? String(row.vehicle_label) : null,
-            tripNo: row.trip_no ? String(row.trip_no) : null,
-            operationalCenter: String(row.operational_center ?? 'غير محدد'),
-            centerReceived: Boolean(row.center_received),
-            centerReceivedAt: row.center_received_at ? String(row.center_received_at) : null,
-            centerReceiptName: row.center_receipt_name ? String(row.center_receipt_name) : null,
-            fromQuickLedger: Boolean(row.ledger_receipt_no || row.ledger_destination),
-        }));
+        return result.rows.map((row) => {
+            const commission = resolveProvincialRowCommission(row);
+            return {
+                shipmentId: String(row.shipment_id),
+                shipmentNo: String(row.shipment_no ?? ''),
+                shipmentStatus: String(row.shipment_status ?? ''),
+                shipmentCreatedAt: String(row.shipment_created_at ?? ''),
+                ledgerDate: row.ledger_date ? String(row.ledger_date) : null,
+                ledgerReceiptNo: row.ledger_receipt_no ? String(row.ledger_receipt_no) : null,
+                ledgerDestination: row.ledger_destination ? String(row.ledger_destination) : null,
+                parcelType: row.parcel_type ? String(row.parcel_type) : null,
+                parcelCount: row.parcel_count == null ? null : Number(row.parcel_count),
+                weightKg: row.weight_kg == null ? null : Number(row.weight_kg),
+                senderName: row.sender_name ? String(row.sender_name) : null,
+                receiverName: row.receiver_name ? String(row.receiver_name) : null,
+                collectAmount: Number(row.collect_amount_usd ?? 0),
+                prepaidAmount: Number(row.prepaid_amount_usd ?? 0),
+                hawalaAmount: Number(row.hawala_amount_usd ?? 0),
+                transferServiceFee: Number(row.transfer_service_fee_usd ?? 0),
+                totalAmount: Number(row.collect_amount_usd ?? 0) +
+                    Number(row.prepaid_amount_usd ?? 0) +
+                    Number(row.hawala_amount_usd ?? 0) +
+                    Number(row.transfer_service_fee_usd ?? 0),
+                currencyCode: String(row.original_currency ?? 'USD'),
+                agentId: row.agent_id ? String(row.agent_id) : null,
+                agentName: row.agent_name ? String(row.agent_name) : null,
+                driverId: row.driver_id ? String(row.driver_id) : null,
+                driverLabel: row.driver_label ? String(row.driver_label) : null,
+                vehicleLabel: row.vehicle_label ? String(row.vehicle_label) : null,
+                tripNo: row.trip_no ? String(row.trip_no) : null,
+                operationalCenter: String(row.operational_center ?? 'غير محدد'),
+                centerReceived: Boolean(row.center_received),
+                centerReceivedAt: row.center_received_at ? String(row.center_received_at) : null,
+                centerReceiptName: row.center_receipt_name ? String(row.center_receipt_name) : null,
+                fromQuickLedger: Boolean(row.ledger_receipt_no || row.ledger_destination),
+                agentCommissionBase: commission.agentCommissionBase,
+                agentCommissionPercentage: commission.agentCommissionPercentage,
+                agentCommissionAmount: commission.agentCommissionAmount,
+                commissionIssue: commission.commissionIssue,
+            };
+        });
     }
     async listVehicleTripReport(scope, filters) {
         const conditions = [

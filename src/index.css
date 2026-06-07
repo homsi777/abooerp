@@ -201,6 +201,63 @@ body {
   background-color: #dbeafe;
 }
 
+.transfer-report-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.transfer-report-table th,
+.transfer-report-table td {
+  text-align: right;
+  vertical-align: middle;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.transfer-report-table .transfer-report-col-date {
+  width: 9%;
+}
+
+.transfer-report-table .transfer-report-col-name {
+  width: 11%;
+}
+
+.transfer-report-table .transfer-report-col-amount {
+  width: 10%;
+}
+
+.transfer-report-table .transfer-report-col-dest {
+  width: 11%;
+}
+
+.transfer-report-table .transfer-report-col-agents {
+  width: 14%;
+}
+
+.transfer-report-table .transfer-report-col-shipment {
+  width: 9%;
+}
+
+.transfer-report-table .transfer-report-col-fee {
+  width: 10%;
+}
+
+.transfer-report-table .transfer-report-col-status {
+  width: 11%;
+}
+
+.transfer-report-table .transfer-report-col-voucher {
+  width: 14%;
+}
+
+.transfer-report-table .transfer-report-col-currency {
+  width: 7%;
+}
+
+.transfer-report-table .transfer-report-col-count {
+  width: 8%;
+}
+
 /* Status Badges */
 .status-badge {
   display: inline-block;
@@ -1840,6 +1897,38 @@ body {
   color: #0f172a;
   font-size: 18px;
   font-weight: 800;
+}
+
+.centers-summary-commission {
+  border-color: #c7d2fe !important;
+  background: linear-gradient(180deg, #eef2ff 0%, #fff 100%);
+}
+
+.centers-summary-commission span {
+  color: #4338ca;
+}
+
+.centers-summary-commission strong {
+  color: #312e81;
+}
+
+.centers-commission-warn {
+  border: 1px solid #fcd34d;
+  border-right: 4px solid #f59e0b;
+  border-radius: 8px;
+  background: #fffbeb;
+  padding: 10px 14px;
+  color: #92400e;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.centers-commission-warn p {
+  margin: 0;
+}
+
+.centers-commission-warn p + p {
+  margin-top: 6px;
 }
 
 .centers-totals-row td {

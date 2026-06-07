@@ -7,6 +7,7 @@ import { formatCurrency } from '../lib/currency/currency';
 import { normalizeShipmentStatus, shipmentStatusLabelAr } from '../lib/shipments/shipmentStatus';
 import {
   computeProvincialTotals,
+  computeProvincialCommissionSummary,
   formatWeightTotal,
   groupProvincialByAgent,
 } from '../lib/shipping/provincialInboundTotals';
@@ -112,6 +113,10 @@ export default function Centers() {
 
   const selectedTotals = useMemo(() => computeProvincialTotals(selectedRows), [selectedRows]);
   const agentTotals = useMemo(() => groupProvincialByAgent(selectedRows), [selectedRows]);
+  const commissionSummary = useMemo(
+    () => computeProvincialCommissionSummary(selectedRows),
+    [selectedRows],
+  );
 
   const completeCenterReceive = async (row: ProvincialInboundRow) => {
     setProcessingId(row.shipmentId);
@@ -314,11 +319,32 @@ export default function Centers() {
               <span>أجور حوالات</span>
               <strong>{formatCurrency(selectedTotals.transferServiceFee, 'USD')}</strong>
             </div>
+            <div className="centers-summary-commission">
+              <span>عمولة مستحقة للوكيل</span>
+              <strong>{formatCurrency(commissionSummary.totalCommission, 'USD')}</strong>
+            </div>
             <div>
               <span>من الدفتر السريع</span>
               <strong>{selectedRows.filter((r) => r.fromQuickLedger).length.toLocaleString()}</strong>
             </div>
           </section>
+
+          {(commissionSummary.missingAgentCount > 0 || commissionSummary.missingRateCount > 0) && (
+            <div className="centers-commission-warn no-print">
+              {commissionSummary.missingAgentCount > 0 ? (
+                <p>
+                  {commissionSummary.missingAgentCount.toLocaleString()} شحنة بدون <strong>وكيل معرّف</strong> —
+                  لم تُحسب عمولتها. ربط الوكيل يتم من الدفتر أو تعريف الوكلاء.
+                </p>
+              ) : null}
+              {commissionSummary.missingRateCount > 0 ? (
+                <p>
+                  {commissionSummary.missingRateCount.toLocaleString()} شحنة لوكيل <strong>بدون نسبة عمولة</strong> —
+                  حدّد نسبة العمولة (%) في تعريف الوكيل.
+                </p>
+              ) : null}
+            </div>
+          )}
 
           {agentTotals.length > 0 && (
             <div className="card overflow-auto">
@@ -334,6 +360,7 @@ export default function Centers() {
                     <th>مسبق</th>
                     <th>حوالة</th>
                     <th>أجرة حوالة</th>
+                    <th>عمولة الوكيل</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -347,6 +374,7 @@ export default function Centers() {
                       <td>{agent.prepaidAmount.toLocaleString()}</td>
                       <td>{agent.hawalaAmount.toLocaleString()}</td>
                       <td>{agent.transferServiceFee.toLocaleString()}</td>
+                      <td>{agent.agentCommissionAmount.toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -360,6 +388,7 @@ export default function Centers() {
                     <td><strong>{selectedTotals.prepaidAmount.toLocaleString()}</strong></td>
                     <td><strong>{selectedTotals.hawalaAmount.toLocaleString()}</strong></td>
                     <td><strong>{selectedTotals.transferServiceFee.toLocaleString()}</strong></td>
+                    <td><strong>{commissionSummary.totalCommission.toLocaleString()}</strong></td>
                   </tr>
                 </tfoot>
               </table>
