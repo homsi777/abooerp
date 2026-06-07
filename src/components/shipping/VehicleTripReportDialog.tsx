@@ -3,6 +3,8 @@ import { Truck, X } from 'lucide-react';
 import { getBackendIdFromSynthetic, phase15Gateway } from '../../lib/api/phase15Gateway';
 import { centersGateway, type ProvincialInboundRow, type VehicleTripReportMeta } from '../../lib/api/centersGateway';
 import { downloadCsv } from '../../lib/export/csvDownload';
+import { buildVehicleTripReportPrintHtml } from '../../lib/export/financialStatementPrint';
+import FinancialStatementPrintButtons from '../finance/FinancialStatementPrintButtons';
 import { normalizeShipmentStatus, shipmentStatusLabelAr } from '../../lib/shipments/shipmentStatus';
 import {
   computeProvincialTotals,
@@ -129,6 +131,17 @@ export default function VehicleTripReportDialog({ open, defaultDate, onClose }: 
         ]),
     );
   };
+
+  const buildPrintHtml = () =>
+    buildVehicleTripReportPrintHtml({
+      driverName: selectedDriver?.name ?? '—',
+      reportDate,
+      vehicleLabel: rows[0]?.vehicleLabel ?? '—',
+      meta,
+      totals,
+      agentTotals,
+      rows,
+    });
 
   if (!open) return null;
 
@@ -280,9 +293,14 @@ export default function VehicleTripReportDialog({ open, defaultDate, onClose }: 
               <button type="button" className="toolbar-btn" onClick={exportCsv} disabled={!rows.length}>
                 تصدير CSV
               </button>
-              <button type="button" className="toolbar-btn" onClick={() => window.print()} disabled={!rows.length}>
-                طباعة
-              </button>
+              <FinancialStatementPrintButtons
+                disabled={!rows.length}
+                documentType="vehicle_trip_report"
+                pdfTitle={`تقرير سيارة — ${selectedDriver?.name ?? ''}`}
+                pdfFileName={`vehicle-report-${selectedDriver?.name ?? 'driver'}-${reportDate}.pdf`}
+                onBuildHtml={buildPrintHtml}
+                className="flex gap-2"
+              />
               <button type="button" className="toolbar-btn primary" onClick={onClose}>
                 إغلاق
               </button>

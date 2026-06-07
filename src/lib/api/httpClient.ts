@@ -200,7 +200,12 @@ async function request<T>(path: string, method: HttpMethod, body?: unknown, retr
   }
 
   if (!response.ok || payload.success === false) {
-    throw new Error(payload?.error ?? `Request failed with status ${response.status}`);
+    const base = payload?.error ?? `Request failed with status ${response.status}`;
+    const detailSuffix =
+      payload?.details && typeof payload.details === 'string' && !String(base).includes(String(payload.details))
+        ? ` — ${payload.details}`
+        : '';
+    throw new Error(`${base}${detailSuffix}`);
   }
   if ((method === 'POST' || method === 'PUT' || method === 'DELETE') && response.ok) {
     rememberOwnCorrelationFromFetchResponse(response);

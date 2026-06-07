@@ -1,4 +1,8 @@
 import { agentStatementSourceLabel } from '../../components/agents/AgentFinancialStatementContent';
+import type { ProvincialInboundRow, VehicleTripReportMeta } from '../api/centersGateway';
+import type { ProvincialAgentTotals, ProvincialTotals } from '../shipping/provincialInboundTotals';
+import { formatWeightTotal } from '../shipping/provincialInboundTotals';
+import { normalizeShipmentStatus, shipmentStatusLabelAr } from '../shipments/shipmentStatus';
 import {
   buildLedgerStylePrintHtml,
   formatLedgerDate,
@@ -307,6 +311,88 @@ export function buildAgentCodStatementPrintHtml<T>(input: {
         rows: input.rows.map((row, index) => input.rowMapper(row, index)),
       },
     ],
+    orientation: 'landscape',
+  });
+}
+
+export function buildVehicleTripReportPrintHtml(input: {
+  driverName: string;
+  reportDate: string;
+  vehicleLabel: string;
+  meta: VehicleTripReportMeta | null;
+  totals: ProvincialTotals;
+  agentTotals: ProvincialAgentTotals[];
+  rows: ProvincialInboundRow[];
+}): string {
+  const meta: LedgerPrintMetaItem[] = [
+    { label: 'التقرير', value: 'تقرير سيارة — حسب السائق والتاريخ' },
+    { label: 'السائق', value: input.driverName || '—' },
+    { label: 'التاريخ', value: input.reportDate || '—' },
+    { label: 'السيارة', value: input.vehicleLabel || '—' },
+    { label: 'أسطر الدفتر', value: String(input.meta?.totalRows ?? input.totals.shipments) },
+    { label: 'مرحّلة كشحنات', value: String(input.meta?.postedRows ?? '—') },
+    { label: 'دفتر فقط', value: String(input.meta?.ledgerOnlyRows ?? '—') },
+    { label: 'عدد الطرود', value: input.totals.parcelCount.toLocaleString('en-US') },
+    { label: 'مجموع الأوزان (كغ)', value: formatWeightTotal(input.totals.weightKg) },
+    { label: 'تحصيل', value: input.totals.collectAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }) },
+    { label: 'مسبق', value: input.totals.prepaidAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }) },
+    { label: 'حوالات', value: input.totals.hawalaAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }) },
+    { label: 'أجور حوالات', value: input.totals.transferServiceFee.toLocaleString('en-US', { maximumFractionDigits: 2 }) },
+    { label: 'تاريخ الطباعة', value: formatLedgerDate(new Date().toISOString()) },
+  ];
+
+  const sections: LedgerPrintTableSection[] = [];
+
+  if (input.agentTotals.length > 0) {
+    sections.push({
+      heading: 'مجاميع حسب الوكيل',
+      headers: ['الوكيل', 'شحنات', 'طرود', 'وزن (كغ)', 'تحصيل', 'مسبق', 'حوالة', 'أجرة'],
+      rows: input.agentTotals.map((agent) => [
+        agent.agentName,
+        String(agent.shipments),
+        agent.parcelCount.toLocaleString('en-US'),
+        formatWeightTotal(agent.weightKg),
+        agent.collectAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+        agent.prepaidAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+        agent.hawalaAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+        agent.transferServiceFee.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+      ]),
+    });
+  }
+
+  sections.push({
+    heading: 'تفاصيل الشحنات (دفتر الإدخال السريع)',
+    headers: ['وصل', 'وجهة', 'وكيل', 'حالة', 'عدد', 'وزن', 'تحصيل', 'مسبق', 'حوالة', 'أجرة'],
+    rows: input.rows.map((row) => [
+      row.ledgerReceiptNo ?? row.shipmentNo,
+      row.ledgerDestination ?? row.operationalCenter,
+      row.agentName ?? '—',
+      row.isPosted ? shipmentStatusLabelAr(normalizeShipmentStatus(row.shipmentStatus)) : 'دفتر فقط',
+      row.parcelCount == null ? '—' : String(row.parcelCount),
+      row.weightKg == null ? '—' : formatWeightTotal(row.weightKg),
+      row.collectAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+      row.prepaidAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+      row.hawalaAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+      row.transferServiceFee.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+    ]),
+    footerRow: [
+      'الإجمالي',
+      '',
+      '',
+      '',
+      input.totals.parcelCount.toLocaleString('en-US'),
+      formatWeightTotal(input.totals.weightKg),
+      input.totals.collectAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+      input.totals.prepaidAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+      input.totals.hawalaAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+      input.totals.transferServiceFee.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+    ],
+  });
+
+  return buildLedgerStylePrintHtml({
+    title: `تقرير سيارة — ${input.driverName} — ${input.reportDate}`,
+    meta,
+    sections,
     orientation: 'landscape',
   });
 }

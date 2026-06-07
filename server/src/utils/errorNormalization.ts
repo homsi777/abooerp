@@ -60,9 +60,11 @@ export function normalizeError(error: unknown): NormalizedError {
     };
   }
   if (dbCode === '42703' || dbCode === '42P01' || dbCode === '23514') {
+    const pgDetail = String((error as any)?.message || (error as any)?.detail || '').trim();
+    const hint = pgDetail ? ` (${pgDetail})` : '';
     return {
       statusCode: 503,
-      message: 'مخطط قاعدة البيانات غير محدث. شغّل ترحيلات قاعدة البيانات ثم أعد تشغيل الخادم.',
+      message: `مخطط قاعدة البيانات غير محدث. شغّل ترحيلات قاعدة البيانات ثم أعد تشغيل الخادم.${hint}`,
       code: 'DB_SCHEMA_OUTDATED',
       details: (error as any)?.detail || (error as any)?.message,
     };
