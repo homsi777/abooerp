@@ -29,7 +29,7 @@ echo "Pulling branch: $BRANCH"
 git pull origin "$BRANCH"
 
 echo "Installing dependencies"
-npm install
+PUPPETEER_SKIP_DOWNLOAD=true npm install
 
 echo "Ensuring Chromium for server PDF export (Ubuntu)"
 if command -v apt-get >/dev/null 2>&1; then

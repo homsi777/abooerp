@@ -7,9 +7,10 @@ export async function renderHtmlToPdfBuffer(html: string, landscape = true): Pro
     throw new HttpError(413, 'محتوى التقرير كبير جداً للتصدير.');
   }
 
-  let puppeteer: typeof import('puppeteer-core');
+  let launch: typeof import('puppeteer-core').default.launch;
   try {
-    puppeteer = await import('puppeteer-core');
+    const puppeteer = await import('puppeteer-core');
+    launch = puppeteer.default.launch.bind(puppeteer.default);
   } catch {
     throw new HttpError(503, 'خدمة PDF غير متوفرة على الخادم.');
   }
@@ -17,6 +18,7 @@ export async function renderHtmlToPdfBuffer(html: string, landscape = true): Pro
   const executablePath =
     process.env.PUPPETEER_EXECUTABLE_PATH?.trim() ||
     process.env.CHROME_PATH?.trim() ||
+    (process.platform === 'linux' ? '/snap/bin/chromium' : undefined) ||
     (process.platform === 'linux' ? '/usr/bin/chromium-browser' : undefined) ||
     (process.platform === 'linux' ? '/usr/bin/chromium' : undefined) ||
     (process.platform === 'win32'
@@ -30,7 +32,7 @@ export async function renderHtmlToPdfBuffer(html: string, landscape = true): Pro
     );
   }
 
-  const browser = await puppeteer.default.launch({
+  const browser = await launch({
     headless: true,
     executablePath,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
