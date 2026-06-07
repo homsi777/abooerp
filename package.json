@@ -101,6 +101,7 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "html2pdf.js": "^0.14.0",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^1.8.0",
     "pg": "^8.20.0",
@@ -135,7 +136,9 @@
       {
         "from": "server/src/db/migrations",
         "to": "migrations",
-        "filter": ["**/*.sql"]
+        "filter": [
+          "**/*.sql"
+        ]
       },
       {
         "from": "server/.env",

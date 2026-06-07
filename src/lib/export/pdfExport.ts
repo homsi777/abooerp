@@ -1,3 +1,5 @@
+import { exportPdfFromRuntimeOrBrowser } from './htmlToPdf';
+
 function escapeHtml(value: string | number | boolean | null | undefined): string {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -66,23 +68,11 @@ export async function exportPdfTable(payload: {
     rows: payload.rows,
   });
 
-  if (typeof window !== 'undefined' && window.pdfRuntime?.exportPdf) {
-    return window.pdfRuntime.exportPdf({
-      title: payload.title,
-      html,
-      defaultFileName: payload.defaultFileName,
-      landscape: true,
-    });
-  }
-
-  const popup = window.open('', '_blank');
-  if (popup) {
-    popup.document.open();
-    popup.document.write(html);
-    popup.document.close();
-    popup.focus();
-    popup.print();
-  }
-  return { saved: false, filePath: null, message: 'print_fallback' };
+  return exportPdfFromRuntimeOrBrowser({
+    title: payload.title,
+    html,
+    defaultFileName: payload.defaultFileName,
+    landscape: true,
+  });
 }
 

@@ -57,8 +57,8 @@ export default function FinancialStatementPrintButtons({
         defaultFileName: pdfFileName,
         landscape,
       });
-      if (result.saved) showToast('تم حفظ ملف PDF', 'success');
-      else if (result.message !== 'cancelled') showToast('تم فتح معاينة التصدير', 'info');
+      if (result.saved) showToast('تم تنزيل ملف PDF', 'success');
+      else if (result.message === 'cancelled') showToast('تم إلغاء التصدير', 'info');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'تعذر تصدير PDF', 'error');
     } finally {

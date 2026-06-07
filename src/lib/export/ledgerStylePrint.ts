@@ -1,4 +1,5 @@
 import { isElectronRuntime } from '../runtime/runtimeMode';
+import { exportPdfFromRuntimeOrBrowser } from './htmlToPdf';
 
 export type LedgerPrintMetaItem = { label: string; value: string };
 
@@ -153,17 +154,7 @@ export async function exportLedgerStylePdf(payload: {
   defaultFileName: string;
   landscape?: boolean;
 }) {
-  if (typeof window !== 'undefined' && window.pdfRuntime?.exportPdf) {
-    return window.pdfRuntime.exportPdf({
-      title: payload.title,
-      html: payload.html,
-      defaultFileName: payload.defaultFileName,
-      landscape: payload.landscape ?? true,
-    });
-  }
-
-  printHtmlInBrowser(payload.html);
-  return { saved: false, filePath: null, message: 'print_fallback' as const };
+  return exportPdfFromRuntimeOrBrowser(payload);
 }
 
 export function formatLedgerMoney(value: unknown, currency = 'USD'): string {
