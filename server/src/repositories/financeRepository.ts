@@ -1898,6 +1898,7 @@ export class FinanceRepository {
           exchange_rate_to_usd = coalesce($6, exchange_rate_to_usd),
           base_amount_usd = coalesce($7, base_amount_usd),
           cashbox_id = $10,
+          created_at = coalesce($11::timestamptz, created_at),
           updated_at = now()
         where id = $1
           and (
@@ -1917,6 +1918,7 @@ export class FinanceRepository {
           expectsUpdatedAt,
           payload.expectedUpdatedAt ?? null,
           nextCashboxId ?? null,
+          payload.createdAt ?? null,
         ],
       );
       const voucher = updated.rows[0];
@@ -1967,6 +1969,7 @@ export class FinanceRepository {
         exchange_rate_to_usd = coalesce($6, exchange_rate_to_usd),
         base_amount_usd = coalesce($7, base_amount_usd),
         cashbox_id = $10,
+        created_at = coalesce($11::timestamptz, created_at),
         updated_at = now()
       where id = $1
         and (
@@ -1986,6 +1989,7 @@ export class FinanceRepository {
         expectsUpdatedAt,
         payload.expectedUpdatedAt ?? null,
         nextCashboxId ?? null,
+        payload.createdAt ?? null,
       ],
     );
     const voucher = updated.rows[0];
@@ -2084,6 +2088,7 @@ export class FinanceRepository {
           exchange_rate_to_usd = coalesce($6, exchange_rate_to_usd),
           base_amount_usd = coalesce($7, base_amount_usd),
           cashbox_id = $10,
+          created_at = coalesce($11::timestamptz, created_at),
           updated_at = now()
         where id = $1
           and (
@@ -2103,6 +2108,7 @@ export class FinanceRepository {
           expectsUpdatedAt,
           payload.expectedUpdatedAt ?? null,
           nextCashboxId ?? null,
+          payload.createdAt ?? null,
         ],
       );
       const voucher = updated.rows[0];
@@ -2140,6 +2146,7 @@ export class FinanceRepository {
           exchange_rate_to_usd = coalesce($6, exchange_rate_to_usd),
           base_amount_usd = coalesce($7, base_amount_usd),
           cashbox_id = $8,
+          created_at = coalesce($9::timestamptz, created_at),
           updated_at = now()
       where id = $1
       returning *
@@ -2153,6 +2160,7 @@ export class FinanceRepository {
         payload.exchangeRateToUsd ?? null,
         payload.baseAmountUsd ?? null,
         nextCashboxId ?? null,
+        payload.createdAt ?? null,
       ],
     );
     const voucher = updated.rows[0];

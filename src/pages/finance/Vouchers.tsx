@@ -100,6 +100,11 @@ export default function FinanceVouchers() {
   const [searchParams] = useSearchParams();
   const isAgent = user?.userType === 'agent';
   const canUpdateVoucher = hasPermission('finance.vouchers.update') || hasPermission('finance.vouchers.write');
+  const todayIso = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const canBackdateVoucher = useMemo(() => {
+    if (user?.userType === 'admin') return true;
+    return hasPermission('finance.vouchers.backdate');
+  }, [user?.userType, hasPermission]);
 
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [cashboxes, setCashboxes] = useState<BackendCashboxRecord[]>([]);
@@ -122,6 +127,7 @@ export default function FinanceVouchers() {
     refNo: '',
     status: 'draft' as 'draft' | 'confirmed' | 'cancelled',
   });
+  const canEditVoucherDate = canBackdateVoucher && (!editingVoucher || editingVoucher.status === 'draft');
 
   const cashboxesForCurrency = useMemo(
     () => cashboxes.filter((c) => c.is_active && c.currency_code === formData.currency),
@@ -350,6 +356,19 @@ export default function FinanceVouchers() {
 
   const handleSave = async () => {
     try {
+      if (formData.date > todayIso) {
+        showToast('لا يمكن إنشاء سند بتاريخ مستقبلي.', 'error');
+        return;
+      }
+      if (formData.date !== todayIso && !canBackdateVoucher) {
+        showToast('لا يمكن إنشاء أو تعديل سند بتاريخ سابق.', 'error');
+        return;
+      }
+      if (editingVoucher && formData.date !== editingVoucher.date && editingVoucher.status !== 'draft') {
+        showToast('لا يمكن تغيير تاريخ سند مؤكد أو ملغى.', 'error');
+        return;
+      }
+
       const manualPartyName = formData.relatedParty.trim();
       const isManualParty = !formData.transferCashboxId && !formData.customerId && !formData.agentId && manualPartyName.length > 0;
       if (!formData.transferCashboxId && !formData.customerId && !formData.agentId && !isManualParty) {
@@ -393,6 +412,10 @@ export default function FinanceVouchers() {
         status: formData.status,
         cashboxId: formData.cashboxId || undefined,
       };
+
+      if (canBackdateVoucher && canEditVoucherDate && formData.date) {
+        payload.createdAt = new Date(`${formData.date}T12:00:00`).toISOString();
+      }
 
       if (formData.transferCashboxId) {
         const sourceCashbox = cashboxes.find((c) => c.id === formData.cashboxId);
@@ -505,8 +528,14 @@ export default function FinanceVouchers() {
                 type="date"
                 className="form-input w-full"
                 value={formData.date}
+                min={canBackdateVoucher ? undefined : todayIso}
+                max={todayIso}
+                readOnly={!canEditVoucherDate}
                 onChange={(e) => setFormData({ ...formData, date: e.target.value })}
               />
+              {!canBackdateVoucher ? (
+                <p className="text-xs text-gray-500 mt-1">التاريخ مقيد بيوم اليوم — يلزم صلاحية السندات بتاريخ سابق للتعديل.</p>
+              ) : null}
             </div>
             <div className="form-group">
               <label className="form-label">الجهة المعنية</label>

@@ -41,7 +41,7 @@ export class DailyLedgerService {
 
   postPendingShipments(
     scope: DataScope,
-    filters: { branchId: string; ledgerDate: string; lineLabel: string; rowIds?: string[] },
+    filters: { branchId: string; ledgerDate: string; lineLabel: string; sessionId?: string; rowIds?: string[] },
     allowedBranchIds: string[],
   ) {
     if (!this.shipmentPosting) {

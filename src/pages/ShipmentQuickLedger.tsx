@@ -76,6 +76,16 @@ const LEDGER_FETCH_CHUNK_SIZE = 500;
 const LEDGER_ENTRY_SLOTS = 1;
 const LEDGER_ROWS_ADD_INCREMENT = 1;
 const ROW_SAVE_DEBOUNCE_MS = 280;
+const SESSION_SCOPE_REQUIRED_MSG =
+  'لا يمكن تنفيذ هذا الإجراء من وضع "الكل". اختر إرسالية محددة أولاً.';
+
+/** أسطر ضمن نطاق الإرسالية النشطة للحفظ/الترحيل */
+function rowInActiveSessionScope(row: LedgerRow, sessionId: string): boolean {
+  if (row.sessionId === sessionId) return true;
+  // أسطر إدخال جديدة قبل أول حفظ — تُنسب للإرسالية المعروضة حالياً
+  if (!row.dbId && !row.sessionId) return true;
+  return false;
+}
 
 function sortRemoteLedgerRows(data: RemoteDailyLedgerRow[]) {
   return [...data].sort((a, b) => {
@@ -752,6 +762,7 @@ export default function ShipmentQuickLedger() {
   const [reprintRequired, setReprintRequired] = useState(false);
   const [remoteRowsRaw, setRemoteRowsRaw] = useState<RemoteDailyLedgerRow[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [sessionSwitching, setSessionSwitching] = useState(false);
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedDeleteRowIds, setSelectedDeleteRowIds] = useState<number[]>([]);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -1037,7 +1048,10 @@ export default function ShipmentQuickLedger() {
   );
 
   const stats = useMemo(() => {
-    const meaningful = rows.filter(isRowStarted);
+    const scopedRows = activeSessionId
+      ? rows.filter((row) => rowInActiveSessionScope(row, activeSessionId))
+      : rows;
+    const meaningful = scopedRows.filter(isRowStarted);
     const completeRows = meaningful.filter((row) => isRowComplete(row) && !row.postedShipmentId);
     const totalWeightKg = meaningful.reduce((sum, row) => sum + (parseWeightKg(row.weightKg) ?? 0), 0);
     return {
@@ -1048,7 +1062,7 @@ export default function ShipmentQuickLedger() {
       totalCollect: meaningful.reduce((sum, row) => sum + rowAmountUsd(row), 0),
       totalWeightKg,
     };
-  }, [rows]);
+  }, [rows, activeSessionId]);
 
   const rowsRef = useRef(rows);
   const customersRef = useRef(customers);
@@ -1150,10 +1164,14 @@ export default function ShipmentQuickLedger() {
     notes: remote.notes ?? '',
   });
 
-  const flushPendingRowSaves = async () => {
+  const flushPendingRowSaves = async (scopeSessionId?: string | null) => {
     Object.values(saveTimersRef.current).forEach((timer) => window.clearTimeout(timer));
     saveTimersRef.current = {};
-    const targets = rowsRef.current.filter(shouldPersistRow);
+    const targets = rowsRef.current.filter((row) => {
+      if (!shouldPersistRow(row)) return false;
+      if (scopeSessionId) return rowInActiveSessionScope(row, scopeSessionId);
+      return true;
+    });
     for (const row of targets) {
       await saveRowToServerRef.current(row.id);
     }
@@ -1609,6 +1627,7 @@ export default function ShipmentQuickLedger() {
                   sessionDriverId: saved.driver_id
                     ? syntheticEntityId(saved.driver_id)
                     : latestDriverId || r.sessionDriverId,
+                  sessionId: saved.session_id ?? r.sessionId,
                   updatedAt: saved.updated_at,
                   postedShipmentId: saved.posted_shipment_id,
                   loadedAt: saved.loaded_at,
@@ -2017,23 +2036,30 @@ export default function ShipmentQuickLedger() {
   };
 
   const selectSession = async (sessionId: string | null) => {
-    if (sessionId === activeSessionId) return;
-    // الحفظ التلقائي يضمن عدم فقدان التعديلات قبل تبديل الإرسالية
-    await flushPendingRowSaves();
-    setActiveSessionId(sessionId);
-    if (sessionId) {
-      const session = daySessions.find((s) => s.id === sessionId);
-      if (session) {
-        const driverSynthetic = session.driverBackendId ? syntheticEntityId(session.driverBackendId) : 0;
-        const vehicleSynthetic = session.vehicleBackendId ? syntheticEntityId(session.vehicleBackendId) : 0;
-        setTrip((prev) => ({
-          ...prev,
-          driverId: driverSynthetic || prev.driverId,
-          driver: session.driverLabel,
-          vehicleId: vehicleSynthetic || prev.vehicleId,
-          vehicle: session.vehicleLabel !== '—' ? session.vehicleLabel : prev.vehicle,
-        }));
+    if (sessionId === activeSessionId || sessionSwitching) return;
+    setSessionSwitching(true);
+    try {
+      // احفظ أسطر الإرسالية الحالية فقط — لا تُعيد حفظ كل أسطر اليوم
+      if (activeSessionId) {
+        await flushPendingRowSaves(activeSessionId);
       }
+      setActiveSessionId(sessionId);
+      if (sessionId) {
+        const session = daySessions.find((s) => s.id === sessionId);
+        if (session) {
+          const driverSynthetic = session.driverBackendId ? syntheticEntityId(session.driverBackendId) : 0;
+          const vehicleSynthetic = session.vehicleBackendId ? syntheticEntityId(session.vehicleBackendId) : 0;
+          setTrip((prev) => ({
+            ...prev,
+            driverId: driverSynthetic || prev.driverId,
+            driver: session.driverLabel,
+            vehicleId: vehicleSynthetic || prev.vehicleId,
+            vehicle: session.vehicleLabel !== '—' ? session.vehicleLabel : prev.vehicle,
+          }));
+        }
+      }
+    } finally {
+      setSessionSwitching(false);
     }
   };
 
@@ -2484,6 +2510,10 @@ export default function ShipmentQuickLedger() {
       showToast('يرجى اختيار الفرع قبل حفظ الشحنات', 'error');
       return;
     }
+    if (!activeSessionId) {
+      showToast(SESSION_SCOPE_REQUIRED_MSG, 'error');
+      return;
+    }
     const origin = resolveTripOrigin(trip.line);
     if (!origin) {
       showToast('يرجى اختيار الخط / المصدر أولاً', 'error');
@@ -2530,12 +2560,15 @@ export default function ShipmentQuickLedger() {
     };
 
     try {
-      quickLedgerLog.log('info', 'prepare', 'مزامنة الأسطر قبل الحفظ الجماعي');
-      await flushPendingRowSaves();
+      quickLedgerLog.log('info', 'prepare', 'مزامنة أسطر الإرسالية النشطة قبل الحفظ الجماعي', {
+        details: { sessionId: activeSessionId },
+      });
+      await flushPendingRowSaves(activeSessionId);
 
       const currentRows = rowsRef.current;
-      const rowsToPost = currentRows.filter((row) => isRowComplete(row) && !row.postedShipmentId);
-      const alreadyPostedCount = currentRows.filter(
+      const sessionRows = currentRows.filter((row) => rowInActiveSessionScope(row, activeSessionId));
+      const rowsToPost = sessionRows.filter((row) => isRowComplete(row) && !row.postedShipmentId);
+      const alreadyPostedCount = sessionRows.filter(
         (row) => isRowStarted(row) && row.postedShipmentId,
       ).length;
       const resumeMode = alreadyPostedCount > 0 && rowsToPost.length > 0;
@@ -2576,7 +2609,7 @@ export default function ShipmentQuickLedger() {
 
       const batchDup = findDuplicateWithinBatch(rowsToPost);
       if (batchDup) {
-        const message = describeReceiptConflict(currentRows, batchDup.row, batchDup.other);
+        const message = describeReceiptConflict(sessionRows, batchDup.row, batchDup.other);
         const items = progressItems.map((item) => {
           if (item.key === String(batchDup.row.id)) {
             return { ...item, status: 'error' as const, message };
@@ -2592,9 +2625,9 @@ export default function ShipmentQuickLedger() {
         });
         return;
       }
-      const postedDup = findReceiptConflictWithPosted(rowsToPost, currentRows);
+      const postedDup = findReceiptConflictWithPosted(rowsToPost, sessionRows);
       if (postedDup) {
-        const message = describeReceiptConflict(currentRows, postedDup.row, postedDup.other);
+        const message = describeReceiptConflict(sessionRows, postedDup.row, postedDup.other);
         const items = progressItems.map((item) =>
           item.key === String(postedDup.row.id) ? { ...item, status: 'error' as const, message } : item,
         );
@@ -2605,9 +2638,9 @@ export default function ShipmentQuickLedger() {
         });
         return;
       }
-      const unpostedDup = findReceiptConflictWithUnposted(rowsToPost, currentRows);
+      const unpostedDup = findReceiptConflictWithUnposted(rowsToPost, sessionRows);
       if (unpostedDup) {
-        const message = describeReceiptConflict(currentRows, unpostedDup.row, unpostedDup.other);
+        const message = describeReceiptConflict(sessionRows, unpostedDup.row, unpostedDup.other);
         const items = progressItems.map((item) =>
           item.key === String(unpostedDup.row.id) ? { ...item, status: 'error' as const, message } : item,
         );
@@ -2724,6 +2757,7 @@ export default function ShipmentQuickLedger() {
                   sessionDriverId: saved.driver_id
                     ? syntheticEntityId(saved.driver_id)
                     : trip.driverId || r.sessionDriverId,
+                  sessionId: saved.session_id ?? activeSessionId ?? r.sessionId,
                 }
               : r,
           );
@@ -2760,6 +2794,7 @@ export default function ShipmentQuickLedger() {
         branchId: activeBranchId,
         ledgerDate: trip.date,
         lineLabel: trip.line,
+        sessionId: activeSessionId,
         rowIds: upsertedRowIds,
       });
 
@@ -3033,7 +3068,13 @@ export default function ShipmentQuickLedger() {
             <ScrollText size={16} />
             سجل الحفظ
           </button>
-          <button type="button" className="primary" onClick={() => void saveRows()} disabled={saving || loadingRefs}>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => void saveRows()}
+            disabled={saving || loadingRefs || !activeSessionId}
+            title={!activeSessionId ? SESSION_SCOPE_REQUIRED_MSG : undefined}
+          >
             <Save size={16} />
             {saving
               ? 'جاري الحفظ...'
@@ -3131,8 +3172,10 @@ export default function ShipmentQuickLedger() {
       <section className="quick-ledger-sessions" dir="rtl">
         <div className="quick-ledger-sessions-tabs">
           <span className="quick-ledger-sessions-label">إرساليات اليوم:</span>
-          {remoteLoading ? (
-            <span className="quick-ledger-sessions-hint">جاري تحميل إرساليات اليوم...</span>
+          {remoteLoading || sessionSwitching ? (
+            <span className="quick-ledger-sessions-hint">
+              {sessionSwitching ? 'جاري التبديل بين الإرساليات...' : 'جاري تحميل إرساليات اليوم...'}
+            </span>
           ) : daySessions.length === 0 ? (
             <span className="quick-ledger-sessions-hint">لا توجد إرساليات لهذا التاريخ</span>
           ) : (
@@ -3151,6 +3194,7 @@ export default function ShipmentQuickLedger() {
                   type="button"
                   className={`quick-ledger-session-box${activeSessionId === session.id ? ' is-active' : ''}${session.reprintRequired ? ' needs-reprint' : ''}`}
                   onClick={() => void selectSession(session.id)}
+                  disabled={sessionSwitching}
                   title={`${session.driverLabel} — ${session.vehicleLabel} — ${session.rowsCount} سطر — ${formatWeightKgTons(session.weightKg)}${session.reprintRequired ? ' — تحتاج إعادة طباعة' : ''}`}
                 >
                   {session.displayNo}
@@ -3165,6 +3209,11 @@ export default function ShipmentQuickLedger() {
             </span>
           )}
         </div>
+        {!activeSessionId && daySessions.length > 0 && (
+          <p className="quick-ledger-sessions-operational-hint" role="status">
+            وضع «الكل» للمراجعة والطباعة اليومية فقط. اختر إرسالية [1] أو [2]… قبل «حفظ الشحنات» أو الترحيل.
+          </p>
+        )}
         {activeSession && (
           <div className="quick-ledger-session-summary">
             <span>الإرسالية الحالية: <strong>#{activeSession.displayNo}</strong></span>

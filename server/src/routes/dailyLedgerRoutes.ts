@@ -5,6 +5,7 @@ import { parseDataScope } from '../utils/scope.js';
 import { DailyLedgerService } from '../services/dailyLedgerService.js';
 import type { DailyLedgerTransferService } from '../services/dailyLedgerTransferService.js';
 import { appendQuickLedgerClientLogs } from '../services/quickLedgerLogService.js';
+import { HttpError } from '../utils/errors.js';
 
 const uuid = z.string().uuid();
 
@@ -224,6 +225,7 @@ export function createDailyLedgerRouter(
         branchId: uuid,
         ledgerDate: z.string().min(1),
         lineLabel: z.string().min(1),
+        sessionId: uuid.optional(),
         rowIds: z.array(uuid).optional(),
       });
       const input = bodySchema.parse(req.body);
@@ -245,8 +247,16 @@ export function createDailyLedgerRouter(
         return;
       }
 
-      const result = await service.postPendingShipments(scope, input, allowedBranchIds);
-      res.json({ success: true, data: result });
+      try {
+        const result = await service.postPendingShipments(scope, input, allowedBranchIds);
+        res.json({ success: true, data: result });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          res.status(error.statusCode).json({ success: false, error: error.message });
+          return;
+        }
+        throw error;
+      }
     },
   );
 

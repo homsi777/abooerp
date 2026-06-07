@@ -11,6 +11,49 @@ import { requireIdempotencyKey } from '../middleware/idempotency.js';
 import { licenseGuard } from '../middleware/licenseGuard.js';
 import { calculateShipmentFinancialBreakdown } from '../utils/shipmentFinancialBreakdown.js';
 import { computeAgentRemittanceDue } from '../utils/agentShipmentSettlement.js';
+import { HttpError } from '../utils/errors.js';
+
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getRequestPermissions(req: unknown): string[] {
+  const userContext = (req as { requestUserContext?: { permissions?: string[] } }).requestUserContext;
+  return Array.isArray(userContext?.permissions) ? userContext.permissions : [];
+}
+
+function canBackdateVouchers(req: unknown): boolean {
+  const userContext = (req as { requestUserContext?: { roleCode?: string; userType?: string } }).requestUserContext;
+  const roleCode = String(userContext?.roleCode ?? '').toLowerCase();
+  const userType = String(userContext?.userType ?? '').toLowerCase();
+  const isAdmin = roleCode === 'admin' || userType === 'admin';
+  const isManager = isAdmin || roleCode === 'general_manager' || roleCode === 'branch_manager';
+  return isManager || getRequestPermissions(req).includes('finance.vouchers.backdate');
+}
+
+function resolveVoucherTargetDate(createdAt?: string): string {
+  if (createdAt) return createdAt.slice(0, 10);
+  return todayIsoDate();
+}
+
+function assertVoucherDateAllowed(req: unknown, targetDate: string) {
+  const today = todayIsoDate();
+  if (targetDate > today) {
+    throw new HttpError(400, 'لا يمكن إنشاء سند بتاريخ مستقبلي.');
+  }
+  if (targetDate !== today && !canBackdateVouchers(req)) {
+    throw new HttpError(403, 'لا يمكن إنشاء أو تعديل سند بتاريخ سابق — يلزم صلاحية السندات بتاريخ سابق.');
+  }
+}
+
+function voucherFxContext(req: unknown, createdAt?: string) {
+  const userContext = (req as { requestUserContext?: { companyId?: string; baseCurrency?: string } }).requestUserContext;
+  return {
+    companyId: userContext?.companyId,
+    baseCurrency: userContext?.baseCurrency,
+    effectiveDate: createdAt ? createdAt.slice(0, 10) : undefined,
+  };
+}
 
 const voucherBaseSchema = z.object({
   voucherNo: z.string().min(1),
@@ -211,11 +254,8 @@ export function createFinanceRouter(service: FinanceService) {
     asyncHandler(async (req, res) => {
       try {
         const payload = receiptCreateSchema.parse(req.body);
-        const userContext = (req as any).requestUserContext;
-        const row = await service.createReceiptVoucher(payload, parseDataScope(req), {
-          companyId: userContext?.companyId,
-          baseCurrency: userContext?.baseCurrency,
-        });
+        assertVoucherDateAllowed(req, resolveVoucherTargetDate(payload.createdAt));
+        const row = await service.createReceiptVoucher(payload, parseDataScope(req), voucherFxContext(req, payload.createdAt));
         auditService.logAsync({
           req,
           action: 'VOUCHER_CREATED',
@@ -251,12 +291,11 @@ export function createFinanceRouter(service: FinanceService) {
     asyncHandler(async (req, res) => {
       try {
         const payload = receiptUpdateSchema.parse(req.body);
-        const userContext = (req as any).requestUserContext;
+        if (payload.createdAt !== undefined) {
+          assertVoucherDateAllowed(req, resolveVoucherTargetDate(payload.createdAt));
+        }
         const before = await service.getReceiptVoucherById(String(req.params.id), parseDataScope(req));
-        const row = await service.updateReceiptVoucher(String(req.params.id), payload, parseDataScope(req), {
-          companyId: userContext?.companyId,
-          baseCurrency: userContext?.baseCurrency,
-        });
+        const row = await service.updateReceiptVoucher(String(req.params.id), payload, parseDataScope(req), voucherFxContext(req, payload.createdAt));
         if (!row) {
           res.status(404).json({ success: false, error: 'Receipt voucher not found' });
           return;
@@ -374,11 +413,8 @@ export function createFinanceRouter(service: FinanceService) {
     asyncHandler(async (req, res) => {
       try {
         const payload = paymentCreateSchema.parse(req.body);
-        const userContext = (req as any).requestUserContext;
-        const row = await service.createPaymentVoucher(payload, parseDataScope(req), {
-          companyId: userContext?.companyId,
-          baseCurrency: userContext?.baseCurrency,
-        });
+        assertVoucherDateAllowed(req, resolveVoucherTargetDate(payload.createdAt));
+        const row = await service.createPaymentVoucher(payload, parseDataScope(req), voucherFxContext(req, payload.createdAt));
         auditService.logAsync({
           req,
           action: 'VOUCHER_CREATED',
@@ -413,12 +449,11 @@ export function createFinanceRouter(service: FinanceService) {
     asyncHandler(async (req, res) => {
       try {
         const payload = paymentUpdateSchema.parse(req.body);
-        const userContext = (req as any).requestUserContext;
+        if (payload.createdAt !== undefined) {
+          assertVoucherDateAllowed(req, resolveVoucherTargetDate(payload.createdAt));
+        }
         const before = await service.getPaymentVoucherById(String(req.params.id), parseDataScope(req));
-        const row = await service.updatePaymentVoucher(String(req.params.id), payload, parseDataScope(req), {
-          companyId: userContext?.companyId,
-          baseCurrency: userContext?.baseCurrency,
-        });
+        const row = await service.updatePaymentVoucher(String(req.params.id), payload, parseDataScope(req), voucherFxContext(req, payload.createdAt));
         if (!row) {
           res.status(404).json({ success: false, error: 'Payment voucher not found' });
           return;

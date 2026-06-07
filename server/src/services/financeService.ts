@@ -718,6 +718,10 @@ export class FinanceService {
     const existing = await this.repository.getReceiptVoucherById(id, scope);
     if (!existing) return null;
 
+    if (payload.createdAt && existing.status !== 'draft') {
+      throw new HttpError(400, 'لا يمكن تغيير تاريخ سند مؤكد أو ملغى.');
+    }
+
     const nextStatus = (payload.status ?? existing.status) as VoucherStatus;
     const nextCashboxId =
       existing.status === 'draft' && payload.cashboxId !== undefined ? payload.cashboxId : existing.cashbox_id;
@@ -830,6 +834,10 @@ export class FinanceService {
   ) {
     const existing = await this.repository.getPaymentVoucherById(id, scope);
     if (!existing) return null;
+
+    if (payload.createdAt && existing.status !== 'draft') {
+      throw new HttpError(400, 'لا يمكن تغيير تاريخ سند مؤكد أو ملغى.');
+    }
 
     const nextStatus = (payload.status ?? existing.status) as VoucherStatus;
     const nextCashboxId =

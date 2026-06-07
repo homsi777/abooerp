@@ -108,11 +108,12 @@ function buildNavDataEntry(): NavModule[] {
 
 const NAV_DATA_ENTRY: NavModule[] = buildNavDataEntry();
 
-/** محاسب: مالية + حوالات + تقارير + العملاء */
+/** محاسب: مالية + حوالات + وكلاء + تقارير + العملاء */
 const NAV_ACCOUNTANT: NavModule[] = [
   { id: 'home', label: 'الرئيسية', icon: '🏠', path: '/dashboard' },
   ...(NAV_MODULES.filter((m) => m.id === 'transfers')),
   ...(NAV_MODULES.filter((m) => m.id === 'customers')),
+  ...(NAV_MODULES.filter((m) => m.id === 'agents')),
   ...(NAV_MODULES.filter((m) => m.id === 'finance')),
   ...(NAV_MODULES.filter((m) => m.id === 'reports')),
 ];
