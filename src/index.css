@@ -1293,9 +1293,53 @@ body {
 
 .quick-ledger-stats {
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
   border-inline: 1px solid #9fb0c4;
   background: #f8fafc;
+}
+
+.quick-ledger-transfer-bar {
+  background: #eef6ff;
+  border: 1px solid #bcd6f5;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 8px 0;
+}
+
+.quick-ledger-transfer-bar-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 13px;
+  color: #1f3a5f;
+}
+
+.quick-ledger-transfer-bar-totals strong {
+  color: #0b4f8a;
+}
+
+.quick-ledger-transfer-summary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px 16px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.quick-ledger-transfer-errors {
+  list-style: disc;
+  padding-inline-start: 20px;
+  margin: 8px 0;
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+.quick-ledger-transfer-warnings {
+  list-style: disc;
+  padding-inline-start: 20px;
+  margin: 8px 0;
+  color: #b45309;
+  font-size: 13px;
 }
 
 .quick-ledger-stats div {

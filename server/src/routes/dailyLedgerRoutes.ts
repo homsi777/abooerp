@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requirePermissions } from '../middleware/authorization.js';
 import { parseDataScope } from '../utils/scope.js';
 import { DailyLedgerService } from '../services/dailyLedgerService.js';
+import type { DailyLedgerTransferService } from '../services/dailyLedgerTransferService.js';
 import { appendQuickLedgerClientLogs } from '../services/quickLedgerLogService.js';
 
 const uuid = z.string().uuid();
@@ -34,7 +35,17 @@ function getRequestPermissions(req: unknown): string[] {
   return Array.isArray(userContext?.permissions) ? userContext.permissions : [];
 }
 
-export function createDailyLedgerRouter(service: DailyLedgerService) {
+/** صلاحية نقل الإرسالية — admin/مدير دائماً، أو من يملك الصلاحية صراحةً */
+function canTransferLedger(roleCode: string, userType: string, permissions: string[]): boolean {
+  const isAdmin = roleCode === 'admin' || userType === 'admin';
+  const isManager = isAdmin || roleCode === 'general_manager' || roleCode === 'branch_manager';
+  return isManager || permissions.includes('daily_ledger.transfer.create');
+}
+
+export function createDailyLedgerRouter(
+  service: DailyLedgerService,
+  transferService?: DailyLedgerTransferService,
+) {
   const router = express.Router();
 
   router.get(
@@ -288,6 +299,74 @@ export function createDailyLedgerRouter(service: DailyLedgerService) {
       const { rowIds } = bodySchema.parse(req.body);
       const result = await service.deleteRows(scope, rowIds, allowedBranchIds);
       res.json({ success: true, data: result });
+    },
+  );
+
+  router.post(
+    '/transfer/validate',
+    requirePermissions(['shipments.write']),
+    async (req, res) => {
+      if (!transferService) {
+        res.status(500).json({ success: false, error: 'خدمة نقل الإرسالية غير مُهيأة.' });
+        return;
+      }
+      const scope = parseDataScope(req);
+      const bodySchema = z.object({ rowIds: z.array(uuid).min(1) });
+      const input = bodySchema.parse(req.body);
+      const result = await transferService.validateTransfer(scope, input);
+      res.json({ success: true, data: result });
+    },
+  );
+
+  router.post(
+    '/transfer/confirm',
+    requirePermissions(['shipments.write']),
+    async (req, res) => {
+      if (!transferService) {
+        res.status(500).json({ success: false, error: 'خدمة نقل الإرسالية غير مُهيأة.' });
+        return;
+      }
+      const userContext = (req as any).requestUserContext as any;
+      const roleCode = String(userContext?.roleCode ?? '').toLowerCase();
+      const userType = String(userContext?.userType ?? '').toLowerCase();
+      const permissions = getRequestPermissions(req);
+      if (!canTransferLedger(roleCode, userType, permissions)) {
+        res.status(403).json({ success: false, error: 'لا تملك صلاحية نقل إرسالية' });
+        return;
+      }
+      const scope = parseDataScope(req);
+      const bodySchema = z.object({
+        rowIds: z.array(uuid).min(1),
+        target: z.object({
+          ledgerDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          driverId: uuid.nullable().optional(),
+          vehicleId: uuid.nullable().optional(),
+          lineLabel: z.string().nullable().optional(),
+          notes: z.string().nullable().optional(),
+        }),
+        reason: z.string().min(1),
+      });
+      const input = bodySchema.parse(req.body);
+      try {
+        // التاريخ الهدف يخضع لنفس قيود تاريخ الدفتر
+        assertLedgerDateAllowed(roleCode, userType, input.target.ledgerDate, permissions);
+      } catch (dateError) {
+        res.status(400).json({
+          success: false,
+          error: dateError instanceof Error ? dateError.message : 'تاريخ الإرسالية غير مسموح.',
+        });
+        return;
+      }
+      try {
+        const result = await transferService.confirmTransfer(scope, input);
+        res.json({ success: true, data: result });
+      } catch (error) {
+        const status = (error as { status?: number }).status ?? 500;
+        res.status(status).json({
+          success: false,
+          error: error instanceof Error ? error.message : 'تعذر نقل الإرسالية.',
+        });
+      }
     },
   );
 

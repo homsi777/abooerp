@@ -86,6 +86,7 @@ import { createTransfersRouter } from './routes/transfers.js';
 import { DailyLedgerRepository } from './repositories/dailyLedgerRepository.js';
 import { DailyLedgerService } from './services/dailyLedgerService.js';
 import { DailyLedgerShipmentPostingService } from './services/dailyLedgerShipmentPostingService.js';
+import { DailyLedgerTransferService } from './services/dailyLedgerTransferService.js';
 import { createDailyLedgerRouter } from './routes/dailyLedgerRoutes.js';
 import { pool } from './db/pool.js';
 import customerRouter from './routes/customerRoutes.js';
@@ -155,6 +156,7 @@ const dailyLedgerShipmentPostingService = new DailyLedgerShipmentPostingService(
   agentRepository,
 );
 const dailyLedgerService = new DailyLedgerService(dailyLedgerRepository, dailyLedgerShipmentPostingService);
+const dailyLedgerTransferService = new DailyLedgerTransferService();
 const manifestService = new ManifestService(new ManifestRepository());
 const financeService = new FinanceService(financeRepository);
 const authService = new AuthService();
@@ -229,7 +231,7 @@ app.use('/api/v1/cities', referenceRouters.cities);
 app.use('/api/v1/goods-types', referenceRouters.goodsTypes);
 app.use('/api/v1/tariffs', referenceRouters.tariffs);
 app.use('/api/v1/shipments', createShipmentRouter(shipmentService));
-app.use('/api/v1/daily-ledger', createDailyLedgerRouter(dailyLedgerService));
+app.use('/api/v1/daily-ledger', createDailyLedgerRouter(dailyLedgerService, dailyLedgerTransferService));
 app.use('/api/v1/agent-portal', createAgentPortalRouter(shipmentService, financeService, transfersService, new AgentRepository()));
 app.use('/api/v1/dashboard', createDashboardRouter());
 app.use('/api/v1/manifests', createManifestRouter(manifestService));
