@@ -12,6 +12,7 @@ export type MahmoudReceiptRow = {
   sender: string;
   parcelType: string;
   parcelCount: string;
+  collectAmount: string;
   /** دفع مسبق $ → «دفع حلب» */
   prepaidAmount: string;
   /** حوالة → «حوالة» */
@@ -94,19 +95,19 @@ function resolveSlotIndex(slotIndex: number, transform: MahmoudPrintTransform): 
 
 /**
  * قالب افتراضي — slot 0.
- * global offset: top=0, left=0 — fontSize مُخفّض قليلاً (14/13pt)
+ * global offset: top=0, left=0 — fontSize مُخفّض بنسبة 25% (10.5/9.75pt)
  */
 export const MAHMOUD_RECEIPT_FIELD_LAYOUT: Record<string, FieldDef> = {
-  receiptNo: { top: 10, left: 88, width: 20, height: 4, fontSize: 14, align: 'center' },
-  date: { top: 24, left: 98.5, width: 16, height: 5.5, fontSize: 14, align: 'center' },
-  destination: { top: 23.5, left: 59, width: 28, height: 5.5, fontSize: 14, align: 'center' },
-  receiver: { top: 44.5, left: 137.5, width: 92, height: 4.5, fontSize: 14, align: 'right' },
-  sender: { top: 57, left: 38.5, width: 26, height: 3.8, fontSize: 13, align: 'right' },
-  parcelType: { top: 57, left: 74, width: 36, height: 3.8, fontSize: 13, align: 'right' },
-  parcelCount: { top: 57.5, left: 138.5, width: 9, height: 3.8, fontSize: 13, align: 'center' },
-  prepaid: { top: 58, left: 174, width: 10, height: 3.8, fontSize: 13, align: 'center' },
-  amount: { top: 58, left: 154.5, width: 10, height: 3.8, fontSize: 13, align: 'center' },
-  hawala: { top: 58, left: 194, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+  receiptNo: { top: 10, left: 88, width: 20, height: 4, fontSize: 10.5, align: 'center' },
+  date: { top: 24, left: 98.5, width: 16, height: 5.5, fontSize: 10.5, align: 'center' },
+  destination: { top: 23.5, left: 59, width: 28, height: 5.5, fontSize: 10.5, align: 'center' },
+  receiver: { top: 44.5, left: 137.5, width: 92, height: 4.5, fontSize: 10.5, align: 'right' },
+  sender: { top: 57, left: 38.5, width: 26, height: 3.8, fontSize: 9.75, align: 'right' },
+  parcelType: { top: 57, left: 74, width: 36, height: 3.8, fontSize: 9.75, align: 'right' },
+  parcelCount: { top: 57.5, left: 138.5, width: 9, height: 3.8, fontSize: 9.75, align: 'center' },
+  prepaid: { top: 58, left: 174, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+  amount: { top: 58, left: 154.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+  hawala: { top: 58, left: 194, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
 };
 
 export type MahmoudReceiptSlotLayouts = Record<number, Record<string, FieldDef>>;
@@ -118,52 +119,52 @@ function cloneFieldLayout(source: Record<string, FieldDef> = MAHMOUD_RECEIPT_FIE
 /** مواقع مُعايرة — slots 0–3 (يونيو 2026) */
 export const MAHMOUD_RECEIPT_SLOT_LAYOUTS: MahmoudReceiptSlotLayouts = {
   0: {
-    receiptNo: { top: 10, left: 88, width: 20, height: 4, fontSize: 14, align: 'center' },
-    date: { top: 24, left: 98.5, width: 16, height: 5.5, fontSize: 14, align: 'center' },
-    destination: { top: 23.5, left: 59, width: 28, height: 5.5, fontSize: 14, align: 'center' },
-    receiver: { top: 44.5, left: 137.5, width: 92, height: 4.5, fontSize: 14, align: 'right' },
-    sender: { top: 57, left: 38.5, width: 26, height: 3.8, fontSize: 13, align: 'right' },
-    parcelType: { top: 57, left: 74, width: 36, height: 3.8, fontSize: 13, align: 'right' },
-    parcelCount: { top: 57.5, left: 138.5, width: 9, height: 3.8, fontSize: 13, align: 'center' },
-    prepaid: { top: 58, left: 174, width: 10, height: 3.8, fontSize: 13, align: 'center' },
-    amount: { top: 58, left: 154.5, width: 10, height: 3.8, fontSize: 13, align: 'center' },
-    hawala: { top: 58, left: 194, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+    receiptNo: { top: 10, left: 88, width: 20, height: 4, fontSize: 10.5, align: 'center' },
+    date: { top: 24, left: 98.5, width: 16, height: 5.5, fontSize: 10.5, align: 'center' },
+    destination: { top: 23.5, left: 59, width: 28, height: 5.5, fontSize: 10.5, align: 'center' },
+    receiver: { top: 44.5, left: 137.5, width: 92, height: 4.5, fontSize: 10.5, align: 'right' },
+    sender: { top: 57, left: 38.5, width: 26, height: 3.8, fontSize: 9.75, align: 'right' },
+    parcelType: { top: 57, left: 74, width: 36, height: 3.8, fontSize: 9.75, align: 'right' },
+    parcelCount: { top: 57.5, left: 138.5, width: 9, height: 3.8, fontSize: 9.75, align: 'center' },
+    prepaid: { top: 58, left: 174, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    amount: { top: 58, left: 154.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    hawala: { top: 58, left: 194, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
   },
   1: {
-    receiptNo: { top: 8, left: 88, width: 20, height: 4, fontSize: 14, align: 'center' },
-    date: { top: 21, left: 98.5, width: 16, height: 5.5, fontSize: 14, align: 'center' },
-    destination: { top: 23.5, left: 59, width: 28, height: 5.5, fontSize: 14, align: 'center' },
-    receiver: { top: 41, left: 137.5, width: 92, height: 4.5, fontSize: 14, align: 'right' },
-    sender: { top: 55.5, left: 38.5, width: 26, height: 3.8, fontSize: 13, align: 'right' },
-    parcelType: { top: 55, left: 74, width: 36, height: 3.8, fontSize: 13, align: 'right' },
-    parcelCount: { top: 55.5, left: 138.5, width: 9, height: 3.8, fontSize: 13, align: 'center' },
-    prepaid: { top: 56, left: 174, width: 10, height: 3.8, fontSize: 13, align: 'center' },
-    amount: { top: 55.5, left: 154.5, width: 10, height: 3.8, fontSize: 13, align: 'center' },
-    hawala: { top: 55.5, left: 194, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+    receiptNo: { top: 8, left: 88, width: 20, height: 4, fontSize: 10.5, align: 'center' },
+    date: { top: 21, left: 98.5, width: 16, height: 5.5, fontSize: 10.5, align: 'center' },
+    destination: { top: 23.5, left: 59, width: 28, height: 5.5, fontSize: 10.5, align: 'center' },
+    receiver: { top: 41, left: 137.5, width: 92, height: 4.5, fontSize: 10.5, align: 'right' },
+    sender: { top: 55.5, left: 38.5, width: 26, height: 3.8, fontSize: 9.75, align: 'right' },
+    parcelType: { top: 55, left: 74, width: 36, height: 3.8, fontSize: 9.75, align: 'right' },
+    parcelCount: { top: 55.5, left: 138.5, width: 9, height: 3.8, fontSize: 9.75, align: 'center' },
+    prepaid: { top: 56, left: 174, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    amount: { top: 55.5, left: 154.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    hawala: { top: 55.5, left: 194, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
   },
   2: {
-    receiptNo: { top: 8.5, left: 88, width: 20, height: 4, fontSize: 14, align: 'center' },
-    date: { top: 21.5, left: 98.5, width: 16, height: 5.5, fontSize: 14, align: 'center' },
-    destination: { top: 21.5, left: 59, width: 28, height: 5.5, fontSize: 14, align: 'center' },
-    receiver: { top: 40.5, left: 137.5, width: 92, height: 4.5, fontSize: 14, align: 'right' },
-    sender: { top: 54, left: 38.5, width: 26, height: 3.8, fontSize: 13, align: 'right' },
-    parcelType: { top: 54, left: 74, width: 36, height: 3.8, fontSize: 13, align: 'right' },
-    parcelCount: { top: 54, left: 138.5, width: 9, height: 3.8, fontSize: 13, align: 'center' },
-    prepaid: { top: 54.5, left: 174, width: 10, height: 3.8, fontSize: 13, align: 'center' },
-    amount: { top: 54.5, left: 154.5, width: 10, height: 3.8, fontSize: 13, align: 'center' },
-    hawala: { top: 54, left: 192, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+    receiptNo: { top: 8.5, left: 88, width: 20, height: 4, fontSize: 10.5, align: 'center' },
+    date: { top: 21.5, left: 98.5, width: 16, height: 5.5, fontSize: 10.5, align: 'center' },
+    destination: { top: 21.5, left: 59, width: 28, height: 5.5, fontSize: 10.5, align: 'center' },
+    receiver: { top: 40.5, left: 137.5, width: 92, height: 4.5, fontSize: 10.5, align: 'right' },
+    sender: { top: 54, left: 38.5, width: 26, height: 3.8, fontSize: 9.75, align: 'right' },
+    parcelType: { top: 54, left: 74, width: 36, height: 3.8, fontSize: 9.75, align: 'right' },
+    parcelCount: { top: 54, left: 138.5, width: 9, height: 3.8, fontSize: 9.75, align: 'center' },
+    prepaid: { top: 54.5, left: 174, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    amount: { top: 54.5, left: 154.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    hawala: { top: 54, left: 192, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
   },
   3: {
-    receiptNo: { top: 5, left: 88, width: 20, height: 4, fontSize: 14, align: 'center' },
-    date: { top: 18.5, left: 98.5, width: 16, height: 5.5, fontSize: 14, align: 'center' },
-    destination: { top: 18, left: 59, width: 28, height: 5.5, fontSize: 14, align: 'center' },
-    receiver: { top: 37.5, left: 137.5, width: 92, height: 4.5, fontSize: 14, align: 'right' },
-    sender: { top: 53, left: 33, width: 26, height: 3.8, fontSize: 13, align: 'right' },
-    parcelType: { top: 52.5, left: 74, width: 36, height: 3.8, fontSize: 13, align: 'right' },
-    parcelCount: { top: 52, left: 138.5, width: 9, height: 3.8, fontSize: 13, align: 'center' },
-    prepaid: { top: 52, left: 174, width: 10, height: 3.8, fontSize: 13, align: 'center' },
-    amount: { top: 52, left: 154.5, width: 10, height: 3.8, fontSize: 13, align: 'center' },
-    hawala: { top: 52, left: 191, width: 10, height: 3.8, fontSize: 13, align: 'center' },
+    receiptNo: { top: 5, left: 88, width: 20, height: 4, fontSize: 10.5, align: 'center' },
+    date: { top: 18.5, left: 98.5, width: 16, height: 5.5, fontSize: 10.5, align: 'center' },
+    destination: { top: 18, left: 59, width: 28, height: 5.5, fontSize: 10.5, align: 'center' },
+    receiver: { top: 37.5, left: 137.5, width: 92, height: 4.5, fontSize: 10.5, align: 'right' },
+    sender: { top: 53, left: 33, width: 26, height: 3.8, fontSize: 9.75, align: 'right' },
+    parcelType: { top: 52.5, left: 74, width: 36, height: 3.8, fontSize: 9.75, align: 'right' },
+    parcelCount: { top: 52, left: 138.5, width: 9, height: 3.8, fontSize: 9.75, align: 'center' },
+    prepaid: { top: 52, left: 174, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    amount: { top: 52, left: 154.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    hawala: { top: 52, left: 191, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
   },
 };
 
@@ -187,6 +188,7 @@ export const MAHMOUD_RECEIPT_DUMMY_ROWS: MahmoudReceiptRow[] = [
     sender: 'علي حسن',
     parcelType: 'صندوق خشب',
     parcelCount: '1',
+    collectAmount: '45',
     prepaidAmount: '5',
     hawalaAmount: '100',
     transferServiceFee: '3',
@@ -199,6 +201,7 @@ export const MAHMOUD_RECEIPT_DUMMY_ROWS: MahmoudReceiptRow[] = [
     sender: 'خالد عمر',
     parcelType: 'طرد خردة',
     parcelCount: '2',
+    collectAmount: '30',
     prepaidAmount: '',
     hawalaAmount: '250',
     transferServiceFee: '5',
@@ -211,6 +214,7 @@ export const MAHMOUD_RECEIPT_DUMMY_ROWS: MahmoudReceiptRow[] = [
     sender: 'أحمد ناصر',
     parcelType: 'كيس',
     parcelCount: '10',
+    collectAmount: '',
     prepaidAmount: '20',
     hawalaAmount: '',
     transferServiceFee: '',
@@ -223,6 +227,7 @@ export const MAHMOUD_RECEIPT_DUMMY_ROWS: MahmoudReceiptRow[] = [
     sender: 'مكتب الشحن',
     parcelType: 'صندوق',
     parcelCount: '3',
+    collectAmount: '18',
     prepaidAmount: '8',
     hawalaAmount: '75',
     transferServiceFee: '2',
@@ -237,6 +242,15 @@ export function formatMahmoudReceiptDate(isoDate: string): string {
   return `${d}-${m}-${y.slice(-2)}`;
 }
 
+function formatReceiptMoneySum(...values: Array<string | number | null | undefined>): string {
+  const total = values.reduce((sum, value) => {
+    const parsed = Number(String(value ?? '').replace(/,/g, '').trim());
+    return Number.isFinite(parsed) ? sum + parsed : sum;
+  }, 0);
+  if (total <= 0) return '';
+  return Number.isInteger(total) ? String(total) : String(Number(total.toFixed(2)));
+}
+
 export function mapRemoteLedgerRowToMahmoudReceipt(row: {
   receipt_no: string | null;
   ledger_date: string;
@@ -245,6 +259,8 @@ export function mapRemoteLedgerRowToMahmoudReceipt(row: {
   sender_name: string;
   parcel_type: string;
   parcel_count: number | null;
+  collect_amount_usd: string;
+  fees_amount_usd?: string;
   prepaid_amount_usd: string;
   hawala_amount_usd: string;
   transfer_service_fee_usd: string;
@@ -257,6 +273,7 @@ export function mapRemoteLedgerRowToMahmoudReceipt(row: {
     sender: row.sender_name ?? '',
     parcelType: row.parcel_type ?? '',
     parcelCount: row.parcel_count == null ? '' : String(row.parcel_count),
+    collectAmount: formatReceiptMoneySum(row.collect_amount_usd, row.fees_amount_usd),
     prepaidAmount: String(row.prepaid_amount_usd ?? ''),
     hawalaAmount: String(row.hawala_amount_usd ?? ''),
     transferServiceFee: String(row.transfer_service_fee_usd ?? ''),
@@ -271,6 +288,7 @@ export function mapLedgerRowToMahmoudReceipt(
     sender: string;
     parcelType: string;
     parcelCount: string;
+    collectAmount: string;
     prepaidAmount: string;
     receiverCollect: string;
     transferServiceFee: string;
@@ -285,6 +303,7 @@ export function mapLedgerRowToMahmoudReceipt(
     sender: row.sender,
     parcelType: row.parcelType,
     parcelCount: row.parcelCount,
+    collectAmount: row.collectAmount,
     prepaidAmount: row.prepaidAmount,
     hawalaAmount: row.receiverCollect,
     transferServiceFee: row.transferServiceFee,
@@ -352,7 +371,7 @@ function renderReceiptSlot(
   ${renderField(slotIndex, 'destination', row.destination, L.destination, debug, transform)}
   ${renderField(slotIndex, 'receiver', row.receiver, L.receiver, debug, transform)}
   ${renderField(slotIndex, 'hawala', row.hawalaAmount, L.hawala, debug, transform)}
-  ${renderField(slotIndex, 'amount', row.transferServiceFee, L.amount, debug, transform)}
+  ${renderField(slotIndex, 'amount', row.collectAmount, L.amount, debug, transform)}
   ${renderField(slotIndex, 'prepaid', row.prepaidAmount, L.prepaid, debug, transform)}
   ${renderField(slotIndex, 'parcelCount', row.parcelCount, L.parcelCount, debug, transform)}
   ${renderField(slotIndex, 'parcelType', row.parcelType, L.parcelType, debug, transform)}
