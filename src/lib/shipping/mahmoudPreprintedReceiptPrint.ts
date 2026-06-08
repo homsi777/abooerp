@@ -105,8 +105,8 @@ export const MAHMOUD_RECEIPT_FIELD_LAYOUT: Record<string, FieldDef> = {
   sender: { top: 57, left: 38.5, width: 26, height: 3.8, fontSize: 9.75, align: 'right' },
   parcelType: { top: 57, left: 74, width: 36, height: 3.8, fontSize: 9.75, align: 'right' },
   parcelCount: { top: 57.5, left: 138.5, width: 9, height: 3.8, fontSize: 9.75, align: 'center' },
-  prepaid: { top: 58, left: 174, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
-  amount: { top: 58, left: 154.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+  prepaid: { top: 58, left: 154.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+  amount: { top: 58, left: 174, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
   hawala: { top: 58, left: 194, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
 };
 
@@ -126,8 +126,8 @@ export const MAHMOUD_RECEIPT_SLOT_LAYOUTS: MahmoudReceiptSlotLayouts = {
     sender: { top: 57, left: 38.5, width: 26, height: 3.8, fontSize: 9.75, align: 'right' },
     parcelType: { top: 57, left: 74, width: 36, height: 3.8, fontSize: 9.75, align: 'right' },
     parcelCount: { top: 57.5, left: 138.5, width: 9, height: 3.8, fontSize: 9.75, align: 'center' },
-    prepaid: { top: 58, left: 174, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
-    amount: { top: 58, left: 154.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    prepaid: { top: 58, left: 154.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    amount: { top: 58, left: 174, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
     hawala: { top: 58, left: 194, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
   },
   1: {
@@ -138,8 +138,8 @@ export const MAHMOUD_RECEIPT_SLOT_LAYOUTS: MahmoudReceiptSlotLayouts = {
     sender: { top: 55.5, left: 38.5, width: 26, height: 3.8, fontSize: 9.75, align: 'right' },
     parcelType: { top: 55, left: 74, width: 36, height: 3.8, fontSize: 9.75, align: 'right' },
     parcelCount: { top: 55.5, left: 138.5, width: 9, height: 3.8, fontSize: 9.75, align: 'center' },
-    prepaid: { top: 56, left: 174, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
-    amount: { top: 55.5, left: 154.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    prepaid: { top: 55.5, left: 154.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    amount: { top: 56, left: 174, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
     hawala: { top: 55.5, left: 194, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
   },
   2: {
@@ -150,8 +150,8 @@ export const MAHMOUD_RECEIPT_SLOT_LAYOUTS: MahmoudReceiptSlotLayouts = {
     sender: { top: 54, left: 38.5, width: 26, height: 3.8, fontSize: 9.75, align: 'right' },
     parcelType: { top: 54, left: 74, width: 36, height: 3.8, fontSize: 9.75, align: 'right' },
     parcelCount: { top: 54, left: 138.5, width: 9, height: 3.8, fontSize: 9.75, align: 'center' },
-    prepaid: { top: 54.5, left: 174, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
-    amount: { top: 54.5, left: 154.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    prepaid: { top: 54.5, left: 154.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    amount: { top: 54.5, left: 174, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
     hawala: { top: 54, left: 192, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
   },
   3: {
@@ -162,8 +162,8 @@ export const MAHMOUD_RECEIPT_SLOT_LAYOUTS: MahmoudReceiptSlotLayouts = {
     sender: { top: 53, left: 33, width: 26, height: 3.8, fontSize: 9.75, align: 'right' },
     parcelType: { top: 52.5, left: 74, width: 36, height: 3.8, fontSize: 9.75, align: 'right' },
     parcelCount: { top: 52, left: 138.5, width: 9, height: 3.8, fontSize: 9.75, align: 'center' },
-    prepaid: { top: 52, left: 174, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
-    amount: { top: 52, left: 154.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    prepaid: { top: 52, left: 154.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    amount: { top: 52, left: 174, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
     hawala: { top: 52, left: 191, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
   },
 };
