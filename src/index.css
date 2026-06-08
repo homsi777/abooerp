@@ -2089,6 +2089,19 @@ body {
   color: #312e81;
 }
 
+.centers-summary-company {
+  border-color: #86efac !important;
+  background: linear-gradient(180deg, #ecfdf5 0%, #fff 100%);
+}
+
+.centers-summary-company span {
+  color: #047857;
+}
+
+.centers-summary-company strong {
+  color: #064e3b;
+}
+
 .centers-commission-warn {
   border: 1px solid #fcd34d;
   border-right: 4px solid #f59e0b;

@@ -20,6 +20,10 @@ export type ProvincialAgentTotals = ProvincialTotals & {
 
 export type ProvincialCommissionSummary = {
   totalCommission: number;
+  /** إجمالي المبالغ (تحصيل + مسبق + حوالات + أجور حوالات) */
+  totalAmounts: number;
+  /** ما يبقى للشركة بعد خصم عمولة الوكيل */
+  companyCommission: number;
   missingAgentCount: number;
   missingRateCount: number;
 };
@@ -98,8 +102,13 @@ export function computeProvincialCommissionSummary(rows: ProvincialInboundRow[])
     if (row.commissionIssue === 'missing_agent') missingAgentCount += 1;
     else if (row.commissionIssue === 'missing_rate') missingRateCount += 1;
   }
+  const totals = computeProvincialTotals(rows);
+  const roundedCommission = Math.round(totalCommission * 100) / 100;
+  const companyCommission = Math.round((totals.lineTotal - roundedCommission) * 100) / 100;
   return {
-    totalCommission: Math.round(totalCommission * 100) / 100,
+    totalCommission: roundedCommission,
+    totalAmounts: totals.lineTotal,
+    companyCommission,
     missingAgentCount,
     missingRateCount,
   };

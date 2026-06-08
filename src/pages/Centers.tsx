@@ -323,6 +323,10 @@ export default function Centers() {
               <span>عمولة مستحقة للوكيل</span>
               <strong>{formatCurrency(commissionSummary.totalCommission, 'USD')}</strong>
             </div>
+            <div className="centers-summary-company">
+              <span>عمولة الشركة</span>
+              <strong>{formatCurrency(commissionSummary.companyCommission, 'USD')}</strong>
+            </div>
             <div>
               <span>من الدفتر السريع</span>
               <strong>{selectedRows.filter((r) => r.fromQuickLedger).length.toLocaleString()}</strong>
