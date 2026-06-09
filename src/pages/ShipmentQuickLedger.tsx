@@ -5,6 +5,8 @@ import {
   buildMahmoudPreprintedReceiptHtml,
   mapRemoteLedgerRowToMahmoudReceipt,
 } from '../lib/shipping/mahmoudPreprintedReceiptPrint';
+import { buildDailyLedgerDestinationPrintHtml } from '../lib/export/financialStatementPrint';
+import { exportLedgerStylePdf } from '../lib/export/ledgerStylePrint';
 import { useToast } from '../components/Toast';
 import { getBackendIdFromSynthetic, phase15Gateway, syntheticEntityId } from '../lib/api/phase15Gateway';
 import { httpClient } from '../lib/api/httpClient';
@@ -133,6 +135,11 @@ type RemoteDailyLedgerRow = {
 };
 
 type SuggestedAgent = { id: number; code: string; name: string; governorate?: string; city?: string; area?: string };
+
+type DestinationExportSummary = {
+  destination: string;
+  rowsCount: number;
+};
 
 const fallbackDestinations = ['دمشق', 'حلب', 'حمص', 'حماة', 'اللاذقية', 'طرطوس', 'إدلب'];
 
@@ -753,10 +760,16 @@ export default function ShipmentQuickLedger() {
   const [activeRowId, setActiveRowId] = useState(1);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [destinationPdfDialogOpen, setDestinationPdfDialogOpen] = useState(false);
   const [printDriverId, setPrintDriverId] = useState(0);
   const [printDateFrom, setPrintDateFrom] = useState(new Date().toISOString().split('T')[0]);
   const [printDateTo, setPrintDateTo] = useState(new Date().toISOString().split('T')[0]);
   const [printLoading, setPrintLoading] = useState(false);
+  const [destinationPdfDate, setDestinationPdfDate] = useState(new Date().toISOString().split('T')[0]);
+  const [destinationPdfLoading, setDestinationPdfLoading] = useState(false);
+  const [destinationPdfExporting, setDestinationPdfExporting] = useState(false);
+  const [destinationPdfRows, setDestinationPdfRows] = useState<RemoteDailyLedgerRow[]>([]);
+  const [destinationPdfSelected, setDestinationPdfSelected] = useState<string[]>([]);
   const [printScope, setPrintScope] = useState<'driver' | 'date' | 'agent' | 'session'>('driver');
   const [printDestinationFilter, setPrintDestinationFilter] = useState('');
   const [reprintRequired, setReprintRequired] = useState(false);
@@ -992,6 +1005,18 @@ export default function ShipmentQuickLedger() {
     () => (activeSessionId ? daySessions.find((s) => s.id === activeSessionId) ?? null : null),
     [daySessions, activeSessionId],
   );
+
+  const destinationPdfSummaries = useMemo<DestinationExportSummary[]>(() => {
+    const grouped = new Map<string, number>();
+    for (const row of destinationPdfRows) {
+      const destination = normalizeName(row.destination ?? '');
+      if (!destination) continue;
+      grouped.set(destination, (grouped.get(destination) ?? 0) + 1);
+    }
+    return [...grouped.entries()]
+      .map(([destination, rowsCount]) => ({ destination, rowsCount }))
+      .sort((a, b) => a.destination.localeCompare(b.destination, 'ar'));
+  }, [destinationPdfRows]);
 
   // إن اختفت الجلسة النشطة (تغيّر التاريخ مثلاً) أعِد للعرض الكامل
   useEffect(() => {
@@ -2029,6 +2054,63 @@ export default function ShipmentQuickLedger() {
     setPrintDialogOpen(true);
   };
 
+  const loadDestinationPdfRows = async (ledgerDate: string) => {
+    const branchId = activeBranchIdRef.current;
+    const lineLabel = normalizeName(tripRef.current.line);
+    if (!branchId) {
+      showToast('يرجى اختيار الفرع قبل تصدير PDF', 'error');
+      return;
+    }
+    if (!ledgerDate) {
+      showToast('يرجى اختيار التاريخ', 'error');
+      return;
+    }
+    if (!lineLabel) {
+      showToast('يرجى اختيار خط المصدر قبل التصدير', 'error');
+      return;
+    }
+
+    setDestinationPdfLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set('branchId', branchId);
+      params.set('ledgerDate', ledgerDate);
+      params.set('lineLabel', lineLabel);
+      params.set('includeLoaded', 'true');
+      const data = await fetchAllDailyLedgerRows(params, true);
+      const printableRows = sortRemoteLedgerRows(data.filter(isRemoteRowPrintable));
+      setDestinationPdfRows(printableRows);
+      const nextDestinations = [...new Set(
+        printableRows
+          .map((row) => normalizeName(row.destination ?? ''))
+          .filter(Boolean),
+      )].sort((a, b) => a.localeCompare(b, 'ar'));
+      setDestinationPdfSelected(nextDestinations);
+    } catch (error) {
+      setDestinationPdfRows([]);
+      setDestinationPdfSelected([]);
+      showToast(error instanceof Error ? error.message : 'تعذر تحميل وجهات دفتر الشحن', 'error');
+    } finally {
+      setDestinationPdfLoading(false);
+    }
+  };
+
+  const openDestinationPdfDialog = () => {
+    setDeleteMode(false);
+    setSelectedDeleteRowIds([]);
+    setDestinationPdfDate(trip.date);
+    setDestinationPdfDialogOpen(true);
+    void loadDestinationPdfRows(trip.date);
+  };
+
+  const toggleDestinationPdfSelection = (destination: string) => {
+    setDestinationPdfSelected((prev) =>
+      prev.includes(destination)
+        ? prev.filter((item) => item !== destination)
+        : [...prev, destination].sort((a, b) => a.localeCompare(b, 'ar')),
+    );
+  };
+
   const exitDeleteMode = () => {
     setDeleteMode(false);
     setSelectedDeleteRowIds([]);
@@ -2492,6 +2574,90 @@ export default function ShipmentQuickLedger() {
       showToast(error instanceof Error ? error.message : 'تعذر تنفيذ طباعة الإيصالات', 'error');
     } finally {
       setPrintLoading(false);
+    }
+  };
+
+  const executeDestinationPdfExport = async () => {
+    const lineLabel = normalizeName(trip.line);
+    if (!destinationPdfDate) {
+      showToast('يرجى اختيار التاريخ', 'error');
+      return;
+    }
+    if (!lineLabel) {
+      showToast('يرجى اختيار خط المصدر قبل التصدير', 'error');
+      return;
+    }
+    if (!destinationPdfSelected.length) {
+      showToast('يرجى تحديد وجهة واحدة على الأقل', 'error');
+      return;
+    }
+    if (!destinationPdfRows.length) {
+      showToast('لا توجد أسطر متاحة للتصدير في هذا التاريخ', 'info');
+      return;
+    }
+
+    const branchName =
+      branches.find((branch) => getBackendIdFromSynthetic(branch.id) === activeBranchId)?.name
+      ?? branchSearch
+      ?? '—';
+
+    setDestinationPdfExporting(true);
+    try {
+      for (const destination of destinationPdfSelected) {
+        const rowsForDestination = destinationPdfRows.filter(
+          (row) => normalizeName(row.destination ?? '') === destination,
+        );
+        if (!rowsForDestination.length) continue;
+
+        const driverNames = [...new Set(
+          rowsForDestination
+            .map((row) => normalizeName(row.driver_label ?? ''))
+            .filter(Boolean),
+        )];
+
+        const html = buildDailyLedgerDestinationPrintHtml({
+          reportDate: destinationPdfDate,
+          lineLabel,
+          destination,
+          branchName,
+          driverNames,
+          rows: rowsForDestination.map((row) => {
+            const collect =
+              parseUsd(String(row.collect_amount_usd ?? '')) + parseUsd(String(row.fees_amount_usd ?? ''));
+            return {
+              receiptNo: row.receipt_no ?? '',
+              destination: row.destination ?? '',
+              parcelType: row.parcel_type ?? '',
+              parcelCount: row.parcel_count == null ? '' : String(row.parcel_count),
+              weightKg: row.weight_kg == null ? '' : String(row.weight_kg),
+              sender: row.sender_name ?? '',
+              receiver: row.receiver_name ?? '',
+              collectAmount: collect > 0 ? String(collect) : String(row.collect_amount_usd ?? ''),
+              prepaidAmount: String(row.prepaid_amount_usd ?? ''),
+              hawalaAmount: String(row.hawala_amount_usd ?? ''),
+              transferServiceFee: String(row.transfer_service_fee_usd ?? ''),
+              driverLabel: row.driver_label ?? '',
+              notes: row.notes ?? '',
+            };
+          }),
+        });
+
+        const safeDestination = destination.replace(/[\\/:*?"<>|]+/g, '-');
+        const safeLine = lineLabel.replace(/[\\/:*?"<>|]+/g, '-');
+        await exportLedgerStylePdf({
+          title: `دفتر الشحن اليومي — ${destination} — ${destinationPdfDate}`,
+          html,
+          defaultFileName: `daily-ledger-${safeLine}-${safeDestination}-${destinationPdfDate}.pdf`,
+          landscape: true,
+        });
+      }
+
+      setDestinationPdfDialogOpen(false);
+      showToast(`تم تصدير ${destinationPdfSelected.length} ملف PDF`, 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر تصدير ملفات PDF', 'error');
+    } finally {
+      setDestinationPdfExporting(false);
     }
   };
 
@@ -3018,6 +3184,10 @@ export default function ShipmentQuickLedger() {
           <button type="button" onClick={openPrintDialog}>
             <Printer size={16} />
             طباعة
+          </button>
+          <button type="button" onClick={openDestinationPdfDialog}>
+            <Printer size={16} />
+            تصدير PDF
           </button>
           {transferMode ? (
             <>
@@ -3661,6 +3831,90 @@ export default function ShipmentQuickLedger() {
                 disabled={printLoading}
               >
                 {printLoading ? 'جاري التحضير...' : 'طباعة إيصالات'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {destinationPdfDialogOpen && (
+        <div className="quick-ledger-confirm" role="dialog" aria-modal="true">
+          <div className="quick-ledger-confirm-panel quick-ledger-destination-pdf-panel" dir="rtl">
+            <h3>تصدير PDF حسب الوجهة</h3>
+            <p>
+              يعرض نفس الوجهات الموجودة في دفتر الشحن للتاريخ المحدد، ويصدر ملف PDF مستقل لكل وجهة محددة.
+            </p>
+            <div className="quick-ledger-print-form space-y-3 mb-3">
+              <label className="form-group block">
+                <span className="form-label">التاريخ</span>
+                <input
+                  className="form-input w-full"
+                  type="date"
+                  value={destinationPdfDate}
+                  max={todayIso}
+                  onChange={(e) => {
+                    const nextDate = e.target.value;
+                    setDestinationPdfDate(nextDate);
+                    void loadDestinationPdfRows(nextDate);
+                  }}
+                />
+              </label>
+              <div className="quick-ledger-destination-pdf-meta">
+                <span>خط المصدر: <strong>{trip.line || '—'}</strong></span>
+                <span>الوجهات: <strong>{destinationPdfSummaries.length}</strong></span>
+                <span>المحدد: <strong>{destinationPdfSelected.length}</strong></span>
+              </div>
+              <div className="quick-ledger-destination-pdf-actions">
+                <button type="button" onClick={() => void loadDestinationPdfRows(destinationPdfDate)} disabled={destinationPdfLoading || destinationPdfExporting}>
+                  {destinationPdfLoading ? 'جاري التحديث...' : 'تحديث'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDestinationPdfSelected(destinationPdfSummaries.map((item) => item.destination))}
+                  disabled={!destinationPdfSummaries.length || destinationPdfExporting}
+                >
+                  تحديد الكل
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDestinationPdfSelected([])}
+                  disabled={!destinationPdfSelected.length || destinationPdfExporting}
+                >
+                  إلغاء التحديد
+                </button>
+              </div>
+              <div className="quick-ledger-destination-pdf-list">
+                {destinationPdfLoading ? (
+                  <p>جاري تحميل الوجهات...</p>
+                ) : destinationPdfSummaries.length === 0 ? (
+                  <p>لا توجد وجهات محفوظة في دفتر الشحن لهذا التاريخ.</p>
+                ) : (
+                  destinationPdfSummaries.map((item) => (
+                    <label key={item.destination} className="quick-ledger-destination-pdf-item">
+                      <input
+                        type="checkbox"
+                        checked={destinationPdfSelected.includes(item.destination)}
+                        onChange={() => toggleDestinationPdfSelection(item.destination)}
+                        disabled={destinationPdfExporting}
+                      />
+                      <span>{item.destination}</span>
+                      <strong>{item.rowsCount} سطر</strong>
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
+            <div className="quick-ledger-print-actions">
+              <button type="button" onClick={() => setDestinationPdfDialogOpen(false)} disabled={destinationPdfExporting}>
+                إلغاء
+              </button>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void executeDestinationPdfExport()}
+                disabled={destinationPdfExporting || destinationPdfLoading || !destinationPdfSelected.length}
+              >
+                {destinationPdfExporting ? 'جاري التصدير...' : `تصدير ${destinationPdfSelected.length} PDF`}
               </button>
             </div>
           </div>

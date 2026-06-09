@@ -1962,6 +1962,48 @@ body {
   color: white;
 }
 
+.quick-ledger-destination-pdf-panel {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.quick-ledger-destination-pdf-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  font-size: 13px;
+  color: #334155;
+}
+
+.quick-ledger-destination-pdf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.quick-ledger-destination-pdf-list {
+  max-height: 340px;
+  overflow: auto;
+  border: 1px solid #dbe3ee;
+  border-radius: 12px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.quick-ledger-destination-pdf-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 8px;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 14px;
+}
+
+.quick-ledger-destination-pdf-item:last-child {
+  border-bottom: 0;
+}
+
 .centers-page {
   display: flex;
   flex-direction: column;

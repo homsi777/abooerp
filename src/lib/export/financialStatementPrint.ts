@@ -396,3 +396,106 @@ export function buildVehicleTripReportPrintHtml(input: {
     orientation: 'landscape',
   });
 }
+
+export function buildDailyLedgerDestinationPrintHtml(input: {
+  reportDate: string;
+  lineLabel: string;
+  destination: string;
+  branchName?: string;
+  driverNames: string[];
+  rows: Array<{
+    receiptNo: string;
+    destination: string;
+    parcelType: string;
+    parcelCount: string;
+    weightKg: string;
+    sender: string;
+    receiver: string;
+    collectAmount: string;
+    prepaidAmount: string;
+    hawalaAmount: string;
+    transferServiceFee: string;
+    driverLabel?: string;
+    notes?: string;
+  }>;
+}): string {
+  const num = (value: string): number => {
+    const parsed = Number(String(value ?? '').replace(/[^\d.-]/g, ''));
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const totals = input.rows.reduce(
+    (acc, row) => {
+      acc.parcelCount += num(row.parcelCount);
+      acc.weightKg += num(row.weightKg);
+      acc.collectAmount += num(row.collectAmount);
+      acc.prepaidAmount += num(row.prepaidAmount);
+      acc.hawalaAmount += num(row.hawalaAmount);
+      acc.transferServiceFee += num(row.transferServiceFee);
+      return acc;
+    },
+    {
+      parcelCount: 0,
+      weightKg: 0,
+      collectAmount: 0,
+      prepaidAmount: 0,
+      hawalaAmount: 0,
+      transferServiceFee: 0,
+    },
+  );
+
+  const meta: LedgerPrintMetaItem[] = [
+    { label: 'التقرير', value: 'دفتر الشحن اليومي — حسب الوجهة' },
+    { label: 'التاريخ', value: input.reportDate || '—' },
+    { label: 'خط المصدر', value: input.lineLabel || '—' },
+    { label: 'الوجهة', value: input.destination || '—' },
+    ...(input.branchName ? [{ label: 'الفرع', value: input.branchName }] : []),
+    { label: 'السائقون', value: input.driverNames.length ? input.driverNames.join('، ') : '—' },
+    { label: 'عدد الأسطر', value: String(input.rows.length) },
+    { label: 'عدد الطرود', value: totals.parcelCount.toLocaleString('en-US') },
+    { label: 'إجمالي الوزن', value: formatWeightTotal(totals.weightKg) },
+    { label: 'تاريخ الطباعة', value: formatLedgerDate(new Date().toISOString()) },
+  ];
+
+  const sections: LedgerPrintTableSection[] = [
+    {
+      heading: 'تفاصيل الشحنات',
+      headers: ['الوصل', 'السائق', 'نوع الطرد', 'عدد', 'وزن', 'المرسل', 'المستلم', 'تحصيل', 'مسبق', 'حوالة', 'أجرة', 'ملاحظات'],
+      rows: input.rows.map((row) => [
+        row.receiptNo || '—',
+        row.driverLabel || '—',
+        row.parcelType || '—',
+        row.parcelCount || '0',
+        row.weightKg ? formatWeightTotal(row.weightKg) : '—',
+        row.sender || '—',
+        row.receiver || '—',
+        num(row.collectAmount).toLocaleString('en-US', { maximumFractionDigits: 2 }),
+        num(row.prepaidAmount).toLocaleString('en-US', { maximumFractionDigits: 2 }),
+        num(row.hawalaAmount).toLocaleString('en-US', { maximumFractionDigits: 2 }),
+        num(row.transferServiceFee).toLocaleString('en-US', { maximumFractionDigits: 2 }),
+        row.notes || '—',
+      ]),
+      footerRow: [
+        'الإجمالي',
+        '',
+        '',
+        totals.parcelCount.toLocaleString('en-US'),
+        formatWeightTotal(totals.weightKg),
+        '',
+        '',
+        totals.collectAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+        totals.prepaidAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+        totals.hawalaAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+        totals.transferServiceFee.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+        '',
+      ],
+    },
+  ];
+
+  return buildLedgerStylePrintHtml({
+    title: `دفتر الشحن اليومي — ${input.destination} — ${input.reportDate}`,
+    meta,
+    sections,
+    orientation: 'landscape',
+  });
+}
