@@ -38,7 +38,17 @@ import {
   resolveGovernorateFromQuickCode,
 } from '../lib/agents/agentQuickCodes';
 import {
-  ledgerRowTotalUsd,
+  fetchAllDailyLedgerRows,
+  scopeFromTrip,
+} from '../lib/shipping/dailyLedgerScope';
+import {
+  filterPrintableDailyLedgerRows,
+  remoteRowCollectionUsd,
+  sortDailyLedgerRows,
+} from '../lib/shipping/dailyLedgerPrintable';
+import { screenMoneyTotalFromLocal } from '../lib/shipping/dailyLedgerTotals';
+import type { DailyLedgerEditingScope, RemoteDailyLedgerRow } from '../lib/shipping/dailyLedgerTypes';
+import {
   mergeLedgerRowWithAutoTariff,
   parseUsd,
   parseWeightKg,
@@ -74,7 +84,6 @@ type LedgerRow = {
   notes: string;
 };
 
-const LEDGER_FETCH_CHUNK_SIZE = 500;
 const LEDGER_ENTRY_SLOTS = 1;
 const LEDGER_ROWS_ADD_INCREMENT = 1;
 const ROW_SAVE_DEBOUNCE_MS = 280;
@@ -88,51 +97,6 @@ function rowInActiveSessionScope(row: LedgerRow, sessionId: string): boolean {
   if (!row.dbId && !row.sessionId) return true;
   return false;
 }
-
-function sortRemoteLedgerRows(data: RemoteDailyLedgerRow[]) {
-  return [...data].sort((a, b) => {
-    const driverCmp = String(a.driver_label ?? '').localeCompare(String(b.driver_label ?? ''), 'ar');
-    if (driverCmp !== 0) return driverCmp;
-    return a.row_no - b.row_no;
-  });
-}
-
-type RemoteDailyLedgerRow = {
-  id: string;
-  row_no: number;
-  receipt_no: string | null;
-  destination: string;
-  parcel_type: string;
-  parcel_count: number | null;
-  weight_kg: string | null;
-  sender_name: string;
-  receiver_name: string;
-  collect_amount_usd: string;
-  prepaid_amount_usd: string;
-  hawala_amount_usd: string;
-  fees_amount_usd: string;
-  transfer_service_fee_usd: string;
-  notes: string | null;
-  posted_shipment_id: string | null;
-  posted_at: string | null;
-  loaded_manifest_id: string | null;
-  loaded_at: string | null;
-  created_at: string;
-  updated_at: string;
-  branch_id: string;
-  ledger_date: string;
-  line_label: string;
-  origin_label: string;
-  trip_no: string | null;
-  vehicle_label: string | null;
-  driver_label: string | null;
-  driver_id?: string | null;
-  vehicle_id?: string | null;
-  session_id?: string | null;
-  session_printed_at?: string | null;
-  session_reprint_required?: boolean | null;
-  session_reprint_reason?: string | null;
-};
 
 type SuggestedAgent = { id: number; code: string; name: string; governorate?: string; city?: string; area?: string };
 
@@ -330,8 +294,8 @@ function isRowDeletable(row: LedgerRow) {
   return Boolean(row.dbId || isRowStarted(row));
 }
 
-function rowAmountUsd(row: LedgerRow) {
-  return ledgerRowTotalUsd(row);
+function rowScreenMoneyUsd(row: LedgerRow) {
+  return screenMoneyTotalFromLocal(row);
 }
 
 function tripFleetPayload(trip: {
@@ -379,23 +343,6 @@ function nextServerRowNoForDriver(rows: LedgerRow[], driverId: number) {
     .filter((r) => r.sessionDriverId === driverId && r.serverRowNo)
     .map((r) => r.serverRowNo as number);
   return nums.length ? Math.max(...nums) + 1 : 1;
-}
-
-function isRemoteRowPrintable(remote: RemoteDailyLedgerRow) {
-  return Boolean(
-    remote.receipt_no?.trim() ||
-      remote.destination?.trim() ||
-      remote.sender_name?.trim() ||
-      remote.receiver_name?.trim() ||
-      remote.parcel_type?.trim() ||
-      (remote.parcel_count != null && Number(remote.parcel_count) > 0) ||
-      (remote.weight_kg != null && Number(remote.weight_kg) > 0) ||
-      parseUsd(String(remote.collect_amount_usd ?? '')) > 0 ||
-      parseUsd(String(remote.prepaid_amount_usd ?? '')) > 0 ||
-      parseUsd(String(remote.hawala_amount_usd ?? '')) > 0 ||
-      parseUsd(String(remote.transfer_service_fee_usd ?? '')) > 0 ||
-      parseUsd(String(remote.fees_amount_usd ?? '')) > 0,
-  );
 }
 
 function remoteRowMatchesDriver(
@@ -449,28 +396,6 @@ function matchesQuickLedgerSearch(
   const q = normalizeName(searchQuery).toLowerCase();
   if (!q) return true;
   return fields.some((field) => String(field ?? '').toLowerCase().includes(q));
-}
-
-const LEDGER_FETCH_PAGE_SIZE = 2000;
-
-async function fetchAllDailyLedgerRows(
-  baseParams: URLSearchParams,
-  onlyWithData = false,
-): Promise<RemoteDailyLedgerRow[]> {
-  const params = new URLSearchParams(baseParams);
-  if (onlyWithData) params.set('onlyWithData', 'true');
-  const all: RemoteDailyLedgerRow[] = [];
-  let offset = 0;
-  while (offset <= 50000) {
-    const pageParams = new URLSearchParams(params);
-    pageParams.set('limit', String(LEDGER_FETCH_PAGE_SIZE));
-    pageParams.set('offset', String(offset));
-    const batch = await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${pageParams.toString()}`);
-    all.push(...batch);
-    if (batch.length < LEDGER_FETCH_PAGE_SIZE) break;
-    offset += LEDGER_FETCH_PAGE_SIZE;
-  }
-  return all;
 }
 
 function printHtmlInBrowser(html: string) {
@@ -530,8 +455,7 @@ function localRowToPrint(row: LedgerRow): QuickLedgerPrintRow {
 }
 
 function remoteRowToPrint(row: RemoteDailyLedgerRow): QuickLedgerPrintRow {
-  const collect =
-    parseUsd(String(row.collect_amount_usd ?? '')) + parseUsd(String(row.fees_amount_usd ?? ''));
+  const collect = remoteRowCollectionUsd(row);
   return {
     receiptNo: row.receipt_no ?? '',
     destination: row.destination ?? '',
@@ -583,6 +507,8 @@ function buildQuickLedgerPrintHtml(
     },
     { pieces: 0, weightKg: 0, collect: 0, prepaid: 0, hawala: 0, fee: 0 },
   );
+  const screenMoneyTotal = totals.collect + totals.hawala + totals.fee;
+  const grandTotal = screenMoneyTotal + totals.prepaid;
   const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
   const tons = (totals.weightKg / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 });
 
@@ -653,6 +579,9 @@ function buildQuickLedgerPrintHtml(
     <div><strong>عدد الأسطر:</strong> ${rows.length}</div>
     <div><strong>إجمالي الوزن:</strong> ${fmt(totals.weightKg)} كغ / ${tons} طن</div>
     <div><strong>عدد الطرود:</strong> ${fmt(totals.pieces)}</div>
+    <div><strong>إجمالي الدولار (تحصيل+حوالة+أجرة):</strong> ${fmt(screenMoneyTotal)}</div>
+    <div><strong>مسبق (منفصل):</strong> ${fmt(totals.prepaid)}</div>
+    <div><strong>المجموع الكلي:</strong> ${fmt(grandTotal)}</div>
     ${meta.lineLabel ? `<div><strong>الخط:</strong> ${escapePrintHtml(meta.lineLabel)}</div>` : ''}
     ${meta.tripNo ? `<div><strong>رقم الرحلة:</strong> ${escapePrintHtml(meta.tripNo)}</div>` : ''}
   </div>
@@ -782,6 +711,10 @@ export default function ShipmentQuickLedger() {
   const [destinationPdfDriverKey, setDestinationPdfDriverKey] = useState<string>(ALL_DRIVERS_PDF_OPTION);
   const [printScope, setPrintScope] = useState<'driver' | 'date' | 'agent' | 'session'>('driver');
   const [printDestinationFilter, setPrintDestinationFilter] = useState('');
+  /** افتراضي: الطباعة تمثل نطاق التاريخ+الخط كاملاً وليس نتائج البحث */
+  const [printApplySearchResults, setPrintApplySearchResults] = useState(false);
+  /** افتراضي: نفس خط الشاشة — عند التفعيل فقط تُطبَع كل خطوط الفرع */
+  const [printAllLines, setPrintAllLines] = useState(false);
   const [reprintRequired, setReprintRequired] = useState(false);
   const [remoteRowsRaw, setRemoteRowsRaw] = useState<RemoteDailyLedgerRow[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -828,6 +761,12 @@ export default function ShipmentQuickLedger() {
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteSyncedCount, setRemoteSyncedCount] = useState(0);
   const loadGenerationRef = useRef(0);
+  /** نطاق التحرير المحفوظ — يُستخدم للحفظ التلقائي ولا يتغيّر إلا بعد جلب ناجح */
+  const editingScopeRef = useRef<DailyLedgerEditingScope>({
+    branchId: '',
+    ledgerDate: '',
+    lineLabel: '',
+  });
   const saveTimersRef = useRef<Record<number, number>>({});
   const saveInFlightRef = useRef<Record<number, Promise<void>>>({});
   const saveRowToServerRef = useRef<(displayRowId: number) => Promise<void>>(async () => {});
@@ -1107,7 +1046,7 @@ export default function ShipmentQuickLedger() {
       complete: completeRows.length,
       missing: Math.max(0, meaningful.length - meaningful.filter(isRowComplete).length),
       saved: meaningful.filter((r) => Boolean(r.postedShipmentId)).length,
-      totalCollect: meaningful.reduce((sum, row) => sum + rowAmountUsd(row), 0),
+      totalCollect: meaningful.reduce((sum, row) => sum + rowScreenMoneyUsd(row), 0),
       totalWeightKg,
     };
   }, [rows, activeSessionId]);
@@ -1248,8 +1187,7 @@ export default function ShipmentQuickLedger() {
   const buildDisplayRowsFromRemote = (remoteRows: RemoteDailyLedgerRow[]) => {
     const currentTrip = tripRef.current;
     const origin = resolveTripOrigin(currentTrip.line);
-    const withData = remoteRows.filter(isRemoteRowPrintable);
-    const sorted = sortRemoteLedgerRows(withData);
+    const sorted = sortDailyLedgerRows(filterPrintableDailyLedgerRows(remoteRows));
     let displayId = 1;
     const consolidated = sorted.map((remote) => mapRemoteRowToLocal(remote, displayId++));
     return [...consolidated, ...buildEntrySlotRows(displayId, origin)];
@@ -1262,49 +1200,29 @@ export default function ShipmentQuickLedger() {
     if (!currentTrip.date || !currentTrip.line) return;
 
     const generation = ++loadGenerationRef.current;
-    setRemoteLoading(true);
-    setRemoteSyncedCount(0);
 
     try {
       await flushPendingRowSaves();
       if (generation !== loadGenerationRef.current) return;
 
+      setActiveSessionId(null);
+      setRemoteRowsRaw([]);
+      setRemoteSyncedCount(0);
+
       const origin = resolveTripOrigin(currentTrip.line);
       setRows(buildEntrySlotRows(1, origin));
 
-      const baseParams = new URLSearchParams();
-      baseParams.set('branchId', branchId);
-      baseParams.set('ledgerDate', currentTrip.date);
-      baseParams.set('lineLabel', currentTrip.line);
-      baseParams.set('includeLoaded', includeLoaded ? 'true' : 'false');
-
-      const byId = new Map<string, RemoteDailyLedgerRow>();
-      let offset = 0;
-
-      while (offset <= 50000) {
-        if (generation !== loadGenerationRef.current) return;
-
-        const params = new URLSearchParams(baseParams);
-        params.set('limit', String(LEDGER_FETCH_CHUNK_SIZE));
-        params.set('offset', String(offset));
-        const batch = await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${params.toString()}`);
-
-        if (generation !== loadGenerationRef.current) return;
-        if (!batch.length) break;
-
-        for (const row of batch) {
-          if (isRemoteRowPrintable(row)) {
-            byId.set(row.id, row);
-          }
-        }
-        setRemoteSyncedCount(byId.size);
-
-        if (batch.length < LEDGER_FETCH_CHUNK_SIZE) break;
-        offset += LEDGER_FETCH_CHUNK_SIZE;
-      }
-
+      const queryScope = scopeFromTrip(branchId, currentTrip.date, currentTrip.line, includeLoaded);
+      const remoteValues = await fetchAllDailyLedgerRows(queryScope);
       if (generation !== loadGenerationRef.current) return;
-      const remoteValues = [...byId.values()];
+
+      editingScopeRef.current = {
+        branchId,
+        ledgerDate: currentTrip.date,
+        lineLabel: currentTrip.line,
+      };
+
+      setRemoteSyncedCount(remoteValues.length);
       setReprintRequired(remoteValues.some((row) => row.session_reprint_required === true));
       setRemoteRowsRaw(remoteValues);
       setRows(buildDisplayRowsFromRemote(remoteValues));
@@ -1320,9 +1238,12 @@ export default function ShipmentQuickLedger() {
   };
 
   useEffect(() => {
-    if (!loadingRefs) {
-      void loadRemoteRows();
-    }
+    if (loadingRefs) return;
+    if (!activeBranchId || !trip.date || !trip.line) return;
+    setRemoteLoading(true);
+    setActiveSessionId(null);
+    setRemoteRowsRaw([]);
+    void loadRemoteRows();
   }, [activeBranchId, trip.date, trip.line, includeLoaded, loadingRefs]);
 
   useEffect(() => {
@@ -1599,8 +1520,18 @@ export default function ShipmentQuickLedger() {
   const saveRowToServer = async (displayRowId: number) => {
     const branchId = activeBranchIdRef.current;
     const currentTrip = tripRef.current;
+    const saveScope = editingScopeRef.current;
     if (!branchId) return;
-    if (!currentTrip.date || !currentTrip.line) return;
+    if (
+      !saveScope.branchId ||
+      !saveScope.ledgerDate ||
+      !saveScope.lineLabel ||
+      saveScope.branchId !== branchId ||
+      saveScope.ledgerDate !== currentTrip.date ||
+      saveScope.lineLabel !== currentTrip.line
+    ) {
+      return;
+    }
     const row = rowsRef.current.find((r) => r.id === displayRowId);
     if (!row) return;
     if (!shouldPersistRow(row)) return;
@@ -1621,7 +1552,7 @@ export default function ShipmentQuickLedger() {
       }
     }
 
-    const origin = resolveTripOrigin(currentTrip.line);
+    const origin = resolveTripOrigin(saveScope.lineLabel);
 
     const task = (async () => {
       const latestRow = rowsRef.current.find((r) => r.id === displayRowId);
@@ -1643,9 +1574,9 @@ export default function ShipmentQuickLedger() {
 
       try {
         const saved = await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
-          branchId,
-          ledgerDate: currentTrip.date,
-          lineLabel: currentTrip.line,
+          branchId: saveScope.branchId,
+          ledgerDate: saveScope.ledgerDate,
+          lineLabel: saveScope.lineLabel,
           originLabel: origin,
           tripNo: currentTrip.tripNo || null,
           ...(latestRow.dbId ? { rowId: latestRow.dbId } : {}),
@@ -2073,6 +2004,8 @@ export default function ShipmentQuickLedger() {
     setPrintDriverId(trip.driverId || 0);
     setPrintDateFrom(trip.date);
     setPrintDateTo(trip.date);
+    setPrintApplySearchResults(false);
+    setPrintAllLines(false);
     if (scope) setPrintScope(scope);
     setPrintDialogOpen(true);
   };
@@ -2095,13 +2028,8 @@ export default function ShipmentQuickLedger() {
 
     setDestinationPdfLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set('branchId', branchId);
-      params.set('ledgerDate', ledgerDate);
-      params.set('lineLabel', lineLabel);
-      params.set('includeLoaded', 'true');
-      const data = await fetchAllDailyLedgerRows(params, true);
-      const printableRows = sortRemoteLedgerRows(data.filter(isRemoteRowPrintable));
+      const queryScope = scopeFromTrip(branchId, ledgerDate, lineLabel, true);
+      const printableRows = sortDailyLedgerRows(await fetchAllDailyLedgerRows(queryScope));
       setDestinationPdfRows(printableRows);
       const nextDestinations = [...new Set(
         printableRows
@@ -2445,18 +2373,28 @@ export default function ShipmentQuickLedger() {
       return null;
     }
 
-    const params = new URLSearchParams();
-    params.set('branchId', branchId);
-    params.set('dateFrom', printDateFrom);
-    params.set('dateTo', printDateTo);
-    params.set('includeLoaded', 'true');
-    const data = await fetchAllDailyLedgerRows(params);
-    const activeSearch = searchQuick.trim();
-    const rows = sortRemoteLedgerRows(
+    const screenLine = normalizeName(tripRef.current.line);
+    if (!printAllLines && !screenLine) {
+      showToast('يرجى اختيار خط المصدر قبل الطباعة', 'error');
+      return null;
+    }
+
+    const singleDay = printDateFrom === printDateTo;
+    const queryScope = scopeFromTrip(
+      branchId,
+      printDateFrom,
+      screenLine || tripRef.current.line,
+      true,
+      {
+        allLines: printAllLines,
+        ...(singleDay ? {} : { dateFrom: printDateFrom, dateTo: printDateTo }),
+      },
+    );
+    const data = await fetchAllDailyLedgerRows(queryScope);
+    const activeSearch = printApplySearchResults ? searchQuick.trim() : '';
+    const rows = sortDailyLedgerRows(
       data.filter((row) => {
-        // فلترة البحث السريع تُطبّق في كل النطاقات
-        if (!matchesQuickLedgerSearch(activeSearch, remoteRowSearchFields(row))) return false;
-        // النطاق "باليوم" لا يُفلتر بالسائق — يشمل كل السائقين/الجلسات (لا تُفقد أسطر عند تغيير السائق)
+        if (activeSearch && !matchesQuickLedgerSearch(activeSearch, remoteRowSearchFields(row))) return false;
         if (printScope === 'driver') {
           return remoteRowMatchesDriver(row, { driverBackendId, driverName: selectedDriver?.name });
         }
@@ -2467,7 +2405,7 @@ export default function ShipmentQuickLedger() {
         if (printScope === 'session') {
           return row.session_id === activeSessionId;
         }
-        return true; // date scope: كل الأسطر
+        return true;
       }),
     );
 
@@ -2575,6 +2513,8 @@ export default function ShipmentQuickLedger() {
           dateLabel,
           driverName: scope === 'driver' ? selectedDriver?.name ?? '—' : scopeName,
           vehicleLabel,
+          lineLabel: printAllLines ? 'كل خطوط الفرع' : currentTrip.line,
+          tripNo: currentTrip.tripNo,
         },
       );
 
@@ -2684,8 +2624,7 @@ export default function ShipmentQuickLedger() {
           branchName,
           driverNames,
           rows: rowsForDestination.map((row) => {
-            const collect =
-              parseUsd(String(row.collect_amount_usd ?? '')) + parseUsd(String(row.fees_amount_usd ?? ''));
+            const collect = remoteRowCollectionUsd(row);
             return {
               receiptNo: row.receipt_no ?? '',
               destination: row.destination ?? '',
@@ -3243,7 +3182,7 @@ export default function ShipmentQuickLedger() {
             <input type="checkbox" checked={includeLoaded} onChange={(e) => setIncludeLoaded(e.target.checked)} />
             إظهار المحمّلة
           </label>
-          <button type="button" onClick={openPrintDialog}>
+          <button type="button" onClick={() => openPrintDialog()}>
             <Printer size={16} />
             طباعة
           </button>
@@ -3385,7 +3324,7 @@ export default function ShipmentQuickLedger() {
         <div><strong>{stats.complete}</strong><span>جاهزة للترحيل</span></div>
         <div><strong>{stats.missing}</strong><span>ناقصة (إيصال+جهة+مرسل+مستلم)</span></div>
         <div><strong>{stats.saved}</strong><span>محفوظة</span></div>
-        <div><strong>{stats.totalCollect.toLocaleString()}</strong><span>إجمالي الدولار</span></div>
+        <div><strong>{stats.totalCollect.toLocaleString()}</strong><span>إجمالي الدولار (تحصيل+حوالة+أجرة)</span></div>
         <div><strong>{formatWeightKgTons(stats.totalWeightKg)}</strong><span>إجمالي الوزن</span></div>
         {duplicateReceiptRowIds.size > 0 && (
           <div className="quick-ledger-stat-warn">
@@ -3801,15 +3740,8 @@ export default function ShipmentQuickLedger() {
           <div className="quick-ledger-confirm-panel">
             <h3>طباعة</h3>
             <p>
-              اختر نطاق الطباعة (بالسائق / باليوم كامل / بالوكيل) ثم الفترة.
-              {searchQuick.trim() ? (
-                <>
-                  {' '}
-                  البحث النشط: <strong>{searchQuick.trim()}</strong> — يُطبَّق على كل النطاقات.
-                </>
-              ) : (
-                ' طباعة باليوم تشمل كل السائقين دون فقدان أسطر.'
-              )}
+              الطباعة الافتراضية تطابق نطاق الشاشة: التاريخ + خط المصدر ({trip.line || '—'})،
+              دون تأثير البحث السريع. يمكنك تفعيل الخيارات أدناه عند الحاجة.
             </p>
             <div className="quick-ledger-print-form space-y-3 mb-3">
               <label className="form-group block">
@@ -3873,6 +3805,23 @@ export default function ShipmentQuickLedger() {
                   />
                 </label>
               </div>
+              <label className="quick-ledger-print-toggle block">
+                <input
+                  type="checkbox"
+                  checked={printApplySearchResults}
+                  onChange={(e) => setPrintApplySearchResults(e.target.checked)}
+                />
+                طباعة نتائج البحث السريع فقط
+                {searchQuick.trim() ? ` («${searchQuick.trim()}»)` : ' (البحث فارغ)'}
+              </label>
+              <label className="quick-ledger-print-toggle block">
+                <input
+                  type="checkbox"
+                  checked={printAllLines}
+                  onChange={(e) => setPrintAllLines(e.target.checked)}
+                />
+                طباعة كل خطوط الفرع (بدون تقييد خط المصدر)
+              </label>
             </div>
             <div className="quick-ledger-print-actions">
               <button type="button" onClick={() => setPrintDialogOpen(false)} disabled={printLoading}>

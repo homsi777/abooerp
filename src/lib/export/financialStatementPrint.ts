@@ -444,6 +444,9 @@ export function buildDailyLedgerDestinationPrintHtml(input: {
     },
   );
 
+  const screenMoneyTotal = totals.collectAmount + totals.hawalaAmount + totals.transferServiceFee;
+  const grandTotal = screenMoneyTotal + totals.prepaidAmount;
+
   const meta: LedgerPrintMetaItem[] = [
     { label: 'التقرير', value: 'دفتر الشحن اليومي — حسب الوجهة' },
     { label: 'التاريخ', value: input.reportDate || '—' },
@@ -454,6 +457,12 @@ export function buildDailyLedgerDestinationPrintHtml(input: {
     { label: 'عدد الأسطر', value: String(input.rows.length) },
     { label: 'عدد الطرود', value: totals.parcelCount.toLocaleString('en-US') },
     { label: 'إجمالي الوزن', value: formatWeightTotal(totals.weightKg) },
+    {
+      label: 'إجمالي الدولار (تحصيل+حوالة+أجرة)',
+      value: screenMoneyTotal.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+    },
+    { label: 'مسبق (منفصل)', value: totals.prepaidAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }) },
+    { label: 'المجموع الكلي', value: grandTotal.toLocaleString('en-US', { maximumFractionDigits: 2 }) },
     { label: 'تاريخ الطباعة', value: formatLedgerDate(new Date().toISOString()) },
   ];
 
