@@ -508,3 +508,170 @@ export function buildDailyLedgerDestinationPrintHtml(input: {
     orientation: 'landscape',
   });
 }
+
+export function buildTrialBalancePrintHtml(data: any): string {
+  const rows = data.rows ?? [];
+  const totals = data.totals ?? {};
+  return buildLedgerStylePrintHtml({
+    title: 'ميزان المراجعة',
+    subtitle: data.filters?.currencyCode ? `العملة: ${data.filters.currencyCode}` : undefined,
+    meta: [
+      { label: 'تاريخ الاستخراج', value: formatLedgerDate(data.generatedAt) },
+      { label: 'من', value: formatLedgerDate(data.filters?.fromAt) },
+      { label: 'إلى', value: formatLedgerDate(data.filters?.toAt ?? data.filters?.asOf) },
+      { label: 'إجمالي مدين', value: formatLedgerMoney(totals.totalDebit ?? 0) },
+      { label: 'إجمالي دائن', value: formatLedgerMoney(totals.totalCredit ?? 0) },
+      { label: 'فارق', value: formatLedgerMoney(totals.difference ?? 0) },
+    ],
+    sections: [
+      {
+        heading: 'حسابات ميزان المراجعة',
+        headers: ['الكود', 'الحساب', 'القسم', 'مدين', 'دائن', 'صافي'],
+        rows: rows.map((r: any) => [
+          r.accountCode ?? '—',
+          r.accountName ?? '—',
+          r.section ?? '—',
+          Number(r.debit || 0).toLocaleString('en-US', { maximumFractionDigits: 2 }),
+          Number(r.credit || 0).toLocaleString('en-US', { maximumFractionDigits: 2 }),
+          Number(r.netDebit || 0).toLocaleString('en-US', { maximumFractionDigits: 2 }),
+        ]),
+      },
+    ],
+    orientation: 'landscape',
+  });
+}
+
+export function buildBalanceSheetPrintHtml(data: any): string {
+  const sections = (data.sections ?? []).map((section: any) => ({
+    heading: section.label,
+    headers: ['البند', 'المبلغ'],
+    rows: (section.lines ?? []).map((line: any) => [
+      line.label ?? '—',
+      formatLedgerMoney(line.amount ?? 0, data.summary?.currencyCode ?? 'USD'),
+    ]),
+    footerRow: ['الإجمالي', formatLedgerMoney(section.total ?? 0, data.summary?.currencyCode ?? 'USD')],
+  }));
+  return buildLedgerStylePrintHtml({
+    title: 'قائمة المركز المالي',
+    meta: [
+      { label: 'تاريخ الاستخراج', value: formatLedgerDate(data.generatedAt) },
+      { label: 'الأصول', value: formatLedgerMoney(data.summary?.totalAssets ?? 0, data.summary?.currencyCode) },
+      { label: 'الخصوم', value: formatLedgerMoney(data.summary?.totalLiabilities ?? 0, data.summary?.currencyCode) },
+      { label: 'حقوق الملكية', value: formatLedgerMoney(data.summary?.totalEquity ?? 0, data.summary?.currencyCode) },
+    ],
+    sections,
+    orientation: 'portrait',
+  });
+}
+
+export function buildAgentSettlementPrintHtml(data: any): string {
+  return buildAgentStatementPrintHtml('financial', data, 'كشف تسوية الوكيل');
+}
+
+export function buildAgentBranchReconciliationPrintHtml(data: any): string {
+  const agent = data.agent ?? {};
+  const mb = data.mainBranch ?? {};
+  const meta: LedgerPrintMetaItem[] = [
+    { label: 'الوكيل', value: agent.name ? `${agent.name}${agent.code ? ` (${agent.code})` : ''}` : '—' },
+    { label: 'تاريخ الاستخراج', value: formatLedgerDate(data.generatedAt) },
+    { label: 'مسبق في الفرع الرئيسي', value: formatLedgerMoney(mb.prepaidRetainedAtMainBranch ?? 0) },
+    { label: 'تحصيل مع الوكيل', value: formatLedgerMoney(mb.collectionCollectedByAgent ?? 0) },
+    { label: 'حوالات (أصل + أجور)', value: formatLedgerMoney(mb.hawalaRemittanceTotal ?? 0) },
+    { label: 'عمولة شحن للوكيل', value: formatLedgerMoney(mb.totalShippingCommissionDueToAgent ?? 0) },
+    { label: 'عمولة على المسبق', value: formatLedgerMoney(mb.commissionOnPrepaidAtMainBranch ?? 0) },
+    { label: 'صافي مطلوب من الوكيل', value: formatLedgerMoney(mb.netRequiredFromAgentAfterCommission ?? 0) },
+    { label: 'سندات قبض', value: formatLedgerMoney(mb.confirmedReceiptsFromAgent ?? 0) },
+    { label: 'سندات دفع', value: formatLedgerMoney(mb.confirmedPaymentsToAgent ?? 0) },
+    { label: 'فارق المطابقة', value: formatLedgerMoney(mb.reconciliationGap ?? 0) },
+  ];
+  const sections: LedgerPrintTableSection[] = [
+    {
+      heading: 'شحنات الوكيل',
+      headers: ['التاريخ', 'الشحنة', 'الوجهة', 'مسبق فرع', 'تحصيل', 'حوالة', 'أجور', 'عمولة', 'صافي مطلوب'],
+      rows: (data.shipments ?? []).map((s: any) => [
+        formatLedgerDate(s.created_at),
+        s.shipment_no ?? '—',
+        s.destination_city ?? '—',
+        formatLedgerMoney(s.prepaid_at_main_branch ?? 0, s.original_currency),
+        formatLedgerMoney(s.transfer_fee, s.original_currency),
+        formatLedgerMoney(s.hawala_amount, s.original_currency),
+        formatLedgerMoney(s.transfer_service_fee, s.original_currency),
+        formatLedgerMoney(s.agent_commission_amount_snapshot, s.original_currency),
+        formatLedgerMoney(s.agent_net_required_from_agent ?? 0, s.original_currency),
+      ]),
+    },
+    {
+      heading: 'حوالات مستقلة',
+      note: 'لا عمولة وكيل على الحوالات.',
+      headers: ['التاريخ', 'المرسل/المستلم', 'الوجهة', 'أصل', 'أجرة', 'مطلوب'],
+      rows: (data.hawalaSection?.transfers ?? [])
+        .filter((t: any) => !t.shipment_id)
+        .map((t: any) => [
+          formatLedgerDate(t.transfer_date ?? t.created_at),
+          `${t.sender_name ?? '-'} / ${t.receiver_name ?? '-'}`,
+          t.destination_city ?? '—',
+          formatLedgerMoney(t.amount, t.currency),
+          formatLedgerMoney(t.transfer_service_fee, t.transfer_service_fee_currency ?? t.currency),
+          formatLedgerMoney(t.agent_remittance_due ?? 0, t.currency),
+        ]),
+    },
+  ];
+  return buildLedgerStylePrintHtml({
+    title: 'مطابقة الوكيل ↔ الفرع الرئيسي',
+    meta,
+    sections,
+    orientation: 'landscape',
+  });
+}
+
+export function buildHawalaReconciliationPrintHtml(data: any): string {
+  const summary = data.summary ?? {};
+  const agent = data.agent ?? {};
+  const meta: LedgerPrintMetaItem[] = [
+    { label: 'الوكيل', value: agent.name ? `${agent.name}${agent.code ? ` (${agent.code})` : ''}` : '—' },
+    { label: 'تاريخ الاستخراج', value: formatLedgerDate(data.generatedAt) },
+    { label: 'حوالة على شحنات', value: formatLedgerMoney(summary.hawalaPrincipalOnShipments ?? 0) },
+    { label: 'أجور حوالة على شحنات', value: formatLedgerMoney(summary.hawalaFeesOnShipments ?? 0) },
+    { label: 'مطلوب حوالات (شحنات)', value: formatLedgerMoney(summary.hawalaRemittanceOnShipments ?? 0) },
+    { label: 'مطلوب حوالات مستقلة', value: formatLedgerMoney(summary.standaloneRemittanceDue ?? 0) },
+    { label: 'إجمالي مطلوب حوالات', value: formatLedgerMoney(summary.totalHawalaRemittanceDue ?? 0) },
+    { label: 'عمولة وكيل على الحوالات', value: '0 — لا عمولة' },
+  ];
+  const sections: LedgerPrintTableSection[] = [
+    {
+      heading: 'شحنات بها حوالة أو أجور حوالة',
+      headers: ['التاريخ', 'الشحنة', 'الوجهة', 'حوالة', 'أجور', 'مطلوب حوالة', 'عمولة شحن'],
+      rows: (data.shipments ?? []).map((s: any) => [
+        formatLedgerDate(s.created_at),
+        s.shipment_no ?? '—',
+        s.destination_city ?? '—',
+        formatLedgerMoney(s.hawala_amount, s.original_currency),
+        formatLedgerMoney(s.transfer_service_fee, s.original_currency),
+        formatLedgerMoney(s.agent_hawala_remittance_due ?? 0, s.original_currency),
+        formatLedgerMoney(s.agent_commission_amount_snapshot, s.original_currency),
+      ]),
+    },
+    {
+      heading: 'حوالات مستقلة',
+      note: 'لا عمولة وكيل — توريد أصل الحوالة + أجور الخدمة.',
+      headers: ['التاريخ', 'المرسل/المستلم', 'الوجهة', 'الدور', 'أصل', 'أجرة', 'مطلوب', 'شحنة', 'الحالة'],
+      rows: (data.transfers ?? []).filter((t: any) => !t.shipment_id).map((t: any) => [
+        formatLedgerDate(t.transfer_date ?? t.created_at),
+        `${t.sender_name ?? '-'} / ${t.receiver_name ?? '-'}`,
+        t.destination_city ?? '—',
+        transferRoleLabel[String(t.agent_role)] ?? t.agent_role ?? '—',
+        formatLedgerMoney(t.amount, t.currency),
+        formatLedgerMoney(t.transfer_service_fee, t.transfer_service_fee_currency ?? t.currency),
+        formatLedgerMoney(t.agent_remittance_due ?? 0, t.currency),
+        t.shipment_no ?? '—',
+        t.status ?? '—',
+      ]),
+    },
+  ];
+  return buildLedgerStylePrintHtml({
+    title: 'كشف مطابقة الحوالات',
+    meta,
+    sections,
+    orientation: 'landscape',
+  });
+}

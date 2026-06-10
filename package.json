@@ -44,6 +44,7 @@
     "server:smoke:phase25-permissions": "tsx server/src/scripts/phase25PermissionSmoke.ts",
     "server:smoke:phase26-strict-rbac": "tsx server/src/scripts/phase26StrictRbacSmoke.ts",
     "server:smoke:phase31-finance": "tsx server/src/scripts/phase31FinanceSmoke.ts",
+    "server:smoke:agent-branch-reconciliation": "tsx server/src/scripts/phaseAgentBranchReconciliationSmoke.ts",
     "server:smoke:phase32-confirmation-posting": "tsx server/src/scripts/phase32VoucherConfirmationSmoke.ts",
     "server:smoke:phase33-cancellation-reversal": "tsx server/src/scripts/phase33CancellationReversalSmoke.ts",
     "server:smoke:phase34-party-statements": "tsx server/src/scripts/phase34PartyStatementSmoke.ts",

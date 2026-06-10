@@ -842,6 +842,89 @@ export const phase3FinanceGateway = {
       return httpClient.get(`/delivery-reports/agent-commission-review${suffix}`);
     },
   },
+
+  accounting: {
+    trialBalance: async (filters: {
+      fromAt?: string;
+      toAt?: string;
+      asOf?: string;
+      branchId?: string;
+      currencyCode?: string;
+    }) => {
+      const q = new URLSearchParams();
+      if (filters.fromAt) q.set('fromAt', filters.fromAt);
+      if (filters.toAt) q.set('toAt', filters.toAt);
+      if (filters.asOf) q.set('asOf', filters.asOf);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+      const suffix = q.toString() ? `?${q.toString()}` : '';
+      return httpClient.get(`/reports/trial-balance${suffix}`);
+    },
+    balanceSheet: async (filters: {
+      fromAt?: string;
+      toAt?: string;
+      asOf?: string;
+      branchId?: string;
+      currencyCode?: string;
+    }) => {
+      const q = new URLSearchParams();
+      if (filters.fromAt) q.set('fromAt', filters.fromAt);
+      if (filters.toAt) q.set('toAt', filters.toAt);
+      if (filters.asOf) q.set('asOf', filters.asOf);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+      const suffix = q.toString() ? `?${q.toString()}` : '';
+      return httpClient.get(`/reports/balance-sheet${suffix}`);
+    },
+    listPeriodClosures: async (limit = 50) => {
+      return httpClient.get(`/accounting-periods?limit=${limit}`);
+    },
+    closePeriod: async (payload: {
+      periodStart: string;
+      periodEnd: string;
+      branchId?: string | null;
+      currencyCode?: string;
+      notes?: string;
+    }) => {
+      return httpClient.post('/accounting-periods/close', payload);
+    },
+    agentSettlement: async (filters: {
+      agentId: string;
+      fromAt?: string;
+      toAt?: string;
+      currencyCode?: string;
+    }) => {
+      const q = new URLSearchParams({ agentId: filters.agentId });
+      if (filters.fromAt) q.set('fromAt', filters.fromAt);
+      if (filters.toAt) q.set('toAt', filters.toAt);
+      if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+      return httpClient.get(`/agent-settlement?${q.toString()}`);
+    },
+    hawalaReconciliation: async (filters: {
+      agentId: string;
+      fromAt?: string;
+      toAt?: string;
+      currencyCode?: string;
+    }) => {
+      const q = new URLSearchParams({ agentId: filters.agentId });
+      if (filters.fromAt) q.set('fromAt', filters.fromAt);
+      if (filters.toAt) q.set('toAt', filters.toAt);
+      if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+      return httpClient.get(`/hawala-reconciliation?${q.toString()}`);
+    },
+    agentBranchReconciliation: async (filters: {
+      agentId: string;
+      fromAt?: string;
+      toAt?: string;
+      currencyCode?: string;
+    }) => {
+      const q = new URLSearchParams({ agentId: filters.agentId });
+      if (filters.fromAt) q.set('fromAt', filters.fromAt);
+      if (filters.toAt) q.set('toAt', filters.toAt);
+      if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+      return httpClient.get(`/agent-branch-reconciliation?${q.toString()}`);
+    },
+  },
 };
 
 export type AgentCodRow = {

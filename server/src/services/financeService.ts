@@ -4,6 +4,14 @@ import { computeBaseAmountUsd } from '../utils/money.js';
 import { env } from '../config/env.js';
 import { ExchangeRateRepository } from '../repositories/exchangeRateRepository.js';
 import { ProfitLossReportService, type ProfitLossReportFilters } from './profitLossReportService.js';
+import {
+  AccountingReportsService,
+  buildAgentMainBranchReconciliationPackage,
+  buildHawalaReconciliationPackage,
+  enrichAgentSettlementSummary,
+  type AccountingReportFilters,
+} from './accountingReportsService.js';
+import type { AgentRepository } from '../repositories/agentRepository.js';
 import type {
   CashboxInput,
   CashboxListFilters,
@@ -59,6 +67,7 @@ interface DashboardCacheResetAuditEntry {
 export class FinanceService {
   private readonly dashboardPackageCache = new Map<string, DashboardCacheEntry>();
   private readonly profitLossReportService = new ProfitLossReportService();
+  private readonly accountingReportsService = new AccountingReportsService();
 
   private readonly dashboardPackageInFlight = new Map<string, Promise<any>>();
 
@@ -84,7 +93,10 @@ export class FinanceService {
 
   private readonly exchangeRateRepository = new ExchangeRateRepository();
 
-  constructor(private readonly repository: FinanceRepository) {}
+  constructor(
+    private readonly repository: FinanceRepository,
+    private readonly agentRepository?: AgentRepository,
+  ) {}
 
   private async validateConfirmedCashbox(
     cashboxId: string | null | undefined,
@@ -907,5 +919,72 @@ export class FinanceService {
     this.invalidateDashboardCache();
     await this.persistDashboardCacheMetrics();
     return result;
+  }
+
+  getTrialBalanceReport(scope?: DataScope, filters?: AccountingReportFilters) {
+    return this.accountingReportsService.getTrialBalance(scope, filters ?? {});
+  }
+
+  getBalanceSheetReport(scope?: DataScope, filters?: AccountingReportFilters) {
+    return this.accountingReportsService.getBalanceSheet(scope, filters ?? {});
+  }
+
+  listAccountingPeriodClosures(scope?: DataScope, limit?: number) {
+    return this.accountingReportsService.listPeriodClosures(scope, limit);
+  }
+
+  closeAccountingPeriod(
+    scope: DataScope | undefined,
+    input: {
+      periodStart: string;
+      periodEnd: string;
+      branchId?: string | null;
+      currencyCode?: string;
+      notes?: string;
+      closedByUserId?: string | null;
+    },
+  ) {
+    return this.accountingReportsService.closePeriod(scope, input);
+  }
+
+  async isAccountingDateClosed(companyId: string, dateIso: string, branchId?: string | null) {
+    return this.accountingReportsService.isDateInClosedPeriod(companyId, dateIso, branchId);
+  }
+
+  async getAgentSettlementPackage(companyId: string, agentId: string, options?: AccountingReportFilters & { currencyCode?: string }) {
+    if (!this.agentRepository) throw new HttpError(500, 'Agent settlement is not configured.');
+    const raw = await this.agentRepository.getAgentFinancialStatement(companyId, agentId, {
+      currencyCode: options?.currencyCode,
+      fromAt: options?.fromAt,
+      toAt: options?.toAt,
+    });
+    if (!raw) return null;
+    return enrichAgentSettlementSummary(raw);
+  }
+
+  async getHawalaReconciliationPackage(companyId: string, agentId: string, options?: AccountingReportFilters & { currencyCode?: string }) {
+    if (!this.agentRepository) throw new HttpError(500, 'Hawala reconciliation is not configured.');
+    const raw = await this.agentRepository.getAgentFinancialStatement(companyId, agentId, {
+      currencyCode: options?.currencyCode,
+      fromAt: options?.fromAt,
+      toAt: options?.toAt,
+    });
+    if (!raw) return null;
+    return buildHawalaReconciliationPackage(raw);
+  }
+
+  async getAgentBranchReconciliationPackage(
+    companyId: string,
+    agentId: string,
+    options?: AccountingReportFilters & { currencyCode?: string },
+  ) {
+    if (!this.agentRepository) throw new HttpError(500, 'Agent branch reconciliation is not configured.');
+    const raw = await this.agentRepository.getAgentFinancialStatement(companyId, agentId, {
+      currencyCode: options?.currencyCode,
+      fromAt: options?.fromAt,
+      toAt: options?.toAt,
+    });
+    if (!raw) return null;
+    return buildAgentMainBranchReconciliationPackage(raw);
   }
 }

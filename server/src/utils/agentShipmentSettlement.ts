@@ -15,24 +15,83 @@ export type AgentShipmentSettlementInput = {
   agentCommissionAmount?: number | string | null;
 };
 
-/** Shipping price basis for commission (freight + COD collect). */
+/** Shipping price basis for commission (prepaid + freight + COD collect). */
 export function resolveAgentShippingPrice(input: {
   freightCharge?: number | string | null;
   transferFee?: number | string | null;
+  prepaidAmount?: number | string | null;
 }): number {
-  return Math.max(money(input.freightCharge) + money(input.transferFee), 0);
+  const prepaid = money(input.prepaidAmount);
+  const freight = money(input.freightCharge);
+  const collect = money(input.transferFee);
+  if (prepaid > 0) {
+    return Math.max(prepaid + collect, 0);
+  }
+  return Math.max(freight + collect, 0);
 }
 
-/**
- * Net amount the agent must remit to the company for this shipment.
- * Prepaid shipping is excluded from remittance (collected at origin).
- */
-export function computeAgentRemittanceDue(input: AgentShipmentSettlementInput): number {
+/** Cash collected at origin / main branch — not remitted by destination agent. */
+export function resolvePrepaidAtMainBranch(input: {
+  prepaidAmount?: number | string | null;
+  freightCharge?: number | string | null;
+  transferFee?: number | string | null;
+}): number {
+  const prepaid = money(input.prepaidAmount);
+  if (prepaid > 0) return prepaid;
+  const freight = money(input.freightCharge);
   const collect = money(input.transferFee);
-  const hawala = money(input.hawalaAmount);
-  const hawalaFee = money(input.transferServiceFee);
+  if (freight > 0 && collect === 0) return freight;
+  // دفتر الشحن: المسبق في freight_charge والتحصيل في transfer_fee على نفس السطر
+  if (freight > 0 && collect > 0) return freight;
+  return 0;
+}
+
+/** Commission attributable to prepaid portion (company owes agent; cash stayed at main branch). */
+export function computeCommissionOnPrepaidPortion(input: AgentShipmentSettlementInput): number {
+  const prepaidAtBranch = resolvePrepaidAtMainBranch(input);
   const commission = money(input.agentCommissionAmount);
-  return Math.max(collect + hawala + hawalaFee - commission, 0);
+  if (prepaidAtBranch <= 0 || commission <= 0) return 0;
+  const base = resolveAgentShippingPrice({
+    freightCharge: input.freightCharge,
+    transferFee: input.transferFee,
+    prepaidAmount: input.prepaidAmount,
+  });
+  if (base <= 0) return 0;
+  return money((commission * prepaidAtBranch) / base);
+}
+
+/** Gross liability on agent excluding prepaid at main branch, minus full shipping commission. */
+export function computeNetRequiredFromAgent(input: AgentShipmentSettlementInput): number {
+  const collect = money(input.transferFee);
+  const hawala = computeAgentHawalaRemittanceDue(input);
+  const commission = money(input.agentCommissionAmount);
+  return Math.max(collect + hawala - commission, 0);
+}
+
+/** Commission on COD portion (after prepaid share is separated). */
+export function computeCommissionOnCollectPortion(input: AgentShipmentSettlementInput): number {
+  const commission = money(input.agentCommissionAmount);
+  const prepaidPart = computeCommissionOnPrepaidPortion(input);
+  return Math.max(commission - prepaidPart, 0);
+}
+
+/** COD/shipping remittance — commission on collect only; prepaid stays at main branch. */
+export function computeAgentShippingRemittanceDue(input: AgentShipmentSettlementInput): number {
+  const collect = money(input.transferFee);
+  const commissionOnCollect = computeCommissionOnCollectPortion(input);
+  return Math.max(collect - commissionOnCollect, 0);
+}
+
+/** Hawala principal + service fee — no agent commission. */
+export function computeAgentHawalaRemittanceDue(input: {
+  hawalaAmount?: number | string | null;
+  transferServiceFee?: number | string | null;
+}): number {
+  return money(input.hawalaAmount) + money(input.transferServiceFee);
+}
+
+export function computeAgentRemittanceDue(input: AgentShipmentSettlementInput): number {
+  return computeAgentShippingRemittanceDue(input) + computeAgentHawalaRemittanceDue(input);
 }
 
 /** Positive = agent owes the company (outstanding liability). */

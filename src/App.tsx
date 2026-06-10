@@ -29,6 +29,10 @@ import FinanceReports from './pages/finance/Reports';
 import FinanceReportsShell from './pages/finance/reports/FinanceReportsShell';
 import ProfitLossReport from './pages/finance/reports/ProfitLossReport';
 import GeneralLedger from './pages/finance/GeneralLedger';
+import AgentBranchReconciliation from './pages/finance/AgentBranchReconciliation';
+import TrialBalance from './pages/finance/TrialBalance';
+import BalanceSheet from './pages/finance/BalanceSheet';
+import PeriodClosing from './pages/finance/PeriodClosing';
 import AgentCodStatement from './pages/finance/AgentCodStatement';
 import AgentsModule from './pages/agents/AgentsModule';
 import AgentProfile from './pages/agents/AgentProfile';
@@ -353,6 +357,56 @@ export default function App() {
                   />
                   <Route path="/finance/debit-credit" element={<FinanceLegacyRedirect to="/finance/general-ledger" />} />
                   <Route path="/finance/account-statement" element={<FinanceLegacyRedirect to="/finance/daily-journal" />} />
+                  <Route path="/finance/agent-settlement" element={<FinanceLegacyRedirect to="/finance/agent-branch-reconciliation" />} />
+                  <Route path="/finance/hawala-reconciliation" element={<FinanceLegacyRedirect to="/finance/agent-branch-reconciliation" />} />
+                  <Route
+                    path="/finance/agent-branch-reconciliation"
+                    element={
+                      user?.userType === 'agent' ? (
+                        <Navigate to="/agent-portal" replace />
+                      ) : (
+                        <RequirePermission permission="finance.read">
+                          <AgentBranchReconciliation />
+                        </RequirePermission>
+                      )
+                    }
+                  />
+                  <Route
+                    path="/finance/trial-balance"
+                    element={
+                      user?.userType === 'agent' ? (
+                        <Navigate to="/agent-portal" replace />
+                      ) : (
+                        <RequirePermission permission="finance.read">
+                          <TrialBalance />
+                        </RequirePermission>
+                      )
+                    }
+                  />
+                  <Route
+                    path="/finance/balance-sheet"
+                    element={
+                      user?.userType === 'agent' ? (
+                        <Navigate to="/agent-portal" replace />
+                      ) : (
+                        <RequirePermission permission="finance.read">
+                          <BalanceSheet />
+                        </RequirePermission>
+                      )
+                    }
+                  />
+                  <Route
+                    path="/finance/period-closing"
+                    element={
+                      user?.userType === 'agent' ? (
+                        <Navigate to="/agent-portal" replace />
+                      ) : (
+                        <RequirePermission permission="finance.read">
+                          <PeriodClosing />
+                        </RequirePermission>
+                      )
+                    }
+                  />
                   <Route
                     path="/finance/agent-cod-statement"
                     element={

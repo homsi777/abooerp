@@ -477,6 +477,7 @@ export default function Dashboard() {
           {canViewFinance && <QuickAction to="/finance/cashboxes" icon={<Wallet size={18} />} label="الصناديق" sub="مراقبة الأرصدة والحركات" />}
           {canViewFinance && <QuickAction to="/finance/general-ledger" icon={<ArrowLeftRight size={18} />} label="دفتر الأستاذ" sub="أرصدة الحسابات المالية" />}
           {canViewFinance && <QuickAction to="/finance/daily-journal" icon={<FileText size={18} />} label="دفتر اليومية" sub="سجل الحركات المالية" />}
+          {canViewFinance && <QuickAction to="/finance/agent-branch-reconciliation" icon={<Users size={18} />} label="مطابقة الوكيل والفرع" sub="شحن + حوالات + مسبق + عمولة" />}
           {!isAgentScope && <QuickAction to="/reports" icon={<BarChart3 size={18} />} label="التقارير" sub="تحليلات وإحصاءات" />}
         </div>
       </section>

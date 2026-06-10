@@ -4,7 +4,7 @@ import { phase3FinanceGateway } from '../../lib/api/phase3FinanceGateway';
 import { getBackendIdFromSynthetic, phase15Gateway } from '../../lib/api/phase15Gateway';
 import { useToast } from '../../components/Toast';
 import { downloadCsv } from '../../lib/export/csvDownload';
-import FinancialStatementPrintButtons from '../../components/finance/FinancialStatementPrintButtons';
+import FinanceExportToolbar from '../../components/finance/FinanceExportToolbar';
 import { buildDebitCreditPrintHtml } from '../../lib/export/financialStatementPrint';
 
 type Row = {
@@ -185,13 +185,25 @@ export default function GeneralLedger() {
           <div className="flex gap-1 items-center">
             <button className="toolbar-btn primary" onClick={() => void load()}>تطبيق</button>
             <button className="toolbar-btn" onClick={() => setFilters({ search: '', partyType: '', branchId: '', currencyCode: '', dateFrom: '', dateTo: '', balanceDirection: '', includeOperationalParties: false })}>إعادة ضبط</button>
-            <button type="button" className="toolbar-btn" onClick={exportCsv}>تصدير Excel (CSV)</button>
-            <FinancialStatementPrintButtons
+            <FinanceExportToolbar
               disabled={loading || rows.length === 0}
-              documentType="debit_credit"
+              csvFileName={`general-ledger-${new Date().toISOString().split('T')[0]}.csv`}
+              csvHeaders={['#', 'كود', 'اسم', 'نوع', 'فرع', 'عملة', 'مدين', 'دائن', 'رصيد']}
+              csvRows={rows.map((r, i) => [
+                String(i + 1),
+                r.partyCode,
+                r.partyName,
+                r.partyType,
+                r.branchName,
+                r.currencyCode,
+                String(r.totalDebit),
+                String(r.totalCredit),
+                String(r.balance),
+              ])}
+              documentType="general_ledger"
               pdfTitle="دفتر الأستاذ"
               pdfFileName={`general-ledger-${new Date().toISOString().split('T')[0]}.pdf`}
-              onBuildHtml={buildPrintHtml}
+              onBuildPrintHtml={buildPrintHtml}
               className="flex gap-2"
             />
           </div>

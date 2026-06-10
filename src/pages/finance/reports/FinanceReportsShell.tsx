@@ -15,6 +15,12 @@ export default function FinanceReportsShell() {
           <NavLink to="/finance/reports/profit-loss" className={tabClass}>
             أرباح وخسائر
           </NavLink>
+          <NavLink to="/finance/trial-balance" className={tabClass}>
+            ميزان المراجعة
+          </NavLink>
+          <NavLink to="/finance/balance-sheet" className={tabClass}>
+            قائمة المركز المالي
+          </NavLink>
         </div>
       </div>
       <Outlet />

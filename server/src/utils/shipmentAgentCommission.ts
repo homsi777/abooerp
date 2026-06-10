@@ -10,17 +10,23 @@ function roundMoney(n: number) {
   return Math.round(n * 100) / 100;
 }
 
-/** Shipping price: prepaid → freight_charge; COD → transfer_fee (mutually exclusive in practice). */
+/** Shipping price: prepaid + collect (دفتر الشحن يضع المسبق في freight والتحصيل في transfer_fee). */
 export function resolveShipmentShippingPrice(input: {
   freightCharge?: number | string | null;
   transferFee?: number | string | null;
+  prepaidAmount?: number | string | null;
 }): number {
+  const prepaid = money(input.prepaidAmount);
+  if (prepaid > 0) {
+    return Math.max(prepaid + money(input.transferFee), 0);
+  }
   return Math.max(money(input.freightCharge) + money(input.transferFee), 0);
 }
 
 export function computeAgentCommissionSnapshot(input: {
   freightCharge?: number | string | null;
   transferFee?: number | string | null;
+  prepaidAmount?: number | string | null;
   commissionPercentage?: number | string | null;
 }) {
   const agentCommissionPercentageSnapshot = money(input.commissionPercentage);

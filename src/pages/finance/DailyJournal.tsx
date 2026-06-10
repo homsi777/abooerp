@@ -4,7 +4,7 @@ import { phase3FinanceGateway } from '../../lib/api/phase3FinanceGateway';
 import { getBackendIdFromSynthetic, phase15Gateway } from '../../lib/api/phase15Gateway';
 import { useToast } from '../../components/Toast';
 import { downloadCsv } from '../../lib/export/csvDownload';
-import FinancialStatementPrintButtons from '../../components/finance/FinancialStatementPrintButtons';
+import FinanceExportToolbar from '../../components/finance/FinanceExportToolbar';
 import { buildDetailedAccountStatementPrintHtml } from '../../lib/export/financialStatementPrint';
 
 type JournalRow = {
@@ -183,13 +183,25 @@ export default function FinanceDailyJournal() {
           <input className="form-input" placeholder="بحث في البيان أو رقم المرجع" value={filters.search} onChange={(e) => setFilters((p) => ({ ...p, search: e.target.value }))} />
           <button className="toolbar-btn primary" onClick={() => void load()}>تطبيق</button>
           <button className="toolbar-btn" onClick={() => setFilters({ partyType: '', partyId: '', branchId: '', currencyCode: '', dateFrom: '', dateTo: '', referenceType: '', search: '', includeOperationalParties: false })}>إعادة ضبط</button>
-          <button type="button" className="toolbar-btn" onClick={exportCsv}>تصدير Excel (CSV)</button>
-          <FinancialStatementPrintButtons
+          <FinanceExportToolbar
             disabled={loading || rows.length === 0}
-            documentType="account_statement"
+            csvFileName={`daily-journal-${new Date().toISOString().split('T')[0]}.csv`}
+            csvHeaders={['#', 'التاريخ', 'نوع الحساب', 'اسم الحساب', 'مرجع', 'بيان', 'مدين', 'دائن', 'رصيد']}
+            csvRows={rows.map((r, i) => [
+              String(i + 1),
+              new Date(r.date).toLocaleString('ar-SY'),
+              r.partyType,
+              r.partyName,
+              r.referenceNo,
+              r.description,
+              String(r.debit),
+              String(r.credit),
+              String(r.runningBalance),
+            ])}
+            documentType="daily_journal"
             pdfTitle="دفتر اليومية"
             pdfFileName={`daily-journal-${new Date().toISOString().split('T')[0]}.pdf`}
-            onBuildHtml={buildPrintHtml}
+            onBuildPrintHtml={buildPrintHtml}
             className="flex gap-2"
           />
           <label className="flex items-center gap-1 text-sm text-gray-600 cursor-pointer col-span-2">
