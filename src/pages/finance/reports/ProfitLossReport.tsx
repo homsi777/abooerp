@@ -167,7 +167,7 @@ export default function ProfitLossReport() {
             <div className="stat-card"><div className="stat-value text-amber-800">{formatCurrency(report.summary.totalCustomerLiabilities, currency)}</div><div className="stat-label">ذمم عملاء متبقية</div></div>
             <div className="stat-card flex flex-col justify-center gap-1 text-sm">
               <Link className="toolbar-btn text-xs" to="/finance/agent-cod-statement">كشوف COD</Link>
-              <Link className="toolbar-btn text-xs" to="/finance/debit-credit">الدائن والمدين</Link>
+              <Link className="toolbar-btn text-xs" to="/finance/general-ledger">دفتر الأستاذ</Link>
             </div>
           </div>
 

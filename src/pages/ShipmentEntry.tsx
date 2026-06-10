@@ -430,11 +430,11 @@ export default function ShipmentEntry() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2 px-2 pb-2">
-            <button type="button" className="toolbar-btn text-sm" onClick={() => navigate('/finance/account-statement')}>
-              فتح كشف الحساب التفصيلي
+            <button type="button" className="toolbar-btn text-sm" onClick={() => navigate('/finance/daily-journal')}>
+              فتح دفتر اليومية
             </button>
-            <button type="button" className="toolbar-btn text-sm" onClick={() => navigate('/finance/debit-credit')}>
-              مركز الدائن والمدين
+            <button type="button" className="toolbar-btn text-sm" onClick={() => navigate('/finance/general-ledger')}>
+              دفتر الأستاذ
             </button>
             {financialCard.financialStatus === 'UNPOSTED' && (
               <button

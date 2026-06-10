@@ -147,16 +147,16 @@ export default function CustomerProfile() {
             )}
             <div className="mt-3 flex gap-2 flex-wrap">
               <Link
-                to={`/finance/account-statement?partyType=customer&partyId=${customer.id}`}
+                to={`/finance/daily-journal?partyType=customer&partyId=${customer.id}`}
                 className="btn btn-secondary text-xs"
               >
-                كشف الحساب
+                دفتر اليومية
               </Link>
               <Link
-                to={`/finance/debit-credit?partyType=customer&partyId=${customer.id}`}
+                to={`/finance/general-ledger?partyType=customer&partyId=${customer.id}`}
                 className="btn btn-secondary text-xs"
               >
-                الدائن والمدين
+                دفتر الأستاذ
               </Link>
             </div>
             {financial && financial.movementCount === 0 && financial.shipmentCount > 0 && (

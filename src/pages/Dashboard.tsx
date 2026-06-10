@@ -449,7 +449,7 @@ export default function Dashboard() {
           <div className="db-card">
             <SectionHeader
               title="الذمم المالية"
-              action={<Link to="/finance/debit-credit">فتح مركز الدائن والمدين</Link>}
+              action={<Link to="/finance/general-ledger">فتح دفتر الأستاذ</Link>}
             />
             <div className="db-mini-stats db-mini-stats-3">
               <MiniStat label="إجمالي المدين" value={currencyVal(data?.finance ?? [], 'total_debit')} tone="red" />
@@ -475,8 +475,8 @@ export default function Dashboard() {
           {!isAgentScope && <QuickAction to="/customers" icon={<Box size={18} />} label="العملاء" sub="العملاء الدائمون والحسابيون" />}
           {!isAgentScope && <QuickAction to="/branches" icon={<Building2 size={18} />} label="الفروع" sub="إدارة الفروع والمناطق" />}
           {canViewFinance && <QuickAction to="/finance/cashboxes" icon={<Wallet size={18} />} label="الصناديق" sub="مراقبة الأرصدة والحركات" />}
-          {canViewFinance && <QuickAction to="/finance/debit-credit" icon={<ArrowLeftRight size={18} />} label="الدائن والمدين" sub="مركز المراجعة المالية" />}
-          {canViewFinance && <QuickAction to="/finance/account-statement" icon={<FileText size={18} />} label="كشف الحساب" sub="كشوف حساب الأطراف" />}
+          {canViewFinance && <QuickAction to="/finance/general-ledger" icon={<ArrowLeftRight size={18} />} label="دفتر الأستاذ" sub="أرصدة الحسابات المالية" />}
+          {canViewFinance && <QuickAction to="/finance/daily-journal" icon={<FileText size={18} />} label="دفتر اليومية" sub="سجل الحركات المالية" />}
           {!isAgentScope && <QuickAction to="/reports" icon={<BarChart3 size={18} />} label="التقارير" sub="تحليلات وإحصاءات" />}
         </div>
       </section>

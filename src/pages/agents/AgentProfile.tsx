@@ -151,7 +151,7 @@ export default function AgentProfile() {
         <div className="flex gap-2 mt-3">
           <button type="button" className="toolbar-btn" onClick={() => void openStatement('financial')}>كشف مالي للوكيل</button>
           <button type="button" className="toolbar-btn" onClick={() => void openStatement('account')}>كشف حساب شامل للوكيل</button>
-          <button type="button" className="toolbar-btn" onClick={() => navigate(`/finance/debit-credit?partyType=agent`)}>فتح الدائن والمدين</button>
+          <button type="button" className="toolbar-btn" onClick={() => navigate(`/finance/general-ledger?partyType=agent`)}>فتح دفتر الأستاذ</button>
         </div>
       </section>
 

@@ -517,6 +517,7 @@ export const phase3FinanceGateway = {
       search?: string;
       page?: number;
       pageSize?: number;
+      includeOperationalParties?: boolean;
     }) => {
       const query = new URLSearchParams();
       if (filters.partyType) query.set('partyType', filters.partyType);
@@ -529,6 +530,7 @@ export const phase3FinanceGateway = {
       if (filters.search) query.set('search', filters.search);
       if (typeof filters.page === 'number') query.set('page', String(filters.page));
       if (typeof filters.pageSize === 'number') query.set('pageSize', String(filters.pageSize));
+      if (filters.includeOperationalParties) query.set('includeOperationalParties', 'true');
       const suffix = query.toString() ? `?${query.toString()}` : '';
       const payload = await httpClient.get<BackendAccountStatementResponse>(`/account-statement${suffix}`);
       let running = 0;
@@ -540,6 +542,7 @@ export const phase3FinanceGateway = {
           id: row.id,
           date: row.date,
           partyType: row.party_type,
+          partyId: row.party_id,
           partyName: row.party_name || '-',
           referenceType: row.reference_type || '-',
           referenceNo: row.reference_no || '-',

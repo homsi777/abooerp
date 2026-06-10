@@ -157,8 +157,8 @@ export default function AgentStatementReconciliationPanel({
         <Link className="toolbar-btn text-xs" to={`/finance/agent-cod-statement?agentId=${encodeURIComponent(metrics.agentId)}&currencyCode=${encodeURIComponent(metrics.currencyCode)}`}>
           كشف COD / الذمم
         </Link>
-        <Link className="toolbar-btn text-xs" to={`/finance/debit-credit?partyType=agent&search=${encodeURIComponent(metrics.agentName)}`}>
-          الدائن والمدين
+        <Link className="toolbar-btn text-xs" to={`/finance/general-ledger?partyType=agent&search=${encodeURIComponent(metrics.agentName)}`}>
+          دفتر الأستاذ
         </Link>
         <button type="button" className="toolbar-btn text-xs" onClick={() => openFullVoucherPage('receipt')}>
           فتح السندات

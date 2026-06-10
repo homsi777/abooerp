@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './layouts/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -28,9 +28,7 @@ import DailyJournal from './pages/finance/DailyJournal';
 import FinanceReports from './pages/finance/Reports';
 import FinanceReportsShell from './pages/finance/reports/FinanceReportsShell';
 import ProfitLossReport from './pages/finance/reports/ProfitLossReport';
-import FinanceDeliveryReports from './pages/finance/DeliveryReports';
-import DebitCreditCenter from './pages/finance/DebitCreditCenter';
-import AccountStatement from './pages/finance/AccountStatement';
+import GeneralLedger from './pages/finance/GeneralLedger';
 import AgentCodStatement from './pages/finance/AgentCodStatement';
 import AgentsModule from './pages/agents/AgentsModule';
 import AgentProfile from './pages/agents/AgentProfile';
@@ -50,6 +48,11 @@ import { ToastProvider } from './components/Toast';
 import { useAuth } from './context/AuthProvider';
 import RequireAuth from './components/RequireAuth';
 import RequirePermission from './components/RequirePermission';
+
+function FinanceLegacyRedirect({ to }: { to: string }) {
+  const { search } = useLocation();
+  return <Navigate to={`${to}${search}`} replace />;
+}
 
 export default function App() {
   const { user, loading, logout } = useAuth();
@@ -324,31 +327,32 @@ export default function App() {
                     }
                   />
                   <Route path="/finance/tariffs" element={user?.userType === 'agent' ? <Navigate to="/agent-portal" replace /> : <Tariffs />} />
-                  <Route path="/finance/daily-journal" element={user?.userType === 'agent' ? <Navigate to="/agent-portal" replace /> : <DailyJournal />} />
                   <Route
-                    path="/finance/debit-credit"
+                    path="/finance/daily-journal"
                     element={
                       user?.userType === 'agent' ? (
                         <Navigate to="/agent-portal" replace />
                       ) : (
                         <RequirePermission permission="finance.read">
-                          <DebitCreditCenter />
+                          <DailyJournal />
                         </RequirePermission>
                       )
                     }
                   />
                   <Route
-                    path="/finance/account-statement"
+                    path="/finance/general-ledger"
                     element={
                       user?.userType === 'agent' ? (
                         <Navigate to="/agent-portal" replace />
                       ) : (
                         <RequirePermission permission="finance.read">
-                          <AccountStatement />
+                          <GeneralLedger />
                         </RequirePermission>
                       )
                     }
                   />
+                  <Route path="/finance/debit-credit" element={<FinanceLegacyRedirect to="/finance/general-ledger" />} />
+                  <Route path="/finance/account-statement" element={<FinanceLegacyRedirect to="/finance/daily-journal" />} />
                   <Route
                     path="/finance/agent-cod-statement"
                     element={
@@ -372,18 +376,7 @@ export default function App() {
                     <Route index element={<FinanceReports />} />
                     <Route path="profit-loss" element={<ProfitLossReport />} />
                   </Route>
-                  <Route
-                    path="/finance/delivery-reports"
-                    element={
-                      user?.userType === 'agent' ? (
-                        <Navigate to="/agent-portal" replace />
-                      ) : (
-                        <RequirePermission permission="finance.read">
-                          <FinanceDeliveryReports />
-                        </RequirePermission>
-                      )
-                    }
-                  />
+                  <Route path="/finance/delivery-reports" element={<FinanceLegacyRedirect to="/finance/reports" />} />
 
                   <Route path="/reports" element={user?.userType === 'agent' ? <Navigate to="/agent-portal" replace /> : <Reports />} />
                   <Route path="/print-preview" element={user?.userType === 'agent' ? <Navigate to="/agent-portal" replace /> : <PrintPreview />} />
