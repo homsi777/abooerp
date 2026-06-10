@@ -40,14 +40,14 @@ assert(
 );
 
 assert(isDailyLedgerScopedOperator('data_entry'), 'data_entry is scoped operator');
-assert(isDailyLedgerScopedOperator('shipment_auditor'), 'shipment_auditor is scoped operator');
+assert(!isDailyLedgerScopedOperator('shipment_auditor'), 'shipment_auditor is not scoped operator');
 assert(
-  !canViewAllDailyLedgerEntries('shipment_auditor', 'employee', []),
-  'shipment_auditor must not view all',
+  canViewAllDailyLedgerEntries('shipment_auditor', 'employee', []),
+  'shipment_auditor must view all entries like manager',
 );
 assert(
-  dailyLedgerOwnerUserId('shipment_auditor', 'employee', 'user-99', []) === 'user-99',
-  'shipment_auditor must filter to own user id',
+  dailyLedgerOwnerUserId('shipment_auditor', 'employee', 'user-99', []) === undefined,
+  'shipment_auditor must not filter to own user id',
 );
 
 console.log('dailyLedgerAccess.selftest: OK');

@@ -1,8 +1,13 @@
-/** أدوار ترى كل إدخالات دفتر الشحن (كل الموظفين) ضمن نطاق الفرع */
-const DAILY_LEDGER_MANAGER_VIEW_ROLES = new Set(['general_manager', 'branch_manager', 'manager']);
+/** أدوار ترى كل إدخالات دفتر الشحن (كل الموظفين) — مثل المدير */
+const DAILY_LEDGER_MANAGER_VIEW_ROLES = new Set([
+  'general_manager',
+  'branch_manager',
+  'manager',
+  'shipment_auditor',
+]);
 
-/** أدوار تشغيلية ترى إدخالاتها فقط ويُقفل فرعها */
-export const DAILY_LEDGER_SCOPED_OPERATOR_ROLES = new Set(['data_entry', 'shipment_auditor']);
+/** مدخل البيانات فقط: يرى إدخالاته ويُقفل فرعه */
+export const DAILY_LEDGER_SCOPED_OPERATOR_ROLES = new Set(['data_entry']);
 
 export const DAILY_LEDGER_VIEW_ALL_PERMISSION = 'daily_ledger.view_all_entries';
 export const DAILY_LEDGER_EXPORT_PDF_PERMISSION = 'daily_ledger.export_pdf';

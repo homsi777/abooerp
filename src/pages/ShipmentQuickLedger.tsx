@@ -1104,19 +1104,19 @@ export default function ShipmentQuickLedger() {
   const isCompanyWideLedgerViewer = useMemo(() => {
     if (!user) return false;
     if (user.userType === 'admin' || user.role === 'admin') return true;
-    return ['general_manager', 'branch_manager', 'manager'].includes(user.role);
+    return ['general_manager', 'branch_manager', 'manager', 'shipment_auditor'].includes(user.role);
   }, [user]);
 
   const isLedgerScopedOperator = useMemo(() => {
     if (!user) return false;
-    return user.role === 'data_entry' || user.role === 'shipment_auditor';
+    return user.role === 'data_entry';
   }, [user]);
 
-  /** المدير يرى كل إدخالات الموظفين؛ مدخل البيانات ومدقق الشحنات يريان إدخالاتهما فقط */
+  /** المدير ومدقق الشحنات يريان كل إدخالات الموظفين؛ مدخل البيانات يرى إدخالاته فقط */
   const canViewAllLedgerEntries = useMemo(() => {
     if (!user || isLedgerScopedOperator) return false;
     if (user.userType === 'admin' || user.role === 'admin') return true;
-    if (['general_manager', 'branch_manager', 'manager'].includes(user.role)) return true;
+    if (['general_manager', 'branch_manager', 'manager', 'shipment_auditor'].includes(user.role)) return true;
     return hasPermission('daily_ledger.view_all_entries');
   }, [user, hasPermission, isLedgerScopedOperator]);
 

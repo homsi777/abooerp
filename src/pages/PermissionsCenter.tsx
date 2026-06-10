@@ -96,7 +96,7 @@ const permissionArabicMeta: Record<string, { label: string; description: string;
   },
   'daily_ledger.view_all_entries': {
     label: 'عرض كل إدخالات دفتر الشحن',
-    description: 'للمدير: يرى إدخالات جميع موظفي مدخل البيانات. بدونها يرى مدخل البيانات إدخالاته فقط.',
+    description: 'للمدير ومدقق الشحنات: يرى إدخالات جميع موظفي الإدخال. بدونها يرى مدخل البيانات إدخالاته فقط.',
   },
   'daily_ledger.export_pdf': {
     label: 'تصدير PDF لدفتر الشحن',
@@ -285,6 +285,7 @@ const roleTemplates: PermissionTemplate[] = [
       'daily_ledger.post_shipments',
       'daily_ledger.transfer.create',
       'daily_ledger.transfer.confirm',
+      'daily_ledger.view_all_entries',
     ],
   },
   {
