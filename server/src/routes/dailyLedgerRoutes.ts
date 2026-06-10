@@ -108,7 +108,8 @@ export function createDailyLedgerRouter(
         return;
       }
 
-      const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId);
+      const permissions = getRequestPermissions(req);
+      const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, permissions);
       const rows = await service.listRows(scope, {
         branchId: effectiveBranchId,
         ledgerDate: q.ledgerDate,
@@ -188,7 +189,7 @@ export function createDailyLedgerRouter(
         return;
       }
 
-      const ownerUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId);
+      const ownerUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, getRequestPermissions(req));
       const row = await service.upsertRow(scope, {
         ...input,
         restrictToCreatedByUserId: ownerUserId,
@@ -266,7 +267,7 @@ export function createDailyLedgerRouter(
         return;
       }
 
-      const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId);
+      const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, getRequestPermissions(req));
       try {
         const result = await service.postPendingShipments(scope, { ...input, createdByUserId }, allowedBranchIds);
         res.json({ success: true, data: result });
@@ -332,7 +333,7 @@ export function createDailyLedgerRouter(
         rowIds: z.array(uuid).min(1),
       });
       const { rowIds } = bodySchema.parse(req.body);
-      const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId);
+      const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, getRequestPermissions(req));
       const result = await service.deleteRows(scope, rowIds, allowedBranchIds, createdByUserId);
       res.json({ success: true, data: result });
     },

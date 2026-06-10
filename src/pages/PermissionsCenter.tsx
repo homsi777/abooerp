@@ -94,6 +94,10 @@ const permissionArabicMeta: Record<string, { label: string; description: string;
     label: 'تاريخ مستقبلي لدفتر الشحن',
     description: 'يسمح بفتح دفتر بتاريخ الغد أو لاحقاً — عند تحميل البضائع اليوم وسفر المركبة في الرحلة القادمة (دوريات الجمارك).',
   },
+  'daily_ledger.view_all_entries': {
+    label: 'عرض كل إدخالات دفتر الشحن',
+    description: 'للمدير: يرى إدخالات جميع موظفي مدخل البيانات. بدونها يرى مدخل البيانات إدخالاته فقط.',
+  },
   'drivers.view': { label: 'عرض السائقين', description: 'يسمح برؤية قائمة السائقين.' },
   'drivers.manage': { label: 'إدارة السائقين', description: 'يسمح بإضافة وتعديل السائقين.' },
   'vehicles.view': { label: 'عرض المركبات', description: 'يسمح برؤية قائمة المركبات.' },

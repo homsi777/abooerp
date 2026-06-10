@@ -757,6 +757,7 @@ export default function ShipmentQuickLedger() {
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteSyncedCount, setRemoteSyncedCount] = useState(0);
   const loadGenerationRef = useRef(0);
+  const canViewAllLedgerEntriesRef = useRef(false);
   /** نطاق التحرير المحفوظ — يُستخدم للحفظ التلقائي ولا يتغيّر إلا بعد جلب ناجح */
   const editingScopeRef = useRef<DailyLedgerEditingScope>({
     branchId: '',
@@ -1096,11 +1097,23 @@ export default function ShipmentQuickLedger() {
     activeBranchIdRef.current = activeBranchId;
   }, [activeBranchId]);
 
+  useEffect(() => {
+    canViewAllLedgerEntriesRef.current = canViewAllLedgerEntries;
+  }, [canViewAllLedgerEntries]);
+
   const isCompanyWideLedgerViewer = useMemo(() => {
     if (!user) return false;
     if (user.userType === 'admin' || user.role === 'admin') return true;
     return ['general_manager', 'branch_manager', 'manager'].includes(user.role);
   }, [user]);
+
+  /** المدير يرى كل إدخالات الموظفين؛ مدخل البيانات يرى إدخالاته فقط */
+  const canViewAllLedgerEntries = useMemo(() => {
+    if (!user || user.role === 'data_entry') return false;
+    if (user.userType === 'admin' || user.role === 'admin') return true;
+    if (['general_manager', 'branch_manager', 'manager'].includes(user.role)) return true;
+    return hasPermission('daily_ledger.view_all_entries');
+  }, [user, hasPermission]);
 
   const branchChoices = useMemo(() => {
     if (!user) return branches;
@@ -1220,7 +1233,9 @@ export default function ShipmentQuickLedger() {
     const branchId = activeBranchIdRef.current;
     const currentTrip = tripRef.current;
     if (!branchId) return;
-    if (!currentTrip.date || !currentTrip.line) return;
+    if (!currentTrip.date) return;
+    const viewAllEntries = canViewAllLedgerEntriesRef.current;
+    if (!viewAllEntries && !currentTrip.line) return;
 
     const generation = ++loadGenerationRef.current;
 
@@ -1235,7 +1250,13 @@ export default function ShipmentQuickLedger() {
       const origin = resolveTripOrigin(currentTrip.line);
       setRows(buildEntrySlotRows(1, origin));
 
-      const queryScope = scopeFromTrip(branchId, currentTrip.date, currentTrip.line, includeLoaded);
+      const queryScope = scopeFromTrip(
+        branchId,
+        currentTrip.date,
+        currentTrip.line || '',
+        includeLoaded,
+        viewAllEntries ? { allLines: true } : {},
+      );
       const remoteValues = await fetchAllDailyLedgerRows(queryScope);
       if (generation !== loadGenerationRef.current) return;
 
@@ -1262,12 +1283,13 @@ export default function ShipmentQuickLedger() {
 
   useEffect(() => {
     if (loadingRefs) return;
-    if (!activeBranchId || !trip.date || !trip.line) return;
+    if (!activeBranchId || !trip.date) return;
+    if (!canViewAllLedgerEntries && !trip.line) return;
     setRemoteLoading(true);
     setActiveSessionId(null);
     setRemoteRowsRaw([]);
     void loadRemoteRows();
-  }, [activeBranchId, trip.date, trip.line, includeLoaded, loadingRefs]);
+  }, [activeBranchId, trip.date, trip.line, includeLoaded, loadingRefs, canViewAllLedgerEntries]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3443,6 +3465,12 @@ export default function ShipmentQuickLedger() {
       {isFutureDateMode && (
         <div className="quick-ledger-backdate-banner" dir="rtl" role="status">
           دفتر بتاريخ مستقبلي ({trip.date}) — للشحنات المحمّلة اليوم والمسافرة في الرحلة القادمة (مثلاً دورية جمارك الغد).
+        </div>
+      )}
+
+      {canViewAllLedgerEntries && (
+        <div className="quick-ledger-supervisor-banner" dir="rtl" role="status">
+          وضع المدير: تعرض كل إدخالات موظفي مدخل البيانات لهذا الفرع والتاريخ (كل الخطوط والإرساليات).
         </div>
       )}
 

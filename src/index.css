@@ -1309,6 +1309,17 @@ body {
   font-size: 13px;
 }
 
+.quick-ledger-supervisor-banner {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  color: #166534;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 8px 0;
+  font-weight: 600;
+  font-size: 13px;
+}
+
 .quick-ledger-reprint-banner {
   background: #fffbeb;
   border: 1px solid #fcd34d;
