@@ -46,7 +46,7 @@ import {
   remoteRowCollectionUsd,
   sortDailyLedgerRows,
 } from '../lib/shipping/dailyLedgerPrintable';
-import { screenMoneyTotalFromLocal } from '../lib/shipping/dailyLedgerTotals';
+import { formatUsdAmount } from '../lib/shipping/dailyLedgerTotals';
 import type { DailyLedgerEditingScope, RemoteDailyLedgerRow } from '../lib/shipping/dailyLedgerTypes';
 import {
   mergeLedgerRowWithAutoTariff,
@@ -292,10 +292,6 @@ function isRowComplete(row: LedgerRow) {
 function isRowDeletable(row: LedgerRow) {
   if (row.loadedAt) return false;
   return Boolean(row.dbId || isRowStarted(row));
-}
-
-function rowScreenMoneyUsd(row: LedgerRow) {
-  return screenMoneyTotalFromLocal(row);
 }
 
 function tripFleetPayload(trip: {
@@ -1038,16 +1034,29 @@ export default function ShipmentQuickLedger() {
     const scopedRows = activeSessionId
       ? rows.filter((row) => rowInActiveSessionScope(row, activeSessionId))
       : rows;
-    const meaningful = scopedRows.filter(isRowStarted);
-    const completeRows = meaningful.filter((row) => isRowComplete(row) && !row.postedShipmentId);
-    const totalWeightKg = meaningful.reduce((sum, row) => sum + (parseWeightKg(row.weightKg) ?? 0), 0);
+    const written = scopedRows.filter(isRowStarted);
+    let collectionUsd = 0;
+    let prepaidUsd = 0;
+    let hawalaUsd = 0;
+    let transferFeeUsd = 0;
+    let totalWeightKg = 0;
+    for (const row of written) {
+      collectionUsd += parseUsd(row.collectAmount);
+      prepaidUsd += parseUsd(row.prepaidAmount);
+      hawalaUsd += parseUsd(row.receiverCollect);
+      transferFeeUsd += parseUsd(row.transferServiceFee);
+      totalWeightKg += parseWeightKg(row.weightKg) ?? 0;
+    }
+    const completeRows = written.filter((row) => isRowComplete(row) && !row.postedShipmentId);
     return {
-      started: meaningful.length,
-      complete: completeRows.length,
-      missing: Math.max(0, meaningful.length - meaningful.filter(isRowComplete).length),
-      saved: meaningful.filter((r) => Boolean(r.postedShipmentId)).length,
-      totalCollect: meaningful.reduce((sum, row) => sum + rowScreenMoneyUsd(row), 0),
+      rowCount: written.length,
+      collectionUsd,
+      prepaidUsd,
+      hawalaUsd,
+      transferFeeUsd,
       totalWeightKg,
+      complete: completeRows.length,
+      saved: written.filter((r) => Boolean(r.postedShipmentId)).length,
     };
   }, [rows, activeSessionId]);
 
@@ -3320,11 +3329,11 @@ export default function ShipmentQuickLedger() {
       </section>
 
       <section className="quick-ledger-stats">
-        <div><strong>{stats.started}</strong><span>أسطر مستخدمة</span></div>
-        <div><strong>{stats.complete}</strong><span>جاهزة للترحيل</span></div>
-        <div><strong>{stats.missing}</strong><span>ناقصة (إيصال+جهة+مرسل+مستلم)</span></div>
-        <div><strong>{stats.saved}</strong><span>محفوظة</span></div>
-        <div><strong>{stats.totalCollect.toLocaleString()}</strong><span>إجمالي الدولار (تحصيل+حوالة+أجرة)</span></div>
+        <div><strong>{stats.rowCount}</strong><span>عدد الأسطر</span></div>
+        <div><strong>USD {formatUsdAmount(stats.collectionUsd)}</strong><span>التحصيل</span></div>
+        <div><strong>USD {formatUsdAmount(stats.prepaidUsd)}</strong><span>دفع مسبق</span></div>
+        <div><strong>USD {formatUsdAmount(stats.hawalaUsd)}</strong><span>حوالة</span></div>
+        <div><strong>USD {formatUsdAmount(stats.transferFeeUsd)}</strong><span>أجور الحوالة</span></div>
         <div><strong>{formatWeightKgTons(stats.totalWeightKg)}</strong><span>إجمالي الوزن</span></div>
         {duplicateReceiptRowIds.size > 0 && (
           <div className="quick-ledger-stat-warn">
@@ -3953,7 +3962,7 @@ export default function ShipmentQuickLedger() {
           <div className="quick-ledger-confirm-panel">
             <h3>إغلاق دفتر الإدخال؟</h3>
             <p>
-              يوجد {stats.started} أسطر تم إدخال بيانات فيها. الإغلاق الآن سيعيدك إلى قائمة الشحنات. الأسطر المحفوظة ستبقى محفوظة، والأسطر غير المحفوظة ستبقى فقط على الشاشة الحالية.
+              يوجد {stats.rowCount} أسطر تم إدخال بيانات فيها. الإغلاق الآن سيعيدك إلى قائمة الشحنات. الأسطر المحفوظة ستبقى محفوظة، والأسطر غير المحفوظة ستبقى فقط على الشاشة الحالية.
             </p>
             <div>
               <button type="button" onClick={() => setCloseConfirmOpen(false)}>متابعة الإدخال</button>
