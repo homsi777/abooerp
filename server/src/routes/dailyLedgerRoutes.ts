@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requirePermissions } from '../middleware/authorization.js';
 import {
   canAccessAnyCompanyBranch,
+  canViewAllDailyLedgerEntries,
   dailyLedgerOwnerUserId,
 } from '../utils/dailyLedgerAccess.js';
 import { parseDataScope } from '../utils/scope.js';
@@ -109,6 +110,7 @@ export function createDailyLedgerRouter(
       }
 
       const permissions = getRequestPermissions(req);
+      const viewAllEntries = canViewAllDailyLedgerEntries(roleCode, userType, permissions);
       const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, permissions);
       const rows = await service.listRows(scope, {
         branchId: effectiveBranchId,
@@ -125,6 +127,7 @@ export function createDailyLedgerRouter(
         limit: q.limit ?? 250,
         offset: q.offset ?? 0,
       });
+      res.setHeader('X-Daily-Ledger-View-Scope', viewAllEntries ? 'all' : 'own');
       res.json({ success: true, data: rows });
     },
   );

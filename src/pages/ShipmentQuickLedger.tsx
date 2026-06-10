@@ -39,6 +39,7 @@ import {
 } from '../lib/agents/agentQuickCodes';
 import {
   fetchAllDailyLedgerRows,
+  resolveLedgerBranchId,
   scopeFromTrip,
 } from '../lib/shipping/dailyLedgerScope';
 import {
@@ -1153,6 +1154,15 @@ export default function ShipmentQuickLedger() {
     return hasPermission('shipments.ledger.future_dates');
   }, [user, hasPermission]);
 
+  const activeBranchDisplayName = useMemo(() => {
+    if (!activeBranchId) return '—';
+    return (
+      branches.find((branch) => getBackendIdFromSynthetic(branch.id) === activeBranchId)?.name
+      ?? branchSearch
+      ?? '—'
+    );
+  }, [activeBranchId, branchSearch, branches]);
+
   /** يعمل المستخدم على تاريخ سابق — تنبيه أن الإدخال تصحيح ويستلزم إعادة الطباعة */
   const isBackdateMode = useMemo(() => Boolean(trip.date && trip.date < todayIso), [trip.date, todayIso]);
 
@@ -1382,17 +1392,16 @@ export default function ShipmentQuickLedger() {
     if (!user) return;
     if (!branches.length) return;
     if (activeBranchId) return;
-    if (isCompanyWideLedgerViewer) {
-      const aleppo =
-        branches.find((b) => normalizeName(b.name) === 'حلب') ??
-        branches.find((b) => normalizeName(b.name).includes('حلب'));
-      const backendId = aleppo ? getBackendIdFromSynthetic(aleppo.id) : null;
-      if (backendId) void setActiveBranch(backendId);
+    const fallback = user.branchId ?? user.allowedBranchIds?.[0] ?? null;
+    if (fallback) {
+      void setActiveBranch(fallback);
       return;
     }
-    const fallback = user.branchId ?? user.allowedBranchIds?.[0] ?? null;
-    if (fallback) void setActiveBranch(fallback);
-  }, [activeBranchId, branches, isCompanyWideLedgerViewer, setActiveBranch, user]);
+    if (isCompanyWideLedgerViewer && branchChoices[0]) {
+      const backendId = getBackendIdFromSynthetic(branchChoices[0].id);
+      if (backendId) void setActiveBranch(backendId);
+    }
+  }, [activeBranchId, branchChoices, branches.length, isCompanyWideLedgerViewer, setActiveBranch, user]);
 
   useEffect(() => {
     if (!activeBranchId) return;
@@ -1618,7 +1627,7 @@ export default function ShipmentQuickLedger() {
 
       try {
         const saved = await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
-          branchId: saveScope.branchId,
+          branchId: resolveLedgerBranchId(saveScope.branchId),
           ledgerDate: saveScope.ledgerDate,
           lineLabel: saveScope.lineLabel,
           originLabel: origin,
@@ -3166,7 +3175,16 @@ export default function ShipmentQuickLedger() {
           <div className="quick-ledger-eyebrow">إدخال سريع للشحنات</div>
           <h2>دفتر الشحن اليومي</h2>
           <p className="quick-ledger-hint">
-            اختر <strong>الخط</strong> لعرض الشحنات المحفوظة فوراً (بدون أسطر فارغة في القائمة). للإدخال الجديد يظهر سطر واحد في الأسفل.
+            {canViewAllLedgerEntries ? (
+              <>
+                <strong>وضع المدير:</strong> اختر <strong>نفس الفرع والتاريخ</strong> الذي يعمل عليه موظف الإدخال — تُعرض كل الخطوط والإرساليات تلقائياً.
+              </>
+            ) : (
+              <>
+                اختر <strong>الخط</strong> لعرض الشحنات المحفوظة فوراً (بدون أسطر فارغة في القائمة). للإدخال الجديد يظهر سطر واحد في الأسفل.
+              </>
+            )}
+            {' '}
             «الجهة» = رقم الاختصار (<strong>؟</strong>) أو اسم المحافظة — مثل <strong>9</strong> للرقة.
           </p>
         </div>
@@ -3470,7 +3488,17 @@ export default function ShipmentQuickLedger() {
 
       {canViewAllLedgerEntries && (
         <div className="quick-ledger-supervisor-banner" dir="rtl" role="status">
-          وضع المدير: تعرض كل إدخالات موظفي مدخل البيانات لهذا الفرع والتاريخ (كل الخطوط والإرساليات).
+          وضع المدير — الفرع: <strong>{activeBranchDisplayName}</strong> — التاريخ: <strong>{trip.date || '—'}</strong>
+          {' — '}
+          {remoteLoading
+            ? 'جاري التحميل...'
+            : `${remoteSyncedCount} سطر محفوظ (كل موظفي الإدخال)`}
+          {remoteSyncedCount === 0 && !remoteLoading && (
+            <span>
+              {' '}
+              — إن كان الموظف قد أدخل بيانات ولا تظهر هنا، تأكد أنك على <strong>نفس الفرع</strong> وليس فرعاً آخر (مثل حلب مقابل الرئيسي).
+            </span>
+          )}
         </div>
       )}
 

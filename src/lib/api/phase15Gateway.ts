@@ -1,5 +1,8 @@
 import type { Branch, City, Customer, Delivery, Driver, GoodsType, Manifest, Shipment, Tariff, Vehicle } from '../../types';
+import { getBackendIdFromSynthetic, syntheticEntityId } from './syntheticEntityId';
 import { httpClient } from './httpClient';
+
+export { getBackendIdFromSynthetic, syntheticEntityId } from './syntheticEntityId';
 import {
   normalizeShipmentStatus,
   shipmentStatusLabelAr,
@@ -132,10 +135,6 @@ type BackendTariffRecord = {
   valid_to?: string;
 };
 
-const stringIdToNumber = new Map<string, number>();
-const numberIdToString = new Map<number, string>();
-let nextSyntheticId = 100000;
-
 const customerLookup = new Map<number, Customer>();
 const driverLookup = new Map<number, Driver>();
 const vehicleLookup = new Map<number, Vehicle>();
@@ -143,28 +142,6 @@ const branchLookup = new Map<number, Branch>();
 const cityLookup = new Map<number, City>();
 const goodsTypeLookup = new Map<number, GoodsType>();
 const shipmentLookup = new Map<number, Shipment>();
-
-function toSyntheticId(id: string): number {
-  const existing = stringIdToNumber.get(id);
-  if (existing) return existing;
-  nextSyntheticId += 1;
-  stringIdToNumber.set(id, nextSyntheticId);
-  numberIdToString.set(nextSyntheticId, id);
-  return nextSyntheticId;
-}
-
-function toBackendId(id: number): string | undefined {
-  return numberIdToString.get(id);
-}
-
-export function getBackendIdFromSynthetic(id: number): string | undefined {
-  return toBackendId(id);
-}
-
-/** Stable synthetic numeric id for a backend UUID (used when prefilling agent row from session). */
-export function syntheticEntityId(backendUuid: string): number {
-  return toSyntheticId(backendUuid);
-}
 
 function mapShipmentStatusToFrontend(status: BackendShipmentRecord['status']): Shipment['status'] {
   const normalized = normalizeShipmentStatus(status);
@@ -207,7 +184,7 @@ function mapDeliveryStatusToBackend(status: Delivery['deliveryStatus']): Backend
 
 function mapCustomer(record: BackendRefRecord): Customer {
   const mapped: Customer = {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     code: record.code,
     name: record.name ?? record.full_name ?? '',
     phone: record.phone ?? '',
@@ -224,7 +201,7 @@ function mapCustomer(record: BackendRefRecord): Customer {
 
 function mapDriver(record: BackendRefRecord): Driver {
   const mapped: Driver = {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     code: record.code,
     name: record.full_name ?? record.name ?? '',
     phone: record.phone ?? '',
@@ -238,9 +215,9 @@ function mapDriver(record: BackendRefRecord): Driver {
 }
 
 function mapVehicle(record: BackendRefRecord): Vehicle {
-  const driverId = record.driver_id ? toSyntheticId(record.driver_id) : undefined;
+  const driverId = record.driver_id ? syntheticEntityId(record.driver_id) : undefined;
   const mapped: Vehicle = {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     plateNumber: record.plate_number ?? '',
     type: 'شاحنة',
     model: record.model ?? '',
@@ -256,7 +233,7 @@ function mapVehicle(record: BackendRefRecord): Vehicle {
 
 function mapBranch(record: BackendRefRecord): Branch {
   const mapped: Branch = {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     code: record.code,
     name: record.name ?? '',
     nameEn: '',
@@ -269,7 +246,7 @@ function mapBranch(record: BackendRefRecord): Branch {
 
 function mapCity(record: BackendCityRecord): City {
   const mapped: City = {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     code: record.code,
     name: record.name,
     region: record.region || '',
@@ -281,7 +258,7 @@ function mapCity(record: BackendCityRecord): City {
 
 function mapGoodsType(record: BackendGoodsTypeRecord): GoodsType {
   const mapped: GoodsType = {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     code: record.code,
     name: record.name,
     description: record.description || '',
@@ -291,12 +268,12 @@ function mapGoodsType(record: BackendGoodsTypeRecord): GoodsType {
 }
 
 function mapTariff(record: BackendTariffRecord): Tariff {
-  const fromCityId = toSyntheticId(record.from_city_id);
-  const toCityId = toSyntheticId(record.to_city_id);
-  const goodsTypeId = record.goods_type_id ? toSyntheticId(record.goods_type_id) : undefined;
+  const fromCityId = syntheticEntityId(record.from_city_id);
+  const toCityId = syntheticEntityId(record.to_city_id);
+  const goodsTypeId = record.goods_type_id ? syntheticEntityId(record.goods_type_id) : undefined;
 
   return {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     fromCityId,
     fromCityName: cityLookup.get(fromCityId)?.name || '',
     toCityId,
@@ -311,13 +288,13 @@ function mapTariff(record: BackendTariffRecord): Tariff {
 }
 
 function mapShipment(record: BackendShipmentRecord): Shipment {
-  const senderId = record.sender_id ? toSyntheticId(record.sender_id) : 0;
-  const receiverId = record.receiver_id ? toSyntheticId(record.receiver_id) : 0;
-  const branchId = record.branch_id ? toSyntheticId(record.branch_id) : 0;
-  const agentId = record.agent_id ? toSyntheticId(record.agent_id) : 0;
+  const senderId = record.sender_id ? syntheticEntityId(record.sender_id) : 0;
+  const receiverId = record.receiver_id ? syntheticEntityId(record.receiver_id) : 0;
+  const branchId = record.branch_id ? syntheticEntityId(record.branch_id) : 0;
+  const agentId = record.agent_id ? syntheticEntityId(record.agent_id) : 0;
 
   const mapped: Shipment = {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     shipmentNo: record.shipment_no,
     date: record.created_at.split('T')[0],
     branchId,
@@ -488,14 +465,14 @@ export const phase15Gateway = {
       if (branchBackendId) params.set('branchId', branchBackendId);
       const rows = await httpClient.get<BackendAgentRecord[]>(`/agents/lookup-by-destination?${params.toString()}`);
       return rows.map((row) => ({
-        id: toSyntheticId(row.id),
+        id: syntheticEntityId(row.id),
         code: row.code,
         name: row.name,
         phone: row.phone,
         governorate: row.governorate,
         city: row.city,
         area: row.area,
-        branchId: row.branch_id ? toSyntheticId(row.branch_id) : undefined,
+        branchId: row.branch_id ? syntheticEntityId(row.branch_id) : undefined,
         isActive: row.is_active !== false,
       }));
     },
@@ -926,13 +903,13 @@ export const phase15Gateway = {
         const shipmentIds = (details.shipments || []).map((s) => mapShipment(s).id);
         const selectedShipments = shipmentIds.map((sid) => shipmentLookup.get(sid)).filter(Boolean) as Shipment[];
         mapped.push({
-          id: toSyntheticId(row.id),
+          id: syntheticEntityId(row.id),
           manifestNo: row.manifest_no,
           date: row.created_at.split('T')[0],
-          vehicleId: row.vehicle_id ? toSyntheticId(row.vehicle_id) : 0,
-          vehiclePlate: row.vehicle_id ? (vehicleLookup.get(toSyntheticId(row.vehicle_id))?.plateNumber ?? '') : '',
-          driverId: row.driver_id ? toSyntheticId(row.driver_id) : 0,
-          driverName: row.driver_id ? (driverLookup.get(toSyntheticId(row.driver_id))?.name ?? '') : '',
+          vehicleId: row.vehicle_id ? syntheticEntityId(row.vehicle_id) : 0,
+          vehiclePlate: row.vehicle_id ? (vehicleLookup.get(syntheticEntityId(row.vehicle_id))?.plateNumber ?? '') : '',
+          driverId: row.driver_id ? syntheticEntityId(row.driver_id) : 0,
+          driverName: row.driver_id ? (driverLookup.get(syntheticEntityId(row.driver_id))?.name ?? '') : '',
           route: '',
           shipments: shipmentIds,
           totalWeight: selectedShipments.reduce((sum, s) => sum + (s.weight || 0), 0),
@@ -977,13 +954,13 @@ export const phase15Gateway = {
       const shipments = (details.shipments || []).map((s) => mapShipment(s).id);
       const selectedShipments = shipments.map((sid) => shipmentLookup.get(sid)).filter(Boolean) as Shipment[];
       return {
-        id: toSyntheticId(created.id),
+        id: syntheticEntityId(created.id),
         manifestNo: created.manifest_no,
         date: created.created_at.split('T')[0],
-        vehicleId: created.vehicle_id ? toSyntheticId(created.vehicle_id) : 0,
-        vehiclePlate: created.vehicle_id ? (vehicleLookup.get(toSyntheticId(created.vehicle_id))?.plateNumber ?? '') : '',
-        driverId: created.driver_id ? toSyntheticId(created.driver_id) : 0,
-        driverName: created.driver_id ? (driverLookup.get(toSyntheticId(created.driver_id))?.name ?? '') : '',
+        vehicleId: created.vehicle_id ? syntheticEntityId(created.vehicle_id) : 0,
+        vehiclePlate: created.vehicle_id ? (vehicleLookup.get(syntheticEntityId(created.vehicle_id))?.plateNumber ?? '') : '',
+        driverId: created.driver_id ? syntheticEntityId(created.driver_id) : 0,
+        driverName: created.driver_id ? (driverLookup.get(syntheticEntityId(created.driver_id))?.name ?? '') : '',
         route: data.route || '',
         shipments,
         totalWeight: selectedShipments.reduce((sum, s) => sum + (s.weight || 0), 0),
@@ -1006,13 +983,13 @@ export const phase15Gateway = {
       const shipments = (details.shipments || []).map((s) => mapShipment(s).id);
       const selectedShipments = shipments.map((sid) => shipmentLookup.get(sid)).filter(Boolean) as Shipment[];
       return {
-        id: toSyntheticId(updated.id),
+        id: syntheticEntityId(updated.id),
         manifestNo: updated.manifest_no,
         date: updated.created_at.split('T')[0],
-        vehicleId: updated.vehicle_id ? toSyntheticId(updated.vehicle_id) : 0,
-        vehiclePlate: updated.vehicle_id ? (vehicleLookup.get(toSyntheticId(updated.vehicle_id))?.plateNumber ?? '') : '',
-        driverId: updated.driver_id ? toSyntheticId(updated.driver_id) : 0,
-        driverName: updated.driver_id ? (driverLookup.get(toSyntheticId(updated.driver_id))?.name ?? '') : '',
+        vehicleId: updated.vehicle_id ? syntheticEntityId(updated.vehicle_id) : 0,
+        vehiclePlate: updated.vehicle_id ? (vehicleLookup.get(syntheticEntityId(updated.vehicle_id))?.plateNumber ?? '') : '',
+        driverId: updated.driver_id ? syntheticEntityId(updated.driver_id) : 0,
+        driverName: updated.driver_id ? (driverLookup.get(syntheticEntityId(updated.driver_id))?.name ?? '') : '',
         route: data.route || '',
         shipments,
         totalWeight: selectedShipments.reduce((sum, s) => sum + (s.weight || 0), 0),
@@ -1027,10 +1004,10 @@ export const phase15Gateway = {
       await phase15Gateway.shipments.getAll();
       const rows = await httpClient.get<BackendDeliveryRecord[]>('/deliveries');
       return rows.map((row) => {
-        const shipmentId = toSyntheticId(row.shipment_id);
+        const shipmentId = syntheticEntityId(row.shipment_id);
         const shipment = shipmentLookup.get(shipmentId);
         return {
-          id: toSyntheticId(row.id),
+          id: syntheticEntityId(row.id),
           shipmentId,
           shipmentNo: shipment?.shipmentNo || '',
           recipientName: row.recipient_name || shipment?.receiverName || '',
@@ -1064,10 +1041,10 @@ export const phase15Gateway = {
         originalCurrency: data.currency || 'USD',
         exchangeRateToUsd: rate,
       });
-      const shipmentId = toSyntheticId(created.shipment_id);
+      const shipmentId = syntheticEntityId(created.shipment_id);
       const createdShipment = shipmentLookup.get(shipmentId);
       return {
-        id: toSyntheticId(created.id),
+        id: syntheticEntityId(created.id),
         shipmentId,
         shipmentNo: createdShipment?.shipmentNo || '',
         recipientName: created.recipient_name || '',
@@ -1094,10 +1071,10 @@ export const phase15Gateway = {
         originalCurrency: data.currency,
         exchangeRateToUsd: rate,
       });
-      const shipmentId = toSyntheticId(updated.shipment_id);
+      const shipmentId = syntheticEntityId(updated.shipment_id);
       const shipment = shipmentLookup.get(shipmentId);
       return {
-        id: toSyntheticId(updated.id),
+        id: syntheticEntityId(updated.id),
         shipmentId,
         shipmentNo: shipment?.shipmentNo || '',
         recipientName: updated.recipient_name || '',

@@ -7,7 +7,12 @@ import {
 } from './dailyLedgerPrintable';
 import type { DailyLedgerQueryScope, RemoteDailyLedgerRow } from './dailyLedgerTypes';
 
-export { buildDailyLedgerQueryParams, dailyLedgerScopeKey, scopeFromTrip } from './dailyLedgerQueryParams';
+export {
+  buildDailyLedgerQueryParams,
+  dailyLedgerScopeKey,
+  resolveLedgerBranchId,
+  scopeFromTrip,
+} from './dailyLedgerQueryParams';
 
 export const DAILY_LEDGER_FETCH_PAGE_SIZE = 500;
 
