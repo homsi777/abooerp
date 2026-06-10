@@ -85,18 +85,32 @@ export function createDailyLedgerRouter(
         vehicleId: uuid.optional(),
         includeLoaded: z.coerce.boolean().optional(),
         onlyWithData: z.coerce.boolean().optional(),
+        allBranches: z.coerce.boolean().optional(),
         q: z.string().optional(),
         limit: z.coerce.number().min(1).max(10000).optional(),
         offset: z.coerce.number().min(0).optional(),
       });
       const q = querySchema.parse(req.query);
-      const effectiveBranchId = q.branchId ?? lockedBranchId;
-      if (!effectiveBranchId) {
+      const permissions = getRequestPermissions(req);
+      const viewAllEntries = canViewAllDailyLedgerEntries(roleCode, userType, permissions);
+      const wantsAllBranches = q.allBranches === true;
+
+      if (wantsAllBranches && !viewAllEntries) {
+        res.status(403).json({
+          success: false,
+          error: 'عرض كل الفروع متاح للمدير فقط.',
+        });
+        return;
+      }
+
+      const effectiveBranchId = wantsAllBranches ? undefined : (q.branchId ?? lockedBranchId);
+      if (!effectiveBranchId && !wantsAllBranches) {
         res.status(400).json({ success: false, error: 'branchId is required.' });
         return;
       }
       const branchBypass = roleCode === 'admin' || userType === 'admin' || canAccessAnyCompanyBranch(roleCode, userType);
       if (
+        effectiveBranchId &&
         allowedBranchIds.length &&
         !allowedBranchIds.includes(effectiveBranchId) &&
         !branchBypass
@@ -104,13 +118,11 @@ export function createDailyLedgerRouter(
         res.status(403).json({ success: false, error: 'Requested branch scope is not allowed for this user.' });
         return;
       }
-      if (roleCode === 'data_entry' && lockedBranchId && effectiveBranchId !== lockedBranchId) {
+      if (roleCode === 'data_entry' && lockedBranchId && effectiveBranchId && effectiveBranchId !== lockedBranchId) {
         res.status(403).json({ success: false, error: 'لا يمكن لمدخل البيانات عرض فرع مختلف عن الفرع التابع له.' });
         return;
       }
 
-      const permissions = getRequestPermissions(req);
-      const viewAllEntries = canViewAllDailyLedgerEntries(roleCode, userType, permissions);
       const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, permissions);
       const rows = await service.listRows(scope, {
         branchId: effectiveBranchId,

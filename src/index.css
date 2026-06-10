@@ -1320,6 +1320,31 @@ body {
   font-size: 13px;
 }
 
+.quick-ledger-all-branches-btn {
+  border: 1px solid #86efac;
+  background: #fff;
+  color: #166534;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.quick-ledger-all-branches-btn.is-active {
+  background: #166534;
+  color: #fff;
+  border-color: #166534;
+}
+
+.quick-ledger-branch-cell {
+  font-weight: 600;
+  font-size: 12px;
+  color: #166534;
+  white-space: nowrap;
+}
+
 .quick-ledger-reprint-banner {
   background: #fffbeb;
   border: 1px solid #fcd34d;

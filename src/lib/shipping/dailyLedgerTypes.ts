@@ -49,4 +49,6 @@ export type DailyLedgerQueryScope = DailyLedgerEditingScope & {
   dateTo?: string;
   /** عند true لا يُرسل lineLabel — للطباعة الصريحة لكل الخطوط فقط */
   allLines?: boolean;
+  /** للمدير: جلب أسطر كل فروع الشركة لنفس التاريخ */
+  allBranches?: boolean;
 };

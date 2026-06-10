@@ -76,6 +76,17 @@ function testQueryScope() {
     allLines: true,
   });
   assert(!allLines.get('lineLabel'), 'allLines omits lineLabel');
+
+  const allBranches = buildDailyLedgerQueryParams({
+    branchId: 'branch-1',
+    ledgerDate: '2026-06-09',
+    lineLabel: 'فرع حلب',
+    includeLoaded: true,
+    allBranches: true,
+    allLines: true,
+  });
+  assert(allBranches.get('allBranches') === 'true', 'allBranches flag');
+  assert(!allBranches.get('branchId'), 'allBranches omits branchId');
 }
 
 function testPrintableFilter() {

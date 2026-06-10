@@ -22,7 +22,11 @@ export function dailyLedgerScopeKey(scope: { branchId: string; ledgerDate: strin
 /** بناء معاملات API موحّدة للشاشة والطباعة والتصدير */
 export function buildDailyLedgerQueryParams(scope: DailyLedgerQueryScope): URLSearchParams {
   const params = new URLSearchParams();
-  params.set('branchId', resolveLedgerBranchId(scope.branchId));
+  if (scope.allBranches) {
+    params.set('allBranches', 'true');
+  } else if (scope.branchId) {
+    params.set('branchId', resolveLedgerBranchId(scope.branchId));
+  }
   params.set('includeLoaded', scope.includeLoaded ? 'true' : 'false');
 
   const useRange = Boolean(scope.dateFrom && scope.dateTo);
@@ -45,7 +49,7 @@ export function scopeFromTrip(
   ledgerDate: string,
   lineLabel: string,
   includeLoaded: boolean,
-  overrides: Partial<Pick<DailyLedgerQueryScope, 'dateFrom' | 'dateTo' | 'allLines'>> = {},
+  overrides: Partial<Pick<DailyLedgerQueryScope, 'dateFrom' | 'dateTo' | 'allLines' | 'allBranches'>> = {},
 ): DailyLedgerQueryScope {
   return {
     branchId,

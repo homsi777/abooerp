@@ -83,6 +83,8 @@ type LedgerRow = {
   agentId?: number;
   agentName?: string;
   notes: string;
+  branchBackendId?: string;
+  branchLabel?: string;
 };
 
 const LEDGER_ENTRY_SLOTS = 1;
@@ -114,6 +116,11 @@ type DestinationPdfDriverOption = {
 };
 
 const ALL_DRIVERS_PDF_OPTION = '__ALL_DRIVERS__';
+
+function resolveBranchLabelFromList(branches: Branch[], branchBackendId?: string | null): string {
+  if (!branchBackendId) return '—';
+  return branches.find((branch) => getBackendIdFromSynthetic(branch.id) === branchBackendId)?.name ?? '—';
+}
 
 const fallbackDestinations = ['دمشق', 'حلب', 'حمص', 'حماة', 'اللاذقية', 'طرطوس', 'إدلب'];
 
@@ -759,6 +766,8 @@ export default function ShipmentQuickLedger() {
   const [remoteSyncedCount, setRemoteSyncedCount] = useState(0);
   const loadGenerationRef = useRef(0);
   const canViewAllLedgerEntriesRef = useRef(false);
+  const ledgerBranchModeRef = useRef<'all' | 'single'>('single');
+  const [ledgerBranchMode, setLedgerBranchMode] = useState<'all' | 'single'>('single');
   /** نطاق التحرير المحفوظ — يُستخدم للحفظ التلقائي ولا يتغيّر إلا بعد جلب ناجح */
   const editingScopeRef = useRef<DailyLedgerEditingScope>({
     branchId: '',
@@ -871,21 +880,22 @@ export default function ShipmentQuickLedger() {
   const daySessions = useMemo(() => {
     const groups = new Map<
       string,
-      {
-        id: string;
-        driverLabel: string;
-        vehicleLabel: string;
-        driverBackendId: string | null;
-        vehicleBackendId: string | null;
-        earliest: string;
-        rowsCount: number;
-        piecesCount: number;
-        weightKg: number;
-        collect: number;
-        prepaid: number;
-        freight: number;
-        reprintRequired: boolean;
-      }
+        {
+          id: string;
+          branchLabel: string;
+          driverLabel: string;
+          vehicleLabel: string;
+          driverBackendId: string | null;
+          vehicleBackendId: string | null;
+          earliest: string;
+          rowsCount: number;
+          piecesCount: number;
+          weightKg: number;
+          collect: number;
+          prepaid: number;
+          freight: number;
+          reprintRequired: boolean;
+        }
     >();
     for (const row of remoteRowsRaw) {
       const sessionId = row.session_id;
@@ -894,6 +904,7 @@ export default function ShipmentQuickLedger() {
         groups.get(sessionId) ??
         {
           id: sessionId,
+          branchLabel: resolveBranchLabelFromList(branches, row.branch_id),
           driverLabel: normalizeName(row.driver_label ?? '') || 'بدون سائق',
           vehicleLabel: normalizeName(row.vehicle_label ?? '') || '—',
           driverBackendId: row.driver_id ?? null,
@@ -928,7 +939,7 @@ export default function ShipmentQuickLedger() {
         return a.id.localeCompare(b.id);
       })
       .map((session, index) => ({ ...session, displayNo: index + 1 }));
-  }, [remoteRowsRaw]);
+  }, [remoteRowsRaw, branches]);
 
   const dayTotals = useMemo(
     () =>
@@ -1116,6 +1127,19 @@ export default function ShipmentQuickLedger() {
     canViewAllLedgerEntriesRef.current = canViewAllLedgerEntries;
   }, [canViewAllLedgerEntries]);
 
+  useEffect(() => {
+    ledgerBranchModeRef.current = ledgerBranchMode;
+  }, [ledgerBranchMode]);
+
+  useEffect(() => {
+    if (!canViewAllLedgerEntries) {
+      setLedgerBranchMode('single');
+      return;
+    }
+    setLedgerBranchMode('all');
+    setBranchSearch('كل الفروع');
+  }, [canViewAllLedgerEntries, user?.id]);
+
   const branchChoices = useMemo(() => {
     if (!user) return branches;
     if (isCompanyWideLedgerViewer) return branches;
@@ -1155,13 +1179,16 @@ export default function ShipmentQuickLedger() {
   }, [user, hasPermission]);
 
   const activeBranchDisplayName = useMemo(() => {
+    if (canViewAllLedgerEntries && ledgerBranchMode === 'all') return 'كل الفروع';
     if (!activeBranchId) return '—';
     return (
       branches.find((branch) => getBackendIdFromSynthetic(branch.id) === activeBranchId)?.name
       ?? branchSearch
       ?? '—'
     );
-  }, [activeBranchId, branchSearch, branches]);
+  }, [activeBranchId, branchSearch, branches, canViewAllLedgerEntries, ledgerBranchMode]);
+
+  const showBranchColumn = canViewAllLedgerEntries && ledgerBranchMode === 'all';
 
   /** يعمل المستخدم على تاريخ سابق — تنبيه أن الإدخال تصحيح ويستلزم إعادة الطباعة */
   const isBackdateMode = useMemo(() => Boolean(trip.date && trip.date < todayIso), [trip.date, todayIso]);
@@ -1195,6 +1222,8 @@ export default function ShipmentQuickLedger() {
     agentId: undefined,
     agentName: '',
     notes: remote.notes ?? '',
+    branchBackendId: remote.branch_id,
+    branchLabel: resolveBranchLabelFromList(branches, remote.branch_id),
   });
 
   const flushPendingRowSaves = async (scopeSessionId?: string | null) => {
@@ -1233,24 +1262,41 @@ export default function ShipmentQuickLedger() {
   const buildDisplayRowsFromRemote = (remoteRows: RemoteDailyLedgerRow[]) => {
     const currentTrip = tripRef.current;
     const origin = resolveTripOrigin(currentTrip.line);
-    const sorted = sortDailyLedgerRows(filterPrintableDailyLedgerRows(remoteRows));
+    const viewAllBranches = canViewAllLedgerEntriesRef.current && ledgerBranchModeRef.current === 'all';
+    let sorted = sortDailyLedgerRows(filterPrintableDailyLedgerRows(remoteRows));
+    if (viewAllBranches) {
+      sorted = [...sorted].sort((a, b) => {
+        const branchCmp = resolveBranchLabelFromList(branches, a.branch_id).localeCompare(
+          resolveBranchLabelFromList(branches, b.branch_id),
+          'ar',
+        );
+        if (branchCmp !== 0) return branchCmp;
+        const driverCmp = String(a.driver_label ?? '').localeCompare(String(b.driver_label ?? ''), 'ar');
+        if (driverCmp !== 0) return driverCmp;
+        return a.row_no - b.row_no;
+      });
+    }
     let displayId = 1;
     const consolidated = sorted.map((remote) => mapRemoteRowToLocal(remote, displayId++));
+    if (viewAllBranches) return consolidated;
     return [...consolidated, ...buildEntrySlotRows(displayId, origin)];
   };
 
   const loadRemoteRows = async () => {
     const branchId = activeBranchIdRef.current;
     const currentTrip = tripRef.current;
-    if (!branchId) return;
-    if (!currentTrip.date) return;
     const viewAllEntries = canViewAllLedgerEntriesRef.current;
+    const viewAllBranches = viewAllEntries && ledgerBranchModeRef.current === 'all';
+    if (!viewAllBranches && !branchId) return;
+    if (!currentTrip.date) return;
     if (!viewAllEntries && !currentTrip.line) return;
 
     const generation = ++loadGenerationRef.current;
 
     try {
-      await flushPendingRowSaves();
+      if (!viewAllBranches) {
+        await flushPendingRowSaves();
+      }
       if (generation !== loadGenerationRef.current) return;
 
       setActiveSessionId(null);
@@ -1258,20 +1304,22 @@ export default function ShipmentQuickLedger() {
       setRemoteSyncedCount(0);
 
       const origin = resolveTripOrigin(currentTrip.line);
-      setRows(buildEntrySlotRows(1, origin));
+      setRows(viewAllBranches ? [] : buildEntrySlotRows(1, origin));
 
       const queryScope = scopeFromTrip(
-        branchId,
+        branchId || '',
         currentTrip.date,
         currentTrip.line || '',
         includeLoaded,
-        viewAllEntries ? { allLines: true } : {},
+        viewAllEntries
+          ? { allLines: true, ...(viewAllBranches ? { allBranches: true } : {}) }
+          : {},
       );
       const remoteValues = await fetchAllDailyLedgerRows(queryScope);
       if (generation !== loadGenerationRef.current) return;
 
       editingScopeRef.current = {
-        branchId,
+        branchId: viewAllBranches ? '' : branchId!,
         ledgerDate: currentTrip.date,
         lineLabel: currentTrip.line,
       };
@@ -1293,13 +1341,15 @@ export default function ShipmentQuickLedger() {
 
   useEffect(() => {
     if (loadingRefs) return;
-    if (!activeBranchId || !trip.date) return;
+    if (!trip.date) return;
+    const needsSingleBranch = !canViewAllLedgerEntries || ledgerBranchMode === 'single';
+    if (needsSingleBranch && !activeBranchId) return;
     if (!canViewAllLedgerEntries && !trip.line) return;
     setRemoteLoading(true);
     setActiveSessionId(null);
     setRemoteRowsRaw([]);
     void loadRemoteRows();
-  }, [activeBranchId, trip.date, trip.line, includeLoaded, loadingRefs, canViewAllLedgerEntries]);
+  }, [activeBranchId, trip.date, trip.line, includeLoaded, loadingRefs, canViewAllLedgerEntries, ledgerBranchMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1391,6 +1441,7 @@ export default function ShipmentQuickLedger() {
   useEffect(() => {
     if (!user) return;
     if (!branches.length) return;
+    if (canViewAllLedgerEntries && ledgerBranchMode === 'all') return;
     if (activeBranchId) return;
     const fallback = user.branchId ?? user.allowedBranchIds?.[0] ?? null;
     if (fallback) {
@@ -1401,7 +1452,16 @@ export default function ShipmentQuickLedger() {
       const backendId = getBackendIdFromSynthetic(branchChoices[0].id);
       if (backendId) void setActiveBranch(backendId);
     }
-  }, [activeBranchId, branchChoices, branches.length, isCompanyWideLedgerViewer, setActiveBranch, user]);
+  }, [
+    activeBranchId,
+    branchChoices,
+    branches.length,
+    canViewAllLedgerEntries,
+    isCompanyWideLedgerViewer,
+    ledgerBranchMode,
+    setActiveBranch,
+    user,
+  ]);
 
   useEffect(() => {
     if (!activeBranchId) return;
@@ -1571,6 +1631,7 @@ export default function ShipmentQuickLedger() {
   };
 
   const saveRowToServer = async (displayRowId: number) => {
+    if (canViewAllLedgerEntriesRef.current && ledgerBranchModeRef.current === 'all') return;
     const branchId = activeBranchIdRef.current;
     const currentTrip = tripRef.current;
     const saveScope = editingScopeRef.current;
@@ -2387,7 +2448,8 @@ export default function ShipmentQuickLedger() {
     scope: 'driver' | 'date' | 'agent' | 'session';
   } | null> => {
     const branchId = activeBranchIdRef.current;
-    if (!branchId) {
+    const viewAllBranches = canViewAllLedgerEntriesRef.current && ledgerBranchModeRef.current === 'all';
+    if (!viewAllBranches && !branchId) {
       showToast('يرجى اختيار الفرع قبل الطباعة', 'error');
       return null;
     }
@@ -2434,12 +2496,13 @@ export default function ShipmentQuickLedger() {
 
     const singleDay = printDateFrom === printDateTo;
     const queryScope = scopeFromTrip(
-      branchId,
+      branchId || '',
       printDateFrom,
       screenLine || tripRef.current.line,
       true,
       {
-        allLines: printAllLines,
+        allLines: printAllLines || viewAllBranches,
+        ...(viewAllBranches ? { allBranches: true } : {}),
         ...(singleDay ? {} : { dateFrom: printDateFrom, dateTo: printDateTo }),
       },
     );
@@ -3177,7 +3240,7 @@ export default function ShipmentQuickLedger() {
           <p className="quick-ledger-hint">
             {canViewAllLedgerEntries ? (
               <>
-                <strong>وضع المدير:</strong> اختر <strong>نفس الفرع والتاريخ</strong> الذي يعمل عليه موظف الإدخال — تُعرض كل الخطوط والإرساليات تلقائياً.
+                <strong>وضع المدير:</strong> الافتراضي <strong>كل الفروع</strong> لنفس التاريخ — أو اختر فرعاً محدداً (حلب، الرئيسي، …) للتفصيل.
               </>
             ) : (
               <>
@@ -3189,11 +3252,24 @@ export default function ShipmentQuickLedger() {
           </p>
         </div>
         <div className="quick-ledger-actions">
+          {canViewAllLedgerEntries && (
+            <button
+              type="button"
+              className={`quick-ledger-all-branches-btn${ledgerBranchMode === 'all' ? ' is-active' : ''}`}
+              onClick={() => {
+                setLedgerBranchMode('all');
+                setBranchSearch('كل الفروع');
+              }}
+              title="عرض إدخالات كل فروع الشركة لنفس التاريخ"
+            >
+              كل الفروع
+            </button>
+          )}
           <div className="quick-ledger-search">
             <Search size={16} />
             <input
               list="ledger-branch-list"
-              placeholder="بحث الفرع"
+              placeholder={canViewAllLedgerEntries ? 'فرع محدد أو كل الفروع' : 'بحث الفرع'}
               value={branchSearch}
               onChange={(e) => setBranchSearch(e.target.value)}
               disabled={isBranchLocked}
@@ -3202,25 +3278,44 @@ export default function ShipmentQuickLedger() {
                 if (e.key !== 'Enter') return;
                 const needle = normalizeName(branchSearch);
                 if (!needle) return;
+                if (canViewAllLedgerEntries && (needle === 'كل الفروع' || needle.includes('كل الفروع'))) {
+                  setLedgerBranchMode('all');
+                  setBranchSearch('كل الفروع');
+                  return;
+                }
                 const found =
                   branchChoices.find((b) => normalizeName(b.name) === needle) ??
                   branchChoices.find((b) => normalizeName(b.name).includes(needle));
                 const backendId = found ? getBackendIdFromSynthetic(found.id) : undefined;
-                if (backendId) void setActiveBranch(backendId);
+                if (backendId) {
+                  setLedgerBranchMode('single');
+                  void setActiveBranch(backendId);
+                  setBranchSearch(found!.name);
+                }
               }}
               onBlur={() => {
                 if (isBranchLocked) return;
                 const needle = normalizeName(branchSearch);
                 if (!needle) return;
+                if (canViewAllLedgerEntries && (needle === 'كل الفروع' || needle.includes('كل الفروع'))) {
+                  setLedgerBranchMode('all');
+                  setBranchSearch('كل الفروع');
+                  return;
+                }
                 const found =
                   branchChoices.find((b) => normalizeName(b.name) === needle) ??
                   branchChoices.find((b) => normalizeName(b.name).includes(needle));
                 const backendId = found ? getBackendIdFromSynthetic(found.id) : undefined;
-                if (backendId) void setActiveBranch(backendId);
+                if (backendId) {
+                  setLedgerBranchMode('single');
+                  void setActiveBranch(backendId);
+                  setBranchSearch(found!.name);
+                }
               }}
             />
           </div>
           <datalist id="ledger-branch-list">
+            {canViewAllLedgerEntries && <option value="كل الفروع" />}
             {branchChoices.map((b) => (
               <option key={b.id} value={b.name} />
             ))}
@@ -3431,7 +3526,7 @@ export default function ShipmentQuickLedger() {
                   className={`quick-ledger-session-box${activeSessionId === session.id ? ' is-active' : ''}${session.reprintRequired ? ' needs-reprint' : ''}`}
                   onClick={() => void selectSession(session.id)}
                   disabled={sessionSwitching}
-                  title={`${session.driverLabel} — ${session.vehicleLabel} — ${session.rowsCount} سطر — ${formatWeightKgTons(session.weightKg)}${session.reprintRequired ? ' — تحتاج إعادة طباعة' : ''}`}
+                  title={`${showBranchColumn ? `${session.branchLabel} — ` : ''}${session.driverLabel} — ${session.vehicleLabel} — ${session.rowsCount} سطر — ${formatWeightKgTons(session.weightKg)}${session.reprintRequired ? ' — تحتاج إعادة طباعة' : ''}`}
                 >
                   {session.displayNo}
                   {session.reprintRequired ? ' ⚠' : ''}
@@ -3488,16 +3583,13 @@ export default function ShipmentQuickLedger() {
 
       {canViewAllLedgerEntries && (
         <div className="quick-ledger-supervisor-banner" dir="rtl" role="status">
-          وضع المدير — الفرع: <strong>{activeBranchDisplayName}</strong> — التاريخ: <strong>{trip.date || '—'}</strong>
+          وضع المدير — النطاق: <strong>{activeBranchDisplayName}</strong> — التاريخ: <strong>{trip.date || '—'}</strong>
           {' — '}
           {remoteLoading
             ? 'جاري التحميل...'
             : `${remoteSyncedCount} سطر محفوظ (كل موظفي الإدخال)`}
-          {remoteSyncedCount === 0 && !remoteLoading && (
-            <span>
-              {' '}
-              — إن كان الموظف قد أدخل بيانات ولا تظهر هنا، تأكد أنك على <strong>نفس الفرع</strong> وليس فرعاً آخر (مثل حلب مقابل الرئيسي).
-            </span>
+          {ledgerBranchMode === 'all' && !remoteLoading && (
+            <span> — يشمل حلب والرئيسي وجميع الفروع.</span>
           )}
         </div>
       )}
@@ -3558,6 +3650,7 @@ export default function ShipmentQuickLedger() {
                   )}
                 </th>
               )}
+              {showBranchColumn && <th>الفرع</th>}
               <th>رقم الإيصال</th>
               <th>الجهة</th>
               <th className="col-parcel-type">نوع الطرود</th>
@@ -3616,6 +3709,11 @@ export default function ShipmentQuickLedger() {
                         }
                         onChange={() => toggleTransferRowSelection(row.id)}
                       />
+                    </td>
+                  )}
+                  {showBranchColumn && (
+                    <td className="quick-ledger-branch-cell" title={row.branchLabel}>
+                      {row.branchLabel ?? '—'}
                     </td>
                   )}
                   <td><input className={duplicateReceiptRowIds.has(row.id) ? 'ledger-receipt-duplicate' : undefined} data-ledger-field="true" value={row.receiptNo} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'receiptNo', e.target.value)} title={rowIssue ?? (duplicateReceiptRowIds.has(row.id) ? 'رقم الإيصال مكرر' : undefined)} /></td>
