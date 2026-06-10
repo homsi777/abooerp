@@ -27,7 +27,7 @@ function isReadyToSubmit(key: string): boolean {
 function activationErrorMessage(err: unknown): string {
   const message = err instanceof Error ? err.message : String((err as any)?.message ?? '');
   if (message.includes('INVALID_LICENSE_CODE')) {
-    return 'كود التفعيل غير صالح أو غير معروف';
+    return 'المفتاح غير معرّف على الخادم — أضفه إلى LICENSE_LOCAL_KEYS في server/.env ثم أعد تشغيل الخادم.';
   }
   if (message.includes('Failed to fetch') || message.includes('NetworkError') || message.includes('Load failed')) {
     return 'تعذّر الاتصال بالسيرفر — تأكد من تشغيل الخادم والمحاولة مجدداً';
