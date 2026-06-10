@@ -141,6 +141,15 @@ type DestinationExportSummary = {
   rowsCount: number;
 };
 
+type DestinationPdfDriverOption = {
+  key: string;
+  backendId: string | null;
+  label: string;
+  rowsCount: number;
+};
+
+const ALL_DRIVERS_PDF_OPTION = '__ALL_DRIVERS__';
+
 const fallbackDestinations = ['دمشق', 'حلب', 'حمص', 'حماة', 'اللاذقية', 'طرطوس', 'إدلب'];
 
 function createEmptyRow(id: number): LedgerRow {
@@ -770,6 +779,7 @@ export default function ShipmentQuickLedger() {
   const [destinationPdfExporting, setDestinationPdfExporting] = useState(false);
   const [destinationPdfRows, setDestinationPdfRows] = useState<RemoteDailyLedgerRow[]>([]);
   const [destinationPdfSelected, setDestinationPdfSelected] = useState<string[]>([]);
+  const [destinationPdfDriverKey, setDestinationPdfDriverKey] = useState<string>(ALL_DRIVERS_PDF_OPTION);
   const [printScope, setPrintScope] = useState<'driver' | 'date' | 'agent' | 'session'>('driver');
   const [printDestinationFilter, setPrintDestinationFilter] = useState('');
   const [reprintRequired, setReprintRequired] = useState(false);
@@ -1016,6 +1026,19 @@ export default function ShipmentQuickLedger() {
     return [...grouped.entries()]
       .map(([destination, rowsCount]) => ({ destination, rowsCount }))
       .sort((a, b) => a.destination.localeCompare(b.destination, 'ar'));
+  }, [destinationPdfRows]);
+
+  const destinationPdfDriverOptions = useMemo<DestinationPdfDriverOption[]>(() => {
+    const grouped = new Map<string, DestinationPdfDriverOption>();
+    for (const row of destinationPdfRows) {
+      const backendId = row.driver_id ?? null;
+      const label = normalizeName(row.driver_label ?? '') || 'بدون سائق';
+      const key = backendId ? `id:${backendId}` : `label:${label}`;
+      const existing = grouped.get(key) ?? { key, backendId, label, rowsCount: 0 };
+      existing.rowsCount += 1;
+      grouped.set(key, existing);
+    }
+    return [...grouped.values()].sort((a, b) => a.label.localeCompare(b.label, 'ar'));
   }, [destinationPdfRows]);
 
   // إن اختفت الجلسة النشطة (تغيّر التاريخ مثلاً) أعِد للعرض الكامل
@@ -2086,9 +2109,29 @@ export default function ShipmentQuickLedger() {
           .filter(Boolean),
       )].sort((a, b) => a.localeCompare(b, 'ar'));
       setDestinationPdfSelected(nextDestinations);
+      const groupedDrivers = new Map<string, { backendId: string | null; label: string; rowsCount: number }>();
+      for (const row of printableRows) {
+        const backendId = row.driver_id ?? null;
+        const label = normalizeName(row.driver_label ?? '') || 'بدون سائق';
+        const key = backendId ? `id:${backendId}` : `label:${label}`;
+        const existing = groupedDrivers.get(key) ?? { backendId, label, rowsCount: 0 };
+        existing.rowsCount += 1;
+        groupedDrivers.set(key, existing);
+      }
+      const driverKeys = [...groupedDrivers.keys()];
+      if (driverKeys.length === 1) {
+        setDestinationPdfDriverKey(driverKeys[0]);
+      } else {
+        const currentTripDriverBackendId = tripRef.current.driverId
+          ? getBackendIdFromSynthetic(tripRef.current.driverId) ?? null
+          : null;
+        const preferredKey = currentTripDriverBackendId ? `id:${currentTripDriverBackendId}` : '';
+        setDestinationPdfDriverKey(preferredKey && groupedDrivers.has(preferredKey) ? preferredKey : ALL_DRIVERS_PDF_OPTION);
+      }
     } catch (error) {
       setDestinationPdfRows([]);
       setDestinationPdfSelected([]);
+      setDestinationPdfDriverKey(ALL_DRIVERS_PDF_OPTION);
       showToast(error instanceof Error ? error.message : 'تعذر تحميل وجهات دفتر الشحن', 'error');
     } finally {
       setDestinationPdfLoading(false);
@@ -2601,10 +2644,29 @@ export default function ShipmentQuickLedger() {
       ?? branchSearch
       ?? '—';
 
+    if (
+      destinationPdfDriverKey !== ALL_DRIVERS_PDF_OPTION &&
+      !destinationPdfDriverOptions.some((option) => option.key === destinationPdfDriverKey)
+    ) {
+      showToast('يرجى اختيار سائق صالح للتصدير', 'error');
+      return;
+    }
+
     setDestinationPdfExporting(true);
     try {
+      const rowsForSelectedDriver = destinationPdfRows.filter((row) => {
+        if (destinationPdfDriverKey === ALL_DRIVERS_PDF_OPTION) return true;
+        if (destinationPdfDriverKey.startsWith('id:')) return `id:${row.driver_id ?? ''}` === destinationPdfDriverKey;
+        const label = normalizeName(row.driver_label ?? '') || 'بدون سائق';
+        return `label:${label}` === destinationPdfDriverKey;
+      });
+      if (!rowsForSelectedDriver.length) {
+        showToast('لا توجد أسطر مطابقة للسائق المحدد', 'info');
+        return;
+      }
+
       for (const destination of destinationPdfSelected) {
-        const rowsForDestination = destinationPdfRows.filter(
+        const rowsForDestination = rowsForSelectedDriver.filter(
           (row) => normalizeName(row.destination ?? '') === destination,
         );
         if (!rowsForDestination.length) continue;
@@ -3858,6 +3920,22 @@ export default function ShipmentQuickLedger() {
                     void loadDestinationPdfRows(nextDate);
                   }}
                 />
+              </label>
+              <label className="form-group block">
+                <span className="form-label">السائق</span>
+                <select
+                  className="form-select w-full"
+                  value={destinationPdfDriverKey}
+                  onChange={(e) => setDestinationPdfDriverKey(e.target.value)}
+                  disabled={destinationPdfLoading || destinationPdfExporting}
+                >
+                  <option value={ALL_DRIVERS_PDF_OPTION}>كل السائقين</option>
+                  {destinationPdfDriverOptions.map((option) => (
+                    <option key={option.key} value={option.key}>
+                      {option.label} ({option.rowsCount})
+                    </option>
+                  ))}
+                </select>
               </label>
               <div className="quick-ledger-destination-pdf-meta">
                 <span>خط المصدر: <strong>{trip.line || '—'}</strong></span>
