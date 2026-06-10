@@ -1098,10 +1098,6 @@ export default function ShipmentQuickLedger() {
     activeBranchIdRef.current = activeBranchId;
   }, [activeBranchId]);
 
-  useEffect(() => {
-    canViewAllLedgerEntriesRef.current = canViewAllLedgerEntries;
-  }, [canViewAllLedgerEntries]);
-
   const isCompanyWideLedgerViewer = useMemo(() => {
     if (!user) return false;
     if (user.userType === 'admin' || user.role === 'admin') return true;
@@ -1115,6 +1111,10 @@ export default function ShipmentQuickLedger() {
     if (['general_manager', 'branch_manager', 'manager'].includes(user.role)) return true;
     return hasPermission('daily_ledger.view_all_entries');
   }, [user, hasPermission]);
+
+  useEffect(() => {
+    canViewAllLedgerEntriesRef.current = canViewAllLedgerEntries;
+  }, [canViewAllLedgerEntries]);
 
   const branchChoices = useMemo(() => {
     if (!user) return branches;
