@@ -1,7 +1,7 @@
 /**
  * اختبارات وحدة بسيطة لمساعدات دفتر الشحن — تشغيل: npm run test:daily-ledger-helpers
  */
-import { buildDailyLedgerQueryParams } from './dailyLedgerQueryParams';
+import { buildDailyLedgerQueryParams, buildLedgerRowsQueryScope } from './dailyLedgerQueryParams';
 import { isRemoteDailyLedgerRowPrintable } from './dailyLedgerPrintable';
 import { computeTotalsFromRemoteRows } from './dailyLedgerTotals';
 import type { RemoteDailyLedgerRow } from './dailyLedgerTypes';
@@ -112,6 +112,18 @@ function testPrintableFilter() {
   );
 }
 
+function testManagerFetchScope() {
+  const scope = buildLedgerRowsQueryScope('branch-1', '2026-06-10', 'فرع حلب', true, {
+    managerViewAllBranches: true,
+  });
+  assert(scope.allBranches === true, 'manager allBranches');
+  assert(scope.allLines === true, 'manager allLines default');
+  const params = buildDailyLedgerQueryParams(scope);
+  assert(params.get('allBranches') === 'true', 'manager query allBranches');
+  assert(!params.get('branchId'), 'manager query omits branchId');
+  assert(!params.get('lineLabel'), 'manager query omits lineLabel');
+}
+
 function testFinancialTotals() {
   const totals = computeTotalsFromRemoteRows([sampleRow()]);
   assert(totals.rowCount === 1, 'rowCount');
@@ -125,9 +137,10 @@ function testFinancialTotals() {
 
 function main() {
   testQueryScope();
+  testManagerFetchScope();
   testPrintableFilter();
   testFinancialTotals();
-  console.log('dailyLedgerHelpers.selftest: OK (3 suites)');
+  console.log('dailyLedgerHelpers.selftest: OK (4 suites)');
 }
 
 main();

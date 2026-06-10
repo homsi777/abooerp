@@ -1,7 +1,36 @@
 /** أدوار ترى كل إدخالات دفتر الشحن (كل الموظفين) ضمن نطاق الفرع */
 const DAILY_LEDGER_MANAGER_VIEW_ROLES = new Set(['general_manager', 'branch_manager', 'manager']);
 
+/** أدوار تشغيلية ترى إدخالاتها فقط ويُقفل فرعها */
+export const DAILY_LEDGER_SCOPED_OPERATOR_ROLES = new Set(['data_entry', 'shipment_auditor']);
+
 export const DAILY_LEDGER_VIEW_ALL_PERMISSION = 'daily_ledger.view_all_entries';
+export const DAILY_LEDGER_EXPORT_PDF_PERMISSION = 'daily_ledger.export_pdf';
+export const DAILY_LEDGER_CLOSE_SECTION_PERMISSION = 'daily_ledger.close_section';
+export const DAILY_LEDGER_SAVE_LOG_PERMISSION = 'daily_ledger.save_log';
+export const DAILY_LEDGER_VIEW_LOADED_PERMISSION = 'daily_ledger.view_loaded';
+export const DAILY_LEDGER_DELETE_ROWS_PERMISSION = 'daily_ledger.delete_rows';
+export const DAILY_LEDGER_POST_SHIPMENTS_PERMISSION = 'daily_ledger.post_shipments';
+export const DAILY_LEDGER_TRANSFER_CREATE_PERMISSION = 'daily_ledger.transfer.create';
+
+export function isDailyLedgerScopedOperator(roleCode: string): boolean {
+  return DAILY_LEDGER_SCOPED_OPERATOR_ROLES.has(String(roleCode ?? '').toLowerCase());
+}
+
+function isDailyLedgerManager(roleCode: string, userType: string): boolean {
+  const role = String(roleCode ?? '').toLowerCase();
+  return role === 'admin' || userType === 'admin' || DAILY_LEDGER_MANAGER_VIEW_ROLES.has(role);
+}
+
+export function canUseDailyLedgerAction(
+  roleCode: string,
+  userType: string,
+  permissions: string[],
+  permissionCode: string,
+): boolean {
+  if (isDailyLedgerManager(roleCode, userType)) return true;
+  return permissions.includes(permissionCode);
+}
 
 export function canViewAllDailyLedgerEntries(
   roleCode: string,
@@ -22,7 +51,7 @@ export function dailyLedgerOwnerUserId(
   permissions: string[] = [],
 ): string | undefined {
   const role = String(roleCode ?? '').toLowerCase();
-  if (role === 'data_entry' && userId) return userId;
+  if (isDailyLedgerScopedOperator(role) && userId) return userId;
   if (canViewAllDailyLedgerEntries(roleCode, userType, permissions)) return undefined;
   return undefined;
 }

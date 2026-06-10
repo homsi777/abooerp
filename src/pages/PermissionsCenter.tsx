@@ -63,7 +63,7 @@ const simplifiedUserTypeChoices: Array<{ value: UserType; label: string }> = [
   { value: 'viewer', label: 'مشاهدة فقط' },
 ];
 
-const mainRoleCodes = new Set(['admin', 'agent_user', 'accountant', 'data_entry', 'viewer']);
+const mainRoleCodes = new Set(['admin', 'agent_user', 'accountant', 'data_entry', 'shipment_auditor', 'viewer']);
 const legacyRoleCodes = new Set(['general_manager', 'branch_manager', 'field_accountant']);
 
 const categoryOrder = [
@@ -97,6 +97,38 @@ const permissionArabicMeta: Record<string, { label: string; description: string;
   'daily_ledger.view_all_entries': {
     label: 'عرض كل إدخالات دفتر الشحن',
     description: 'للمدير: يرى إدخالات جميع موظفي مدخل البيانات. بدونها يرى مدخل البيانات إدخالاته فقط.',
+  },
+  'daily_ledger.export_pdf': {
+    label: 'تصدير PDF لدفتر الشحن',
+    description: 'يسمح بزر تصدير PDF في دفتر الشحن اليومي.',
+  },
+  'daily_ledger.close_section': {
+    label: 'إغلاق قسم دفتر الشحن',
+    description: 'يسمح بزر إغلاق القسم في دفتر الشحن اليومي.',
+  },
+  'daily_ledger.save_log': {
+    label: 'سجل حفظ دفتر الشحن',
+    description: 'يسمح بتنزيل سجل عمليات الحفظ في دفتر الشحن اليومي.',
+  },
+  'daily_ledger.view_loaded': {
+    label: 'إظهار المحمّلة',
+    description: 'يسمح بخيار إظهار الأسطر المحمّلة على البيان في دفتر الشحن اليومي.',
+  },
+  'daily_ledger.delete_rows': {
+    label: 'حذف أسطر دفتر الشحن',
+    description: 'يسمح بحذف أسطر من دفتر الشحن اليومي.',
+  },
+  'daily_ledger.post_shipments': {
+    label: 'حفظ الشحنات',
+    description: 'يسمح بزر حفظ الشحنات (ترحيل الأسطر) من دفتر الشحن اليومي.',
+  },
+  'daily_ledger.transfer.create': {
+    label: 'نقل إرسالية',
+    description: 'يسمح بإنشاء نقل إرسالية بين تواريخ أو سائقين في دفتر الشحن.',
+  },
+  'daily_ledger.transfer.confirm': {
+    label: 'تأكيد نقل إرسالية',
+    description: 'يسمح بتأكيد نقل الإرسالية بعد التحقق.',
   },
   'drivers.view': { label: 'عرض السائقين', description: 'يسمح برؤية قائمة السائقين.' },
   'drivers.manage': { label: 'إدارة السائقين', description: 'يسمح بإضافة وتعديل السائقين.' },
@@ -203,6 +235,39 @@ const roleTemplates: PermissionTemplate[] = [
     roleCode: 'data_entry',
     userType: 'employee',
     description: 'إدخال وتعديل الشحنات ضمن الفروع المسموحة، مع الحوالات التشغيلية عند منح الصلاحية.',
+    modules: ['دفتر الشحن اليومي', 'إدخال شحنة', 'قائمة الشحنات', 'المركبات والسائقون', 'الحوالات'],
+    permissionCodes: [
+      'shipments.read',
+      'shipments.write',
+      'shipments.view',
+      'shipments.create',
+      'shipments.update',
+      'shipments.ledger.past_dates',
+      'shipments.ledger.future_dates',
+      'drivers.view',
+      'drivers.manage',
+      'vehicles.view',
+      'vehicles.manage',
+      'parties.manage',
+      'transfers.read',
+      'transfers.write',
+      'daily_ledger.export_pdf',
+      'daily_ledger.close_section',
+      'daily_ledger.save_log',
+      'daily_ledger.view_loaded',
+      'daily_ledger.delete_rows',
+      'daily_ledger.post_shipments',
+      'daily_ledger.transfer.create',
+      'daily_ledger.transfer.confirm',
+    ],
+  },
+  {
+    code: 'shipment_auditor',
+    name: 'مدقق شحنات',
+    roleCode: 'shipment_auditor',
+    userType: 'employee',
+    description:
+      'مراجعة وإدخال الشحنات ضمن الفرع — نفس أقسام مدخل البيانات دون تصدير PDF أو نقل إرسالية أو إغلاق القسم أو سجل الحفظ أو إظهار المحمّلة أو حذف الأسطر أو حفظ الشحنات.',
     modules: ['دفتر الشحن اليومي', 'إدخال شحنة', 'قائمة الشحنات', 'المركبات والسائقون', 'الحوالات'],
     permissionCodes: [
       'shipments.read',

@@ -59,3 +59,29 @@ export function scopeFromTrip(
     ...overrides,
   };
 }
+
+export type LedgerRowsFetchOptions = {
+  managerViewAllBranches?: boolean;
+  allLines?: boolean;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
+/** نطاق جلب موحّد للشاشة والطباعة وتصدير PDF */
+export function buildLedgerRowsQueryScope(
+  branchId: string,
+  ledgerDate: string,
+  lineLabel: string,
+  includeLoaded: boolean,
+  options: LedgerRowsFetchOptions = {},
+): DailyLedgerQueryScope {
+  const allBranches = Boolean(options.managerViewAllBranches);
+  const allLines = options.allLines ?? allBranches;
+  return scopeFromTrip(branchId, ledgerDate, lineLabel, includeLoaded, {
+    allLines,
+    ...(allBranches ? { allBranches: true } : {}),
+    ...(options.dateFrom && options.dateTo
+      ? { dateFrom: options.dateFrom, dateTo: options.dateTo }
+      : {}),
+  });
+}

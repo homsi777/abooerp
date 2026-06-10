@@ -38,16 +38,16 @@ import {
   resolveGovernorateFromQuickCode,
 } from '../lib/agents/agentQuickCodes';
 import {
+  buildLedgerRowsQueryScope,
   fetchAllDailyLedgerRows,
   resolveLedgerBranchId,
-  scopeFromTrip,
 } from '../lib/shipping/dailyLedgerScope';
 import {
   filterPrintableDailyLedgerRows,
   remoteRowCollectionUsd,
   sortDailyLedgerRows,
 } from '../lib/shipping/dailyLedgerPrintable';
-import { formatUsdAmount } from '../lib/shipping/dailyLedgerTotals';
+import { computeTotalsFromRemoteRows, formatUsdAmount } from '../lib/shipping/dailyLedgerTotals';
 import type { DailyLedgerEditingScope, RemoteDailyLedgerRow } from '../lib/shipping/dailyLedgerTypes';
 import {
   mergeLedgerRowWithAutoTariff,
@@ -713,7 +713,7 @@ export default function ShipmentQuickLedger() {
   const [destinationPdfRows, setDestinationPdfRows] = useState<RemoteDailyLedgerRow[]>([]);
   const [destinationPdfSelected, setDestinationPdfSelected] = useState<string[]>([]);
   const [destinationPdfDriverKey, setDestinationPdfDriverKey] = useState<string>(ALL_DRIVERS_PDF_OPTION);
-  const [printScope, setPrintScope] = useState<'driver' | 'date' | 'agent' | 'session'>('driver');
+  const [printScope, setPrintScope] = useState<'driver' | 'date' | 'agent' | 'session'>('date');
   const [printDestinationFilter, setPrintDestinationFilter] = useState('');
   /** افتراضي: الطباعة تمثل نطاق التاريخ+الخط كاملاً وليس نتائج البحث */
   const [printApplySearchResults, setPrintApplySearchResults] = useState(false);
@@ -1044,34 +1044,26 @@ export default function ShipmentQuickLedger() {
   );
 
   const stats = useMemo(() => {
-    const scopedRows = activeSessionId
+    const scopedRemote = activeSessionId
+      ? remoteRowsRaw.filter((row) => row.session_id === activeSessionId)
+      : remoteRowsRaw;
+    const printable = filterPrintableDailyLedgerRows(scopedRemote);
+    const totals = computeTotalsFromRemoteRows(printable);
+    const scopedLocalRows = activeSessionId
       ? rows.filter((row) => rowInActiveSessionScope(row, activeSessionId))
       : rows;
-    const written = scopedRows.filter(isRowStarted);
-    let collectionUsd = 0;
-    let prepaidUsd = 0;
-    let hawalaUsd = 0;
-    let transferFeeUsd = 0;
-    let totalWeightKg = 0;
-    for (const row of written) {
-      collectionUsd += parseUsd(row.collectAmount);
-      prepaidUsd += parseUsd(row.prepaidAmount);
-      hawalaUsd += parseUsd(row.receiverCollect);
-      transferFeeUsd += parseUsd(row.transferServiceFee);
-      totalWeightKg += parseWeightKg(row.weightKg) ?? 0;
-    }
-    const completeRows = written.filter((row) => isRowComplete(row) && !row.postedShipmentId);
+    const completeRows = scopedLocalRows.filter((row) => isRowComplete(row) && !row.postedShipmentId);
     return {
-      rowCount: written.length,
-      collectionUsd,
-      prepaidUsd,
-      hawalaUsd,
-      transferFeeUsd,
-      totalWeightKg,
+      rowCount: totals.rowCount,
+      collectionUsd: totals.collectionUsd,
+      prepaidUsd: totals.prepaidUsd,
+      hawalaUsd: totals.hawalaUsd,
+      transferFeeUsd: totals.transferServiceFeeUsd,
+      totalWeightKg: totals.weightKg,
       complete: completeRows.length,
-      saved: written.filter((r) => Boolean(r.postedShipmentId)).length,
+      saved: printable.filter((row) => Boolean(row.posted_shipment_id)).length,
     };
-  }, [rows, activeSessionId]);
+  }, [remoteRowsRaw, activeSessionId, rows]);
 
   const rowsRef = useRef(rows);
   const customersRef = useRef(customers);
@@ -1115,13 +1107,30 @@ export default function ShipmentQuickLedger() {
     return ['general_manager', 'branch_manager', 'manager'].includes(user.role);
   }, [user]);
 
-  /** المدير يرى كل إدخالات الموظفين؛ مدخل البيانات يرى إدخالاته فقط */
+  const isLedgerScopedOperator = useMemo(() => {
+    if (!user) return false;
+    return user.role === 'data_entry' || user.role === 'shipment_auditor';
+  }, [user]);
+
+  /** المدير يرى كل إدخالات الموظفين؛ مدخل البيانات ومدقق الشحنات يريان إدخالاتهما فقط */
   const canViewAllLedgerEntries = useMemo(() => {
-    if (!user || user.role === 'data_entry') return false;
+    if (!user || isLedgerScopedOperator) return false;
     if (user.userType === 'admin' || user.role === 'admin') return true;
     if (['general_manager', 'branch_manager', 'manager'].includes(user.role)) return true;
     return hasPermission('daily_ledger.view_all_entries');
-  }, [user, hasPermission]);
+  }, [user, hasPermission, isLedgerScopedOperator]);
+
+  const canLedgerExportPdf = hasPermission('daily_ledger.export_pdf');
+  const canLedgerTransfer = hasPermission('daily_ledger.transfer.create');
+  const canLedgerCloseSection = hasPermission('daily_ledger.close_section');
+  const canLedgerSaveLog = hasPermission('daily_ledger.save_log');
+  const canLedgerViewLoaded = hasPermission('daily_ledger.view_loaded');
+  const canLedgerDeleteRows = hasPermission('daily_ledger.delete_rows');
+  const canLedgerPostShipments = hasPermission('daily_ledger.post_shipments');
+
+  useEffect(() => {
+    if (!canLedgerViewLoaded && includeLoaded) setIncludeLoaded(false);
+  }, [canLedgerViewLoaded, includeLoaded]);
 
   useEffect(() => {
     canViewAllLedgerEntriesRef.current = canViewAllLedgerEntries;
@@ -1143,7 +1152,7 @@ export default function ShipmentQuickLedger() {
   const branchChoices = useMemo(() => {
     if (!user) return branches;
     if (isCompanyWideLedgerViewer) return branches;
-    if (user.role === 'data_entry') {
+    if (isLedgerScopedOperator) {
       const onlyBranchId = user.branchId ?? user.allowedBranchIds?.[0] ?? null;
       if (!onlyBranchId) return branches.slice(0, 1);
       const sid = syntheticEntityId(onlyBranchId);
@@ -1153,14 +1162,14 @@ export default function ShipmentQuickLedger() {
     if (allowed.size === 0 && user.branchId) allowed.add(syntheticEntityId(user.branchId));
     if (allowed.size === 0) return branches.slice(0, 1);
     return branches.filter((b) => allowed.has(b.id));
-  }, [branches, user, isCompanyWideLedgerViewer]);
+  }, [branches, user, isCompanyWideLedgerViewer, isLedgerScopedOperator]);
 
   const isBranchLocked = useMemo(() => {
     if (!user) return false;
     if (isCompanyWideLedgerViewer) return false;
-    if (user.role === 'data_entry') return true;
+    if (isLedgerScopedOperator) return true;
     return (user.allowedBranchIds || []).length <= 1;
-  }, [user, isCompanyWideLedgerViewer]);
+  }, [user, isCompanyWideLedgerViewer, isLedgerScopedOperator]);
 
   const todayIso = useMemo(() => new Date().toISOString().split('T')[0], []);
 
@@ -1306,14 +1315,15 @@ export default function ShipmentQuickLedger() {
       const origin = resolveTripOrigin(currentTrip.line);
       setRows(viewAllBranches ? [] : buildEntrySlotRows(1, origin));
 
-      const queryScope = scopeFromTrip(
+      const queryScope = buildLedgerRowsQueryScope(
         branchId || '',
         currentTrip.date,
         currentTrip.line || '',
         includeLoaded,
-        viewAllEntries
-          ? { allLines: true, ...(viewAllBranches ? { allBranches: true } : {}) }
-          : {},
+        {
+          managerViewAllBranches: viewAllBranches,
+          allLines: viewAllEntries,
+        },
       );
       const remoteValues = await fetchAllDailyLedgerRows(queryScope);
       if (generation !== loadGenerationRef.current) return;
@@ -2119,15 +2129,20 @@ export default function ShipmentQuickLedger() {
     setPrintDateFrom(trip.date);
     setPrintDateTo(trip.date);
     setPrintApplySearchResults(false);
-    setPrintAllLines(false);
-    if (scope) setPrintScope(scope);
+    const managerWideView =
+      canViewAllLedgerEntriesRef.current &&
+      (ledgerBranchModeRef.current === 'all' || !activeBranchIdRef.current);
+    setPrintAllLines(managerWideView || canViewAllLedgerEntriesRef.current);
+    setPrintScope(scope ?? (managerWideView || canViewAllLedgerEntriesRef.current ? 'date' : 'driver'));
     setPrintDialogOpen(true);
   };
 
   const loadDestinationPdfRows = async (ledgerDate: string) => {
     const branchId = activeBranchIdRef.current;
+    const viewAllBranches =
+      canViewAllLedgerEntriesRef.current && ledgerBranchModeRef.current === 'all';
     const lineLabel = normalizeName(tripRef.current.line);
-    if (!branchId) {
+    if (!viewAllBranches && !branchId) {
       showToast('يرجى اختيار الفرع قبل تصدير PDF', 'error');
       return;
     }
@@ -2135,14 +2150,23 @@ export default function ShipmentQuickLedger() {
       showToast('يرجى اختيار التاريخ', 'error');
       return;
     }
-    if (!lineLabel) {
+    if (!viewAllBranches && !lineLabel) {
       showToast('يرجى اختيار خط المصدر قبل التصدير', 'error');
       return;
     }
 
     setDestinationPdfLoading(true);
     try {
-      const queryScope = scopeFromTrip(branchId, ledgerDate, lineLabel, true);
+      const queryScope = buildLedgerRowsQueryScope(
+        branchId || '',
+        ledgerDate,
+        tripRef.current.line || '',
+        true,
+        {
+          managerViewAllBranches: viewAllBranches,
+          allLines: viewAllBranches || !lineLabel,
+        },
+      );
       const printableRows = sortDailyLedgerRows(await fetchAllDailyLedgerRows(queryScope));
       setDestinationPdfRows(printableRows);
       const nextDestinations = [...new Set(
@@ -2489,20 +2513,21 @@ export default function ShipmentQuickLedger() {
     }
 
     const screenLine = normalizeName(tripRef.current.line);
-    if (!printAllLines && !screenLine) {
+    const allowAllLines = printAllLines || viewAllBranches;
+    if (!allowAllLines && !screenLine) {
       showToast('يرجى اختيار خط المصدر قبل الطباعة', 'error');
       return null;
     }
 
     const singleDay = printDateFrom === printDateTo;
-    const queryScope = scopeFromTrip(
+    const queryScope = buildLedgerRowsQueryScope(
       branchId || '',
       printDateFrom,
-      screenLine || tripRef.current.line,
+      tripRef.current.line || screenLine,
       true,
       {
-        allLines: printAllLines || viewAllBranches,
-        ...(viewAllBranches ? { allBranches: true } : {}),
+        managerViewAllBranches: viewAllBranches,
+        allLines: allowAllLines,
         ...(singleDay ? {} : { dateFrom: printDateFrom, dateTo: printDateTo }),
       },
     );
@@ -2622,6 +2647,9 @@ export default function ShipmentQuickLedger() {
               ? `الإرسالية #${activeSession?.displayNo ?? ''} — ${activeSession?.driverLabel ?? ''}`
               : 'كل السائقين (اليوم)';
 
+      const widePrint =
+        printAllLines ||
+        (canViewAllLedgerEntriesRef.current && ledgerBranchModeRef.current === 'all');
       const html = buildQuickLedgerPrintHtml(
         rows.map(remoteRowToPrint),
         {
@@ -2629,7 +2657,7 @@ export default function ShipmentQuickLedger() {
           dateLabel,
           driverName: scope === 'driver' ? selectedDriver?.name ?? '—' : scopeName,
           vehicleLabel,
-          lineLabel: printAllLines ? 'كل خطوط الفرع' : currentTrip.line,
+          lineLabel: widePrint ? 'كل الفروع / كل الخطوط' : currentTrip.line,
           tripNo: currentTrip.tripNo,
         },
       );
@@ -2677,12 +2705,13 @@ export default function ShipmentQuickLedger() {
   };
 
   const executeDestinationPdfExport = async () => {
-    const lineLabel = normalizeName(trip.line);
+    const viewAllBranchesPdf = canViewAllLedgerEntries && ledgerBranchMode === 'all';
+    const lineLabel = viewAllBranchesPdf ? 'كل الفروع' : normalizeName(trip.line);
     if (!destinationPdfDate) {
       showToast('يرجى اختيار التاريخ', 'error');
       return;
     }
-    if (!lineLabel) {
+    if (!viewAllBranchesPdf && !lineLabel) {
       showToast('يرجى اختيار خط المصدر قبل التصدير', 'error');
       return;
     }
@@ -2695,10 +2724,11 @@ export default function ShipmentQuickLedger() {
       return;
     }
 
-    const branchName =
-      branches.find((branch) => getBackendIdFromSynthetic(branch.id) === activeBranchId)?.name
-      ?? branchSearch
-      ?? '—';
+    const branchName = viewAllBranchesPdf
+      ? 'كل الفروع'
+      : branches.find((branch) => getBackendIdFromSynthetic(branch.id) === activeBranchId)?.name
+        ?? branchSearch
+        ?? '—';
 
     if (
       destinationPdfDriverKey !== ALL_DRIVERS_PDF_OPTION &&
@@ -3335,81 +3365,95 @@ export default function ShipmentQuickLedger() {
                 : 'جاري التحديث...'
               : 'تحديث'}
           </button>
-          <label className="quick-ledger-print-toggle">
-            <input type="checkbox" checked={includeLoaded} onChange={(e) => setIncludeLoaded(e.target.checked)} />
-            إظهار المحمّلة
-          </label>
+          {canLedgerViewLoaded ? (
+            <label className="quick-ledger-print-toggle">
+              <input type="checkbox" checked={includeLoaded} onChange={(e) => setIncludeLoaded(e.target.checked)} />
+              إظهار المحمّلة
+            </label>
+          ) : null}
           <button type="button" onClick={() => openPrintDialog()}>
             <Printer size={16} />
             طباعة
           </button>
-          <button type="button" onClick={openDestinationPdfDialog}>
-            <Printer size={16} />
-            تصدير PDF
-          </button>
-          {transferMode ? (
-            <>
-              <button type="button" onClick={exitTransferMode} disabled={transferring}>
-                إلغاء النقل
-              </button>
-              <button
-                type="button"
-                className="primary"
-                disabled={transferring || !selectedTransferRowIds.length}
-                onClick={() => void openTransferDialog()}
-              >
-                <Truck size={16} />
-                {`تأكيد نقل إرسالية (${selectedTransferRowIds.length})`}
-              </button>
-            </>
-          ) : deleteMode ? (
-            <>
-              <button type="button" onClick={exitDeleteMode} disabled={deletingRows}>
-                إلغاء التحديد
-              </button>
-              <button
-                type="button"
-                className="danger"
-                disabled={deletingRows || !selectedDeleteRowIds.length}
-                onClick={() => setDeleteConfirmOpen(true)}
-              >
-                <Trash2 size={16} />
-                {deletingRows ? 'جاري الحذف...' : `حذف المحدد (${selectedDeleteRowIds.length})`}
-              </button>
-            </>
-          ) : (
-            <>
+          {canLedgerExportPdf ? (
+            <button type="button" onClick={openDestinationPdfDialog}>
+              <Printer size={16} />
+              تصدير PDF
+            </button>
+          ) : null}
+          {canLedgerTransfer ? (
+            transferMode ? (
+              <>
+                <button type="button" onClick={exitTransferMode} disabled={transferring}>
+                  إلغاء النقل
+                </button>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={transferring || !selectedTransferRowIds.length}
+                  onClick={() => void openTransferDialog()}
+                >
+                  <Truck size={16} />
+                  {`تأكيد نقل إرسالية (${selectedTransferRowIds.length})`}
+                </button>
+              </>
+            ) : canLedgerDeleteRows && deleteMode ? null : !deleteMode ? (
               <button type="button" onClick={enterTransferMode}>
                 <Truck size={16} />
                 نقل إرسالية
               </button>
+            ) : null
+          ) : null}
+          {canLedgerDeleteRows ? (
+            deleteMode ? (
+              <>
+                <button type="button" onClick={exitDeleteMode} disabled={deletingRows}>
+                  إلغاء التحديد
+                </button>
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={deletingRows || !selectedDeleteRowIds.length}
+                  onClick={() => setDeleteConfirmOpen(true)}
+                >
+                  <Trash2 size={16} />
+                  {deletingRows ? 'جاري الحذف...' : `حذف المحدد (${selectedDeleteRowIds.length})`}
+                </button>
+              </>
+            ) : !transferMode ? (
               <button type="button" className="danger" onClick={() => setDeleteMode(true)}>
                 <Trash2 size={16} />
                 حذف أسطر
               </button>
-            </>
-          )}
-          <button type="button" onClick={() => setCloseConfirmOpen(true)}>
-            إغلاق القسم
-          </button>
-          <button type="button" onClick={() => quickLedgerLog.download()} title="تنزيل سجل عمليات دفتر الشحن">
-            <ScrollText size={16} />
-            سجل الحفظ
-          </button>
-          <button
-            type="button"
-            className="primary"
-            onClick={() => void saveRows()}
-            disabled={saving || loadingRefs || !activeSessionId}
-            title={!activeSessionId ? SESSION_SCOPE_REQUIRED_MSG : undefined}
-          >
-            <Save size={16} />
-            {saving
-              ? 'جاري الحفظ...'
-              : stats.saved > 0 && stats.complete > 0
-                ? `استكمال الحفظ (${stats.complete})`
-                : 'حفظ الشحنات'}
-          </button>
+            ) : null
+          ) : null}
+          {canLedgerCloseSection ? (
+            <button type="button" onClick={() => setCloseConfirmOpen(true)}>
+              إغلاق القسم
+            </button>
+          ) : null}
+          {canLedgerSaveLog ? (
+            <button type="button" onClick={() => quickLedgerLog.download()} title="تنزيل سجل عمليات دفتر الشحن">
+              <ScrollText size={16} />
+              سجل الحفظ
+            </button>
+          ) : null}
+          {canLedgerPostShipments ? (
+            <button
+              type="button"
+              className="primary"
+              onClick={() => void saveRows()}
+              disabled={saving || loadingRefs || !activeSessionId}
+              title={!activeSessionId ? SESSION_SCOPE_REQUIRED_MSG : undefined}
+            >
+              <Save size={16} />
+              {saving
+                ? 'جاري الحفظ...'
+                : stats.saved > 0 && stats.complete > 0
+                  ? `استكمال الحفظ (${stats.complete})`
+                  : 'حفظ الشحنات'}
+            </button>
+          ) : null}
         </div>
       </section>
 
@@ -3600,7 +3644,7 @@ export default function ShipmentQuickLedger() {
         </div>
       )}
 
-      {transferMode && (
+      {transferMode && canLedgerTransfer && (
         <section className="quick-ledger-transfer-bar" dir="rtl">
           <div className="quick-ledger-transfer-bar-totals">
             <span><strong>{transferSelectionSummary.rows}</strong> سطر محدد</span>
@@ -3623,9 +3667,9 @@ export default function ShipmentQuickLedger() {
         <table className="quick-ledger-table">
           <thead>
             <tr>
-              {(deleteMode || transferMode) && (
+              {((deleteMode && canLedgerDeleteRows) || (transferMode && canLedgerTransfer)) && (
                 <th className="quick-ledger-select-col">
-                  {deleteMode ? (
+                  {deleteMode && canLedgerDeleteRows ? (
                     <input
                       type="checkbox"
                       aria-label="تحديد كل الأسطر القابلة للحذف"
@@ -3681,7 +3725,7 @@ export default function ShipmentQuickLedger() {
                 .join(' ');
               return (
                 <tr key={row.id} className={rowClassName} title={rowIssue}>
-                  {deleteMode && (
+                  {deleteMode && canLedgerDeleteRows && (
                     <td className="quick-ledger-select-col">
                       <input
                         type="checkbox"
@@ -3693,7 +3737,7 @@ export default function ShipmentQuickLedger() {
                       />
                     </td>
                   )}
-                  {transferMode && (
+                  {transferMode && canLedgerTransfer && (
                     <td className="quick-ledger-select-col">
                       <input
                         type="checkbox"
@@ -3925,8 +3969,17 @@ export default function ShipmentQuickLedger() {
           <div className="quick-ledger-confirm-panel">
             <h3>طباعة</h3>
             <p>
-              الطباعة الافتراضية تطابق نطاق الشاشة: التاريخ + خط المصدر ({trip.line || '—'})،
-              دون تأثير البحث السريع. يمكنك تفعيل الخيارات أدناه عند الحاجة.
+              {canViewAllLedgerEntries && ledgerBranchMode === 'all' ? (
+                <>
+                  الافتراضي: <strong>كل الفروع</strong> و<strong>كل السائقين</strong> للتاريخ المحدد
+                  ({remoteSyncedCount} سطر محمّل على الشاشة).
+                </>
+              ) : (
+                <>
+                  الطباعة الافتراضية: التاريخ + {printAllLines ? 'كل الخطوط' : `خط المصدر (${trip.line || '—'})`}،
+                  دون تأثير البحث السريع.
+                </>
+              )}
             </p>
             <div className="quick-ledger-print-form space-y-3 mb-3">
               <label className="form-group block">
@@ -3936,8 +3989,8 @@ export default function ShipmentQuickLedger() {
                   value={printScope}
                   onChange={(e) => setPrintScope(e.target.value as 'driver' | 'date' | 'agent' | 'session')}
                 >
-                  <option value="driver">بالسائق / الإرسالية</option>
-                  <option value="date">باليوم كامل (كل السائقين)</option>
+                  <option value="date">باليوم كامل (كل السائقين) — موصى به</option>
+                  <option value="driver">بالسائق المحدد فقط</option>
                   <option value="agent">بالوكيل / الجهة</option>
                   {activeSessionId && <option value="session">الإرسالية الحالية فقط</option>}
                 </select>

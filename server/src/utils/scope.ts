@@ -39,6 +39,7 @@ export function parseDataScope(req: Request): DataScope {
   const companyWideRoles = new Set([
     'general_manager',
     'data_entry',
+    'shipment_auditor',
     'operator',
     'manager',
     'accountant',

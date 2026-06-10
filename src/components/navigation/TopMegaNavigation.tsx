@@ -211,7 +211,7 @@ export default function TopMegaNavigation() {
   const baseModules =
     user?.userType === 'agent'
       ? NAV_MODULES_AGENT
-      : user?.role === 'data_entry'
+      : user?.role === 'data_entry' || user?.role === 'shipment_auditor'
         ? NAV_DATA_ENTRY
         : user?.role === 'accountant'
           ? NAV_ACCOUNTANT
@@ -221,7 +221,7 @@ export default function TopMegaNavigation() {
     if (
       mod.id === 'home' &&
       user &&
-      !['admin', 'general_manager', 'branch_manager', 'accountant', 'data_entry'].includes(user.role)
+      !['admin', 'general_manager', 'branch_manager', 'accountant', 'data_entry', 'shipment_auditor'].includes(user.role)
     ) {
       return false;
     }

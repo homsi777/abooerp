@@ -9,6 +9,7 @@ import type { DailyLedgerQueryScope, RemoteDailyLedgerRow } from './dailyLedgerT
 
 export {
   buildDailyLedgerQueryParams,
+  buildLedgerRowsQueryScope,
   dailyLedgerScopeKey,
   resolveLedgerBranchId,
   scopeFromTrip,
