@@ -1096,10 +1096,15 @@ export default function ShipmentQuickLedger() {
     activeBranchIdRef.current = activeBranchId;
   }, [activeBranchId]);
 
+  const isCompanyWideLedgerViewer = useMemo(() => {
+    if (!user) return false;
+    if (user.userType === 'admin' || user.role === 'admin') return true;
+    return ['general_manager', 'branch_manager', 'manager'].includes(user.role);
+  }, [user]);
+
   const branchChoices = useMemo(() => {
     if (!user) return branches;
-    const isAdmin = user.userType === 'admin' || user.role === 'admin';
-    if (isAdmin) return branches;
+    if (isCompanyWideLedgerViewer) return branches;
     if (user.role === 'data_entry') {
       const onlyBranchId = user.branchId ?? user.allowedBranchIds?.[0] ?? null;
       if (!onlyBranchId) return branches.slice(0, 1);
@@ -1110,27 +1115,36 @@ export default function ShipmentQuickLedger() {
     if (allowed.size === 0 && user.branchId) allowed.add(syntheticEntityId(user.branchId));
     if (allowed.size === 0) return branches.slice(0, 1);
     return branches.filter((b) => allowed.has(b.id));
-  }, [branches, user]);
+  }, [branches, user, isCompanyWideLedgerViewer]);
 
   const isBranchLocked = useMemo(() => {
     if (!user) return false;
-    const isAdmin = user.userType === 'admin' || user.role === 'admin';
-    if (isAdmin) return false;
+    if (isCompanyWideLedgerViewer) return false;
     if (user.role === 'data_entry') return true;
     return (user.allowedBranchIds || []).length <= 1;
-  }, [user]);
+  }, [user, isCompanyWideLedgerViewer]);
 
   const todayIso = useMemo(() => new Date().toISOString().split('T')[0], []);
 
   const canPickHistoricalDate = useMemo(() => {
     if (!user) return false;
     if (user.userType === 'admin' || user.role === 'admin') return true;
-    if (['general_manager', 'branch_manager'].includes(user.role)) return true;
+    if (['general_manager', 'branch_manager', 'manager'].includes(user.role)) return true;
     return hasPermission('shipments.ledger.past_dates') || hasPermission('daily_ledger.backdate.create');
+  }, [user, hasPermission]);
+
+  const canPickFutureDate = useMemo(() => {
+    if (!user) return false;
+    if (user.userType === 'admin' || user.role === 'admin') return true;
+    if (['general_manager', 'branch_manager', 'manager'].includes(user.role)) return true;
+    return hasPermission('shipments.ledger.future_dates');
   }, [user, hasPermission]);
 
   /** يعمل المستخدم على تاريخ سابق — تنبيه أن الإدخال تصحيح ويستلزم إعادة الطباعة */
   const isBackdateMode = useMemo(() => Boolean(trip.date && trip.date < todayIso), [trip.date, todayIso]);
+
+  /** تاريخ مستقبلي — تحميل اليوم وسفر الغد (دوريات الجمارك) */
+  const isFutureDateMode = useMemo(() => Boolean(trip.date && trip.date > todayIso), [trip.date, todayIso]);
 
   const mapRemoteRowToLocal = (remote: RemoteDailyLedgerRow, displayId: number): LedgerRow => ({
     id: displayId,
@@ -1346,8 +1360,7 @@ export default function ShipmentQuickLedger() {
     if (!user) return;
     if (!branches.length) return;
     if (activeBranchId) return;
-    const isAdmin = user.userType === 'admin' || user.role === 'admin';
-    if (isAdmin) {
+    if (isCompanyWideLedgerViewer) {
       const aleppo =
         branches.find((b) => normalizeName(b.name) === 'حلب') ??
         branches.find((b) => normalizeName(b.name).includes('حلب'));
@@ -1357,7 +1370,7 @@ export default function ShipmentQuickLedger() {
     }
     const fallback = user.branchId ?? user.allowedBranchIds?.[0] ?? null;
     if (fallback) void setActiveBranch(fallback);
-  }, [activeBranchId, branches, setActiveBranch, user]);
+  }, [activeBranchId, branches, isCompanyWideLedgerViewer, setActiveBranch, user]);
 
   useEffect(() => {
     if (!activeBranchId) return;
@@ -3284,17 +3297,17 @@ export default function ShipmentQuickLedger() {
           <input
             type="date"
             value={trip.date}
-            max={todayIso}
+            max={canPickFutureDate ? undefined : todayIso}
             min={canPickHistoricalDate ? undefined : todayIso}
             onChange={(e) => {
               const next = e.target.value;
-              if (!canPickHistoricalDate && next !== todayIso) {
-                showToast('لا يمكن تغيير التاريخ — يلزم صلاحية تعديل تاريخ الدفتر', 'info');
+              if (!canPickHistoricalDate && next < todayIso) {
+                showToast('لا يمكن اختيار تاريخ سابق — يلزم صلاحية تعديل تاريخ الدفتر', 'info');
                 setTrip((prev) => ({ ...prev, date: todayIso }));
                 return;
               }
-              if (next > todayIso) {
-                showToast('لا يمكن اختيار تاريخ مستقبلي', 'error');
+              if (!canPickFutureDate && next > todayIso) {
+                showToast('لا يمكن اختيار تاريخ مستقبلي — يلزم صلاحية تاريخ مستقبلي لدفتر الشحن', 'error');
                 return;
               }
               setTrip((prev) => ({ ...prev, date: next }));
@@ -3324,7 +3337,10 @@ export default function ShipmentQuickLedger() {
           </select>
         </label>
         {canPickHistoricalDate && (
-          <p className="quick-ledger-trip-hint">يمكن للمدير اختيار تواريخ سابقة لإدخال بيانات متأخرة.</p>
+          <p className="quick-ledger-trip-hint">يمكن اختيار تواريخ سابقة لإدخال بيانات متأخرة أو تصحيح إيصالات ناقصة.</p>
+        )}
+        {canPickFutureDate && (
+          <p className="quick-ledger-trip-hint">يمكن اختيار تاريخ مستقبلي عند تحميل البضائع اليوم وسفر المركبة غداً (دوريات الجمارك).</p>
         )}
       </section>
 
@@ -3421,6 +3437,12 @@ export default function ShipmentQuickLedger() {
         <div className="quick-ledger-backdate-banner" dir="rtl" role="alert">
           تنبيه: أنت تعمل على تاريخ سابق ({trip.date}). سيُسجَّل هذا الإدخال كتصحيح على تاريخ سابق،
           ويُمنع تكرار رقم الإيصال، وتُعلَّم الإرسالية القديمة بإعادة الطباعة عند التعديل.
+        </div>
+      )}
+
+      {isFutureDateMode && (
+        <div className="quick-ledger-backdate-banner" dir="rtl" role="status">
+          دفتر بتاريخ مستقبلي ({trip.date}) — للشحنات المحمّلة اليوم والمسافرة في الرحلة القادمة (مثلاً دورية جمارك الغد).
         </div>
       )}
 
@@ -3871,7 +3893,8 @@ export default function ShipmentQuickLedger() {
                   className="form-input w-full"
                   type="date"
                   value={destinationPdfDate}
-                  max={todayIso}
+                  max={canPickFutureDate ? undefined : todayIso}
+                  min={canPickHistoricalDate ? undefined : todayIso}
                   onChange={(e) => {
                     const nextDate = e.target.value;
                     setDestinationPdfDate(nextDate);
@@ -4020,7 +4043,7 @@ export default function ShipmentQuickLedger() {
                       className="form-input w-full"
                       type="date"
                       value={transferDate}
-                      max={todayIso}
+                      max={canPickFutureDate ? undefined : todayIso}
                       min={canPickHistoricalDate ? undefined : todayIso}
                       onChange={(e) => setTransferDate(e.target.value)}
                     />

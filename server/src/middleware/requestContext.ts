@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { pool } from '../db/pool.js';
 import { verifyAccessToken } from '../auth/tokens.js';
 import { loadUserContextByUserId } from '../auth/userContext.js';
+import { canAccessAnyCompanyBranch } from '../utils/dailyLedgerAccess.js';
 import { env } from '../config/env.js';
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -71,7 +72,13 @@ export async function requestContextMiddleware(req: Request, res: Response, next
       const tokenBranchId = payload.branchId;
       const fallbackBranchId = tokenBranchId ?? context.scope.branchId ?? context.allowedBranchIds[0];
       const effectiveBranchId = requestedBranchId ?? fallbackBranchId;
-      if (effectiveBranchId && !context.allowedBranchIds.includes(effectiveBranchId)) {
+      const branchBypass = canAccessAnyCompanyBranch(context.roleCode, context.userType);
+      if (
+        effectiveBranchId &&
+        context.allowedBranchIds.length > 0 &&
+        !context.allowedBranchIds.includes(effectiveBranchId) &&
+        !branchBypass
+      ) {
         res.status(403).json({ success: false, error: 'Requested branch scope is not allowed for this user.' });
         return;
       }
@@ -138,7 +145,13 @@ export async function requestContextMiddleware(req: Request, res: Response, next
   }
 
   const effectiveBranchId = requestedBranchId ?? context.scope.branchId ?? context.allowedBranchIds[0];
-  if (effectiveBranchId && !context.allowedBranchIds.includes(effectiveBranchId)) {
+  const devBranchBypass = canAccessAnyCompanyBranch(context.roleCode, context.userType);
+  if (
+    effectiveBranchId &&
+    context.allowedBranchIds.length > 0 &&
+    !context.allowedBranchIds.includes(effectiveBranchId) &&
+    !devBranchBypass
+  ) {
     res.status(403).json({ success: false, error: 'Requested branch scope is not allowed for this user.' });
     return;
   }

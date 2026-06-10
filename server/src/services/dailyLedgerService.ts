@@ -41,7 +41,14 @@ export class DailyLedgerService {
 
   postPendingShipments(
     scope: DataScope,
-    filters: { branchId: string; ledgerDate: string; lineLabel: string; sessionId?: string; rowIds?: string[] },
+    filters: {
+      branchId: string;
+      ledgerDate: string;
+      lineLabel: string;
+      sessionId?: string;
+      rowIds?: string[];
+      createdByUserId?: string;
+    },
     allowedBranchIds: string[],
   ) {
     if (!this.shipmentPosting) {
@@ -50,8 +57,17 @@ export class DailyLedgerService {
     return this.shipmentPosting.postPendingShipments(scope, filters, allowedBranchIds);
   }
 
-  deleteRows(scope: DataScope, rowIds: string[], allowedBranchIds: string[]) {
-    return this.repo.deleteRows(scope, { rowIds, userId: scope.userId }, allowedBranchIds);
+  deleteRows(
+    scope: DataScope,
+    rowIds: string[],
+    allowedBranchIds: string[],
+    createdByUserId?: string,
+  ) {
+    return this.repo.deleteRows(
+      scope,
+      { rowIds, userId: scope.userId, createdByUserId },
+      allowedBranchIds,
+    );
   }
 
   recordSessionPrint(

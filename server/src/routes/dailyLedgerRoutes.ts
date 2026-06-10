@@ -1,6 +1,10 @@
 import express from 'express';
 import { z } from 'zod';
 import { requirePermissions } from '../middleware/authorization.js';
+import {
+  canAccessAnyCompanyBranch,
+  dailyLedgerOwnerUserId,
+} from '../utils/dailyLedgerAccess.js';
 import { parseDataScope } from '../utils/scope.js';
 import { DailyLedgerService } from '../services/dailyLedgerService.js';
 import type { DailyLedgerTransferService } from '../services/dailyLedgerTransferService.js';
@@ -21,13 +25,16 @@ function assertLedgerDateAllowed(
 ) {
   const today = todayIsoDate();
   const isAdmin = roleCode === 'admin' || userType === 'admin';
-  const isManager = isAdmin || roleCode === 'general_manager' || roleCode === 'branch_manager';
+  const isManager =
+    isAdmin || roleCode === 'general_manager' || roleCode === 'branch_manager' || roleCode === 'manager';
   const canUsePastDates =
     isManager ||
     permissions.includes('shipments.ledger.past_dates') ||
     permissions.includes('daily_ledger.backdate.create');
-  if (ledgerDate > today) {
-    throw new Error('لا يمكن إدخال بيانات بتاريخ مستقبلي.');
+  const canUseFutureDates =
+    isManager || permissions.includes('shipments.ledger.future_dates');
+  if (ledgerDate > today && !canUseFutureDates) {
+    throw new Error('لا يمكن إدخال بيانات بتاريخ مستقبلي — يلزم صلاحية تاريخ مستقبلي لدفتر الشحن.');
   }
   if (ledgerDate !== today && !canUsePastDates) {
     throw new Error('لا يمكن العمل على تاريخ مختلف عن اليوم — يلزم صلاحية تعديل تاريخ دفتر الشحن.');
@@ -42,7 +49,8 @@ function getRequestPermissions(req: unknown): string[] {
 /** صلاحية نقل الإرسالية — admin/مدير دائماً، أو من يملك الصلاحية صراحةً */
 function canTransferLedger(roleCode: string, userType: string, permissions: string[]): boolean {
   const isAdmin = roleCode === 'admin' || userType === 'admin';
-  const isManager = isAdmin || roleCode === 'general_manager' || roleCode === 'branch_manager';
+  const isManager =
+    isAdmin || roleCode === 'general_manager' || roleCode === 'branch_manager' || roleCode === 'manager';
   return isManager || permissions.includes('daily_ledger.transfer.create');
 }
 
@@ -86,7 +94,12 @@ export function createDailyLedgerRouter(
         res.status(400).json({ success: false, error: 'branchId is required.' });
         return;
       }
-      if (allowedBranchIds.length && !allowedBranchIds.includes(effectiveBranchId) && roleCode !== 'admin' && userType !== 'admin') {
+      const branchBypass = roleCode === 'admin' || userType === 'admin' || canAccessAnyCompanyBranch(roleCode, userType);
+      if (
+        allowedBranchIds.length &&
+        !allowedBranchIds.includes(effectiveBranchId) &&
+        !branchBypass
+      ) {
         res.status(403).json({ success: false, error: 'Requested branch scope is not allowed for this user.' });
         return;
       }
@@ -95,6 +108,7 @@ export function createDailyLedgerRouter(
         return;
       }
 
+      const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId);
       const rows = await service.listRows(scope, {
         branchId: effectiveBranchId,
         ledgerDate: q.ledgerDate,
@@ -105,6 +119,7 @@ export function createDailyLedgerRouter(
         vehicleId: q.vehicleId,
         includeLoaded: q.includeLoaded ?? false,
         onlyWithData: q.onlyWithData,
+        createdByUserId,
         q: q.q,
         limit: q.limit ?? 250,
         offset: q.offset ?? 0,
@@ -163,7 +178,8 @@ export function createDailyLedgerRouter(
         });
         return;
       }
-      if (allowedBranchIds.length && !allowedBranchIds.includes(input.branchId) && roleCode !== 'admin' && userType !== 'admin') {
+      const branchBypass = roleCode === 'admin' || userType === 'admin' || canAccessAnyCompanyBranch(roleCode, userType);
+      if (allowedBranchIds.length && !allowedBranchIds.includes(input.branchId) && !branchBypass) {
         res.status(403).json({ success: false, error: 'Requested branch scope is not allowed for this user.' });
         return;
       }
@@ -172,8 +188,10 @@ export function createDailyLedgerRouter(
         return;
       }
 
+      const ownerUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId);
       const row = await service.upsertRow(scope, {
         ...input,
+        restrictToCreatedByUserId: ownerUserId,
       });
       res.json({ success: true, data: row });
     },
@@ -238,7 +256,8 @@ export function createDailyLedgerRouter(
         });
         return;
       }
-      if (allowedBranchIds.length && !allowedBranchIds.includes(input.branchId) && roleCode !== 'admin' && userType !== 'admin') {
+      const branchBypass = roleCode === 'admin' || userType === 'admin' || canAccessAnyCompanyBranch(roleCode, userType);
+      if (allowedBranchIds.length && !allowedBranchIds.includes(input.branchId) && !branchBypass) {
         res.status(403).json({ success: false, error: 'Requested branch scope is not allowed for this user.' });
         return;
       }
@@ -247,8 +266,9 @@ export function createDailyLedgerRouter(
         return;
       }
 
+      const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId);
       try {
-        const result = await service.postPendingShipments(scope, input, allowedBranchIds);
+        const result = await service.postPendingShipments(scope, { ...input, createdByUserId }, allowedBranchIds);
         res.json({ success: true, data: result });
       } catch (error) {
         if (error instanceof HttpError) {
@@ -305,12 +325,15 @@ export function createDailyLedgerRouter(
     async (req, res) => {
       const userContext = (req as any).requestUserContext as any;
       const allowedBranchIds: string[] = Array.isArray(userContext?.allowedBranchIds) ? userContext.allowedBranchIds : [];
+      const roleCode = String(userContext?.roleCode ?? '').toLowerCase();
+      const userType = String(userContext?.userType ?? '').toLowerCase();
       const scope = parseDataScope(req);
       const bodySchema = z.object({
         rowIds: z.array(uuid).min(1),
       });
       const { rowIds } = bodySchema.parse(req.body);
-      const result = await service.deleteRows(scope, rowIds, allowedBranchIds);
+      const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId);
+      const result = await service.deleteRows(scope, rowIds, allowedBranchIds, createdByUserId);
       res.json({ success: true, data: result });
     },
   );

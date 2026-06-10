@@ -1,4 +1,5 @@
 import { pool } from '../db/pool.js';
+import { shouldExpandCompanyBranches } from '../utils/dailyLedgerAccess.js';
 import type { DataScope } from '../utils/scope.js';
 
 export interface RequestUserContext {
@@ -109,7 +110,20 @@ export async function loadUserContextByUserId(userId: string): Promise<RequestUs
     `,
     [user.id, companyId],
   );
-  const allowedBranchIds = allowedResult.rows.map((row) => row.branch_id);
+  let allowedBranchIds = allowedResult.rows.map((row) => row.branch_id);
+  if (!allowedBranchIds.length && shouldExpandCompanyBranches(user.role_code, user.user_type)) {
+    const allBranches = await pool.query<{ id: string }>(
+      `
+      select id
+      from branches
+      where company_id = $1
+        and is_active = true
+      order by created_at asc
+      `,
+      [companyId],
+    );
+    allowedBranchIds = allBranches.rows.map((row) => row.id);
+  }
 
   const baseCurrencyResult = await pool.query<{ code: string }>(
     `

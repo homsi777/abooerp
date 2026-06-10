@@ -276,7 +276,14 @@ export class DailyLedgerShipmentPostingService {
 
   private async loadPendingRows(
     scope: DataScope,
-    filters: { branchId: string; ledgerDate: string; lineLabel: string; sessionId?: string; rowIds?: string[] },
+    filters: {
+      branchId: string;
+      ledgerDate: string;
+      lineLabel: string;
+      sessionId?: string;
+      rowIds?: string[];
+      createdByUserId?: string;
+    },
   ): Promise<LedgerRowRecord[]> {
     if (!scope.companyId) throw new HttpError(400, 'Company scope is required.');
     const values: unknown[] = [scope.companyId, filters.branchId, filters.ledgerDate, filters.lineLabel];
@@ -288,6 +295,10 @@ export class DailyLedgerShipmentPostingService {
     if (filters.rowIds?.length) {
       values.push(filters.rowIds);
       rowFilter += ` and r.id = any($${values.length}::uuid[])`;
+    }
+    if (filters.createdByUserId) {
+      values.push(filters.createdByUserId);
+      rowFilter += ` and r.created_by = $${values.length}::uuid`;
     }
     const result = await pool.query<LedgerRowRecord>(
       `
@@ -575,7 +586,14 @@ export class DailyLedgerShipmentPostingService {
 
   async postPendingShipments(
     scope: DataScope,
-    filters: { branchId: string; ledgerDate: string; lineLabel: string; sessionId?: string; rowIds?: string[] },
+    filters: {
+      branchId: string;
+      ledgerDate: string;
+      lineLabel: string;
+      sessionId?: string;
+      rowIds?: string[];
+      createdByUserId?: string;
+    },
     allowedBranchIds: string[],
   ) {
     const sessionId = await this.assertOperationalSessionScope(scope, filters);

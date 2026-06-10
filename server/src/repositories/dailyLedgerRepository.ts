@@ -297,6 +297,8 @@ export interface DailyLedgerRowListFilters {
   vehicleId?: string;
   includeLoaded?: boolean;
   onlyWithData?: boolean;
+  /** عند مدخل البيانات: يُقيّد العرض بأسطر هذا المستخدم فقط */
+  createdByUserId?: string;
   q?: string;
   limit: number;
   offset: number;
@@ -329,6 +331,8 @@ export interface DailyLedgerUpsertInput {
   userId?: string;
   /** عند التعديل: تحديث السطر الموجود مباشرة دون إنشاء جلسة/سطر جديد */
   rowId?: string;
+  /** عند مدخل البيانات: يُسمح بتعديل أسطر هذا المستخدم فقط */
+  restrictToCreatedByUserId?: string;
 }
 
 export class DailyLedgerRepository {
@@ -367,6 +371,10 @@ export class DailyLedgerRepository {
     if (filters.vehicleId) {
       values.push(filters.vehicleId);
       conditions.push(`s.vehicle_id = $${values.length}::uuid`);
+    }
+    if (filters.createdByUserId) {
+      values.push(filters.createdByUserId);
+      conditions.push(`r.created_by = $${values.length}::uuid`);
     }
     if (!filters.includeLoaded) {
       conditions.push('r.loaded_at is null');
@@ -599,6 +607,7 @@ export class DailyLedgerRepository {
             and b.company_id = $2
             and s.branch_id = $17
             and r.loaded_at is null
+            and ($18::uuid is null or r.created_by = $18::uuid)
           returning
             r.*,
             s.branch_id,
@@ -629,12 +638,15 @@ export class DailyLedgerRepository {
             input.notes ?? null,
             input.userId ?? scope.userId ?? null,
             input.branchId,
+            input.restrictToCreatedByUserId ?? null,
           ],
         );
         if (!updated.rows.length) {
           throw new HttpError(
             409,
-            'تعذر تحديث السطر — ربما تم تحميله على بيان أو لا ينتمي للفرع المحدد.',
+            input.restrictToCreatedByUserId
+              ? 'تعذر تحديث السطر — لا يمكنك تعديل إدخال موظف آخر.'
+              : 'تعذر تحديث السطر — ربما تم تحميله على بيان أو لا ينتمي للفرع المحدد.',
           );
         }
         await markSessionReprintIfPrinted(client, updated.rows[0].session_id, 'تعديل سطر بعد الطباعة');
@@ -699,6 +711,7 @@ export class DailyLedgerRepository {
           notes = excluded.notes,
           updated_by = excluded.updated_by,
           updated_at = now()
+        where $26::uuid is null or daily_ledger_rows.created_by = $26::uuid
         returning
           daily_ledger_rows.*,
           $17::uuid as branch_id,
@@ -737,8 +750,13 @@ export class DailyLedgerRepository {
           session.driver_label,
           session.driver_id,
           session.vehicle_id,
+          input.restrictToCreatedByUserId ?? null,
         ],
       );
+
+      if (!row.rows.length && input.restrictToCreatedByUserId) {
+        throw new HttpError(409, 'تعذر حفظ السطر — رقم السطر محجوز بإدخال موظف آخر.');
+      }
 
       await markSessionReprintIfPrinted(client, sessionId, 'إضافة/تعديل سطر بعد الطباعة');
       await client.query('commit');
@@ -816,7 +834,7 @@ export class DailyLedgerRepository {
 
   async deleteRows(
     scope: DataScope,
-    input: { rowIds: string[]; userId?: string },
+    input: { rowIds: string[]; userId?: string; createdByUserId?: string },
     allowedBranchIds: string[],
   ): Promise<{ deletedIds: string[]; blockedIds: string[] }> {
     if (!scope.companyId) {
@@ -845,9 +863,16 @@ export class DailyLedgerRepository {
           coalesce(array_length($4::uuid[], 1), 0) = 0
           or s.branch_id = any($4::uuid[])
         )
+        and ($5::uuid is null or r.created_by = $5::uuid)
       returning r.id
       `,
-      [input.rowIds, input.userId ?? scope.userId ?? null, scope.companyId, allowedBranchIds ?? []],
+      [
+        input.rowIds,
+        input.userId ?? scope.userId ?? null,
+        scope.companyId,
+        allowedBranchIds ?? [],
+        input.createdByUserId ?? null,
+      ],
     );
 
     const deletedIds = result.rows.map((row) => row.id);
