@@ -20,15 +20,15 @@ export function companyPrintHeaderStyles(): string {
     .company-print-header {
       display: flex;
       align-items: center;
-      gap: 14px;
-      margin-bottom: 12px;
-      padding-bottom: 10px;
+      gap: 10px;
+      margin-bottom: 10px;
+      padding-bottom: 8px;
       border-bottom: 2px solid #1e3a34;
       page-break-inside: avoid;
     }
     .company-print-logo {
-      width: 92px;
-      height: 92px;
+      width: 184px;
+      height: 184px;
       object-fit: contain;
       flex-shrink: 0;
     }
@@ -36,14 +36,15 @@ export function companyPrintHeaderStyles(): string {
       flex: 1;
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 6px 12px;
-      font-size: 13px;
+      gap: 4px 8px;
+      font-size: 11px;
+      min-width: 0;
     }
     .company-print-field {
       border: 1px solid #c5d0dc;
-      padding: 5px 8px;
+      padding: 3px 6px;
       background: #f8fafc;
-      line-height: 1.35;
+      line-height: 1.25;
     }
     .company-print-field strong {
       font-weight: 800;

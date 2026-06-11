@@ -10,12 +10,6 @@ sudo systemctl reload nginx
 
 
 
-
-
-
-
-
-
 cd ~/abooerp
 git diff package.json          # اختياري: شوف الفرق
 git checkout -- package.json   # تجاهل التعديل المحلي
