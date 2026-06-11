@@ -1298,6 +1298,22 @@ body {
   background: #f8fafc;
 }
 
+.quick-ledger-stat-filter {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #eff6ff;
+  border-bottom: 1px solid #bfdbfe;
+  color: #1e40af;
+  font-size: 13px;
+}
+
+.quick-ledger-stat-filter strong {
+  font-weight: 800;
+}
+
 .quick-ledger-backdate-banner {
   background: #eff6ff;
   border: 1px solid #93c5fd;

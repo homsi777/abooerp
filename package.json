@@ -30,6 +30,7 @@
     "server:activate-license": "node server/scripts/activateProductionLicense.cjs",
     "server:verify-ledger-operators": "node server/scripts/verifyDailyLedgerOperatorScope.cjs",
     "test:daily-ledger-helpers": "tsx src/lib/shipping/dailyLedgerHelpers.selftest.ts",
+    "test:daily-ledger-row-filter": "tsx src/lib/shipping/dailyLedgerRowFilter.selftest.ts",
     "test:daily-ledger-access": "tsx server/src/utils/dailyLedgerAccess.selftest.ts",
     "server:inspect-driver": "node server/scripts/inspectDriverLedger.cjs",
     "server:assign-driver-session": "node server/scripts/assignDriverToOrphanSession.cjs",

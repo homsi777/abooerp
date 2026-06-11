@@ -48,6 +48,13 @@ import {
   sortDailyLedgerRows,
 } from '../lib/shipping/dailyLedgerPrintable';
 import { computeTotalsFromRemoteRows, formatUsdAmount } from '../lib/shipping/dailyLedgerTotals';
+import {
+  filterLocalRowsBySearch,
+  prepareLedgerOutputRows,
+  filterRemoteRowsBySearch,
+  sortRemoteRowsChronological,
+  uniqueDestinationsFromRows,
+} from '../lib/shipping/dailyLedgerRowFilter';
 import type { DailyLedgerEditingScope, RemoteDailyLedgerRow } from '../lib/shipping/dailyLedgerTypes';
 import {
   mergeLedgerRowWithAutoTariff,
@@ -347,59 +354,6 @@ function nextServerRowNoForDriver(rows: LedgerRow[], driverId: number) {
     .filter((r) => r.sessionDriverId === driverId && r.serverRowNo)
     .map((r) => r.serverRowNo as number);
   return nums.length ? Math.max(...nums) + 1 : 1;
-}
-
-function remoteRowMatchesDriver(
-  remote: RemoteDailyLedgerRow,
-  filters: { driverBackendId?: string; driverName?: string },
-) {
-  if (filters.driverBackendId && remote.driver_id === filters.driverBackendId) return true;
-  const driverLabel = normalizeName(remote.driver_label ?? '');
-  if (!driverLabel) return false;
-  if (!filters.driverName) return false;
-  const driverName = normalizeName(filters.driverName);
-  return (
-    driverLabel === driverName || driverLabel.includes(driverName) || driverName.includes(driverLabel)
-  );
-}
-
-function ledgerRowSearchFields(row: LedgerRow): string[] {
-  return [
-    row.receiptNo,
-    row.origin,
-    row.destination,
-    row.parcelType,
-    row.sender,
-    row.receiver,
-    row.notes,
-    row.agentName ?? '',
-    String(row.agentId ?? ''),
-  ];
-}
-
-function remoteRowSearchFields(row: RemoteDailyLedgerRow): string[] {
-  return [
-    row.receipt_no ?? '',
-    row.origin_label ?? '',
-    row.line_label ?? '',
-    row.destination ?? '',
-    row.parcel_type ?? '',
-    row.sender_name ?? '',
-    row.receiver_name ?? '',
-    row.notes ?? '',
-    row.driver_label ?? '',
-    row.vehicle_label ?? '',
-  ];
-}
-
-/** نفس منطق «بحث سريع داخل الدفتر» — يُستخدم للعرض والطباعة */
-function matchesQuickLedgerSearch(
-  searchQuery: string,
-  fields: Array<string | number | null | undefined>,
-): boolean {
-  const q = normalizeName(searchQuery).toLowerCase();
-  if (!q) return true;
-  return fields.some((field) => String(field ?? '').toLowerCase().includes(q));
 }
 
 function printHtmlInBrowser(html: string) {
@@ -716,7 +670,6 @@ export default function ShipmentQuickLedger() {
   const [printScope, setPrintScope] = useState<'driver' | 'date' | 'agent' | 'session'>('date');
   const [printDestinationFilter, setPrintDestinationFilter] = useState('');
   /** افتراضي: الطباعة تمثل نطاق التاريخ+الخط كاملاً وليس نتائج البحث */
-  const [printApplySearchResults, setPrintApplySearchResults] = useState(false);
   /** افتراضي: نفس خط الشاشة — عند التفعيل فقط تُطبَع كل خطوط الفرع */
   const [printAllLines, setPrintAllLines] = useState(false);
   const [reprintRequired, setReprintRequired] = useState(false);
@@ -827,9 +780,8 @@ export default function ShipmentQuickLedger() {
     if (activeSessionId) {
       displayable = displayable.filter((row) => row.sessionId === activeSessionId || !row.dbId);
     }
-    if (!normalizeName(searchQuick)) return displayable;
-    return displayable.filter((row) => matchesQuickLedgerSearch(searchQuick, ledgerRowSearchFields(row)));
-  }, [rows, searchQuick, activeSessionId]);
+    return filterLocalRowsBySearch(displayable, searchQuick, catalogAgents);
+  }, [rows, searchQuick, activeSessionId, catalogAgents]);
 
   const deletableVisibleRows = useMemo(
     () => visibleRows.filter(isRowDeletable),
@@ -1048,11 +1000,13 @@ export default function ShipmentQuickLedger() {
       ? remoteRowsRaw.filter((row) => row.session_id === activeSessionId)
       : remoteRowsRaw;
     const printable = filterPrintableDailyLedgerRows(scopedRemote);
-    const totals = computeTotalsFromRemoteRows(printable);
+    const filteredRemote = filterRemoteRowsBySearch(printable, searchQuick, catalogAgents);
+    const totals = computeTotalsFromRemoteRows(filteredRemote);
     const scopedLocalRows = activeSessionId
       ? rows.filter((row) => rowInActiveSessionScope(row, activeSessionId))
       : rows;
     const completeRows = scopedLocalRows.filter((row) => isRowComplete(row) && !row.postedShipmentId);
+    const searchActive = Boolean(normalizeName(searchQuick));
     return {
       rowCount: totals.rowCount,
       collectionUsd: totals.collectionUsd,
@@ -1061,9 +1015,11 @@ export default function ShipmentQuickLedger() {
       transferFeeUsd: totals.transferServiceFeeUsd,
       totalWeightKg: totals.weightKg,
       complete: completeRows.length,
-      saved: printable.filter((row) => Boolean(row.posted_shipment_id)).length,
+      saved: filteredRemote.filter((row) => Boolean(row.posted_shipment_id)).length,
+      searchActive,
+      searchLabel: searchActive ? searchQuick.trim() : '',
     };
-  }, [remoteRowsRaw, activeSessionId, rows]);
+  }, [remoteRowsRaw, activeSessionId, rows, searchQuick, catalogAgents]);
 
   const rowsRef = useRef(rows);
   const customersRef = useRef(customers);
@@ -2128,12 +2084,14 @@ export default function ShipmentQuickLedger() {
     setPrintDriverId(trip.driverId || 0);
     setPrintDateFrom(trip.date);
     setPrintDateTo(trip.date);
-    setPrintApplySearchResults(false);
+    if (normalizeName(searchQuick) && !printDestinationFilter) {
+      setPrintDestinationFilter(searchQuick.trim());
+    }
     const managerWideView =
       canViewAllLedgerEntriesRef.current &&
       (ledgerBranchModeRef.current === 'all' || !activeBranchIdRef.current);
     setPrintAllLines(managerWideView || canViewAllLedgerEntriesRef.current);
-    setPrintScope(scope ?? (managerWideView || canViewAllLedgerEntriesRef.current ? 'date' : 'driver'));
+    setPrintScope(scope ?? 'date');
     setPrintDialogOpen(true);
   };
 
@@ -2161,19 +2119,17 @@ export default function ShipmentQuickLedger() {
         branchId || '',
         ledgerDate,
         tripRef.current.line || '',
-        true,
+        includeLoaded,
         {
           managerViewAllBranches: viewAllBranches,
           allLines: viewAllBranches || !lineLabel,
         },
       );
-      const printableRows = sortDailyLedgerRows(await fetchAllDailyLedgerRows(queryScope));
+      const fetched = await fetchAllDailyLedgerRows(queryScope);
+      const searchFiltered = filterRemoteRowsBySearch(fetched, searchQuick, catalogAgents);
+      const printableRows = sortRemoteRowsChronological(searchFiltered);
       setDestinationPdfRows(printableRows);
-      const nextDestinations = [...new Set(
-        printableRows
-          .map((row) => normalizeName(row.destination ?? ''))
-          .filter(Boolean),
-      )].sort((a, b) => a.localeCompare(b, 'ar'));
+      const nextDestinations = uniqueDestinationsFromRows(printableRows);
       setDestinationPdfSelected(nextDestinations);
       const groupedDrivers = new Map<string, { backendId: string | null; label: string; rowsCount: number }>();
       for (const row of printableRows) {
@@ -2524,7 +2480,7 @@ export default function ShipmentQuickLedger() {
       branchId || '',
       printDateFrom,
       tripRef.current.line || screenLine,
-      true,
+      includeLoaded,
       {
         managerViewAllBranches: viewAllBranches,
         allLines: allowAllLines,
@@ -2532,23 +2488,16 @@ export default function ShipmentQuickLedger() {
       },
     );
     const data = await fetchAllDailyLedgerRows(queryScope);
-    const activeSearch = printApplySearchResults ? searchQuick.trim() : '';
-    const rows = sortDailyLedgerRows(
-      data.filter((row) => {
-        if (activeSearch && !matchesQuickLedgerSearch(activeSearch, remoteRowSearchFields(row))) return false;
-        if (printScope === 'driver') {
-          return remoteRowMatchesDriver(row, { driverBackendId, driverName: selectedDriver?.name });
-        }
-        if (printScope === 'agent') {
-          const dest = normalizeName(row.destination ?? '').toLowerCase();
-          return dest.includes(destinationFilter);
-        }
-        if (printScope === 'session') {
-          return row.session_id === activeSessionId;
-        }
-        return true;
-      }),
-    );
+    const activeSearch = searchQuick.trim();
+    const rows = prepareLedgerOutputRows(data, {
+      printScope,
+      searchQuery: activeSearch,
+      agents: catalogAgents,
+      activeSessionId: printScope === 'session' ? activeSessionId : null,
+      destinationFilter: printScope === 'agent' ? printDestinationFilter : undefined,
+      driverBackendId,
+      driverName: selectedDriver?.name,
+    });
 
     if (!rows.length) {
       showToast('لا توجد أسطر مطابقة لمعايير الطباعة', 'info');
@@ -3517,7 +3466,13 @@ export default function ShipmentQuickLedger() {
       </section>
 
       <section className="quick-ledger-stats">
-        <div><strong>{stats.rowCount}</strong><span>عدد الأسطر</span></div>
+        {stats.searchActive && (
+          <div className="quick-ledger-stat-filter">
+            <strong>محصلات البحث</strong>
+            <span>«{stats.searchLabel}»</span>
+          </div>
+        )}
+        <div><strong>{stats.rowCount}</strong><span>{stats.searchActive ? 'أسطر البحث' : 'عدد الأسطر'}</span></div>
         <div><strong>USD {formatUsdAmount(stats.collectionUsd)}</strong><span>التحصيل</span></div>
         <div><strong>USD {formatUsdAmount(stats.prepaidUsd)}</strong><span>دفع مسبق</span></div>
         <div><strong>USD {formatUsdAmount(stats.hawalaUsd)}</strong><span>حوالة</span></div>
@@ -3979,9 +3934,16 @@ export default function ShipmentQuickLedger() {
                 </>
               ) : (
                 <>
-                  الطباعة الافتراضية: التاريخ + {printAllLines ? 'كل الخطوط' : `خط المصدر (${trip.line || '—'})`}،
-                  دون تأثير البحث السريع.
+                  الطباعة الافتراضية: التاريخ + {printAllLines ? 'كل الخطوط' : `خط المصدر (${trip.line || '—'})`}.
                 </>
+              )}
+              {searchQuick.trim() ? (
+                <>
+                  {' '}
+                  البحث النشط <strong>«{searchQuick.trim()}»</strong> — ستُطبع وتُحسب محصلاته فقط.
+                </>
+              ) : (
+                ' يمكنك اختيار نطاق السائق أو الجهة عند الحاجة.'
               )}
             </p>
             <div className="quick-ledger-print-form space-y-3 mb-3">
@@ -4049,15 +4011,6 @@ export default function ShipmentQuickLedger() {
               <label className="quick-ledger-print-toggle block">
                 <input
                   type="checkbox"
-                  checked={printApplySearchResults}
-                  onChange={(e) => setPrintApplySearchResults(e.target.checked)}
-                />
-                طباعة نتائج البحث السريع فقط
-                {searchQuick.trim() ? ` («${searchQuick.trim()}»)` : ' (البحث فارغ)'}
-              </label>
-              <label className="quick-ledger-print-toggle block">
-                <input
-                  type="checkbox"
                   checked={printAllLines}
                   onChange={(e) => setPrintAllLines(e.target.checked)}
                 />
@@ -4095,6 +4048,12 @@ export default function ShipmentQuickLedger() {
             <h3>تصدير PDF حسب الوجهة</h3>
             <p>
               يعرض نفس الوجهات الموجودة في دفتر الشحن للتاريخ المحدد، ويصدر ملف PDF مستقل لكل وجهة محددة.
+              {searchQuick.trim() ? (
+                <>
+                  {' '}
+                  البحث النشط <strong>«{searchQuick.trim()}»</strong> — تُعرض وجهاته وأسطره فقط.
+                </>
+              ) : null}
             </p>
             <div className="quick-ledger-print-form space-y-3 mb-3">
               <label className="form-group block">
