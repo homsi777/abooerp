@@ -12,6 +12,7 @@ import {
   Search,
   Trash2,
   Truck,
+  X,
 } from 'lucide-react';
 import {
   buildMahmoudPreprintedReceiptHtml,
@@ -2253,6 +2254,14 @@ export default function ShipmentQuickLedger() {
     }
   };
 
+  /** الخروج من عرض الإرسالية النشطة إلى وضع «الكل» دون حذف أي بيانات */
+  const cancelActiveSession = async () => {
+    if (!activeSessionId || sessionSwitching) return;
+    if (transferMode) exitTransferMode();
+    if (deleteMode) exitDeleteMode();
+    await selectSession(null);
+  };
+
   const enterTransferMode = () => {
     setDeleteMode(false);
     setSelectedDeleteRowIds([]);
@@ -3352,6 +3361,17 @@ export default function ShipmentQuickLedger() {
               تصدير PDF
             </button>
           ) : null}
+          {activeSessionId && !transferMode && !deleteMode ? (
+            <button
+              type="button"
+              onClick={() => void cancelActiveSession()}
+              disabled={sessionSwitching}
+              title="العودة إلى عرض كل إرساليات اليوم دون حذف البيانات"
+            >
+              <X size={16} />
+              إلغاء إرسالية
+            </button>
+          ) : null}
           {canLedgerTransfer ? (
             transferMode ? (
               <>
@@ -3584,6 +3604,15 @@ export default function ShipmentQuickLedger() {
               title="طباعة الإرسالية الحالية فقط"
             >
               <Printer size={14} /> طباعة الإرسالية الحالية
+            </button>
+            <button
+              type="button"
+              className="quick-ledger-session-cancel-btn"
+              onClick={() => void cancelActiveSession()}
+              disabled={sessionSwitching}
+              title="العودة إلى عرض «الكل» دون حذف البيانات"
+            >
+              <X size={14} /> إلغاء إرسالية
             </button>
           </div>
         )}

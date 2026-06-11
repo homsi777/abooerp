@@ -1483,6 +1483,31 @@ body {
   color: #fff;
 }
 
+.quick-ledger-session-cancel-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid #94a3b8;
+  background: #fff;
+  color: #475569;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.quick-ledger-session-cancel-btn:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #64748b;
+  color: #334155;
+}
+
+.quick-ledger-session-cancel-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .quick-ledger-transfer-bar {
   background: #eef6ff;
   border: 1px solid #bcd6f5;
