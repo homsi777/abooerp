@@ -546,6 +546,27 @@ export function createFinanceRouter(service: FinanceService) {
     }),
   );
 
+  router.post(
+    '/cashboxes/sync',
+    requireAnyPermissions(['finance.read', 'finance.write', 'finance.view']),
+    requirePermissions(['finance.cashboxes.manage']),
+    asyncHandler(async (req, res) => {
+      const scope = parseDataScope(req);
+      if (!scope.companyId) {
+        res.status(400).json({ success: false, error: 'لا يمكن المزامنة بدون نطاق شركة.' });
+        return;
+      }
+      const stats = await service.syncCompanyCashboxes(scope.companyId);
+      auditService.logAsync({
+        req,
+        action: 'CASHBOXES_SYNCED',
+        entityType: 'cashbox',
+        metadata: stats,
+      });
+      res.json({ success: true, data: stats });
+    }),
+  );
+
   router.get(
     '/cashboxes/:id',
     requireAnyPermissions(['finance.read', 'finance.write', 'finance.view']),

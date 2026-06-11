@@ -434,9 +434,35 @@ export class FinanceRepository {
         c.*,
         b.name as branch_name,
         a.name as agent_name,
+        a.governorate as agent_governorate,
         u.username as created_by_username,
         pc.name as parent_cashbox_name,
-        pc.code as parent_cashbox_code
+        pc.code as parent_cashbox_code,
+        coalesce((
+          select count(*)::int
+          from cashbox_transactions ct
+          where ct.cashbox_id = c.id
+        ), 0) as transaction_count,
+        case
+          when c.type = 'AGENT' and c.agent_id is not null then (
+            select count(*)::int
+            from shipments s
+            where s.agent_id = c.agent_id and s.deleted_at is null
+          )
+          else null
+        end as agent_shipment_count,
+        case
+          when c.type = 'AGENT' and c.agent_id is not null then (
+            select
+              coalesce(sum(case when pfm.direction in ('inflow', 'debit') then pfm.base_amount_usd else 0 end), 0)
+              - coalesce(sum(case when pfm.direction in ('outflow', 'credit') then pfm.base_amount_usd else 0 end), 0)
+            from party_financial_movements pfm
+            where pfm.party_type = 'agent'
+              and pfm.party_id::uuid = c.agent_id
+              and pfm.is_reversal = false
+          )
+          else null
+        end as agent_operational_net_usd
       from cashboxes c
       left join branches b on b.id = c.branch_id
       left join agents a on a.id = c.agent_id
@@ -537,6 +563,228 @@ export class FinanceRepository {
       [companyId, agentId],
     );
     return r.rows[0] ?? null;
+  }
+
+  /** إنشاء صناديق USD لكل وكيل نشط بلا صندوق AGENT */
+  async backfillMissingAgentCashboxes(companyId: string): Promise<number> {
+    const r = await pool.query<{ count: number }>(
+      `
+      with general as (
+        select distinct on (company_id)
+          company_id,
+          id as general_id
+        from cashboxes
+        where company_id = $1::uuid
+          and type = 'COMPANY'
+          and currency_code = 'USD'
+          and is_active = true
+        order by
+          company_id,
+          case when code = 'CASH-GENERAL-USD' then 0 else 1 end,
+          created_at
+      ),
+      ranked as (
+        select
+          a.id,
+          row_number() over (
+            partition by coalesce(a.governorate, a.name)
+            order by
+              (select count(*) from shipments s where s.agent_id = a.id and s.deleted_at is null) desc,
+              case when a.code like 'AGT-%' then 1 else 0 end,
+              a.created_at asc
+          ) as rn
+        from agents a
+        join branches b on b.id = a.branch_id
+        where b.company_id = $1::uuid and a.is_active = true
+      ),
+      ins as (
+        insert into cashboxes (
+          company_id, branch_id, agent_id,
+          code, name, type,
+          currency_code, opening_balance, current_balance,
+          is_active, notes, parent_cashbox_id, created_at, updated_at
+        )
+        select
+          b.company_id,
+          a.branch_id,
+          a.id,
+          'CASH-AG-' || upper(replace(replace(a.code, '-', ''), ' ', '')) || '-USD',
+          'صندوق ' || a.name,
+          'AGENT',
+          'USD',
+          0,
+          0,
+          true,
+          'أُنشئ تلقائياً — مزامنة صناديق الوكلاء',
+          g.general_id,
+          now(),
+          now()
+        from agents a
+        join branches b on b.id = a.branch_id
+        join general g on g.company_id = b.company_id
+        join ranked r on r.id = a.id and r.rn = 1
+        where b.company_id = $1::uuid
+          and a.is_active = true
+          and a.branch_id is not null
+          and not exists (
+            select 1 from cashboxes x
+            where x.agent_id = a.id and x.type = 'AGENT'
+          )
+        on conflict (company_id, code) do nothing
+        returning 1
+      )
+      select count(*)::int as count from ins
+      `,
+      [companyId],
+    );
+    return r.rows[0]?.count ?? 0;
+  }
+
+  /**
+   * عند وجود وكيل مكرر لنفس المحافظة: نقل الصندوق إلى الوكيل التشغيلي
+   * (أكثر شحنات، وتفضيل الكود غير AGT-*).
+   */
+  async reassignAgentCashboxesToCanonical(companyId: string): Promise<number> {
+    const r = await pool.query<{ count: number }>(
+      `
+      with ranked as (
+        select
+          a.id,
+          coalesce(a.governorate, a.name) as gov_key,
+          row_number() over (
+            partition by coalesce(a.governorate, a.name)
+            order by
+              (select count(*) from shipments s where s.agent_id = a.id and s.deleted_at is null) desc,
+              case when a.code like 'AGT-%' then 1 else 0 end,
+              a.created_at asc
+          ) as rn
+        from agents a
+        join branches b on b.id = a.branch_id
+        where b.company_id = $1::uuid and a.is_active = true
+      ),
+      canonical as (
+        select id, gov_key from ranked where rn = 1
+      ),
+      moved as (
+        update cashboxes cb
+        set
+          agent_id = c.id,
+          updated_at = now()
+        from agents a
+        join branches b on b.id = a.branch_id
+        join canonical c on c.gov_key = coalesce(a.governorate, a.name)
+        where b.company_id = $1::uuid
+          and cb.type = 'AGENT'
+          and cb.agent_id = a.id
+          and a.id <> c.id
+          and not exists (
+            select 1 from cashboxes x
+            where x.agent_id = c.id and x.type = 'AGENT' and x.id <> cb.id
+          )
+        returning 1
+      )
+      select count(*)::int as count from moved
+      `,
+      [companyId],
+    );
+    return r.rows[0]?.count ?? 0;
+  }
+
+  /** ربط صناديق الوكلاء وفرع حلب بالصندوق العام إن لم يكن الربط موجوداً */
+  async linkChildCashboxesToGeneral(companyId: string): Promise<number> {
+    const r = await pool.query<{ count: number }>(
+      `
+      with general as (
+        select id
+        from cashboxes
+        where company_id = $1::uuid
+          and type = 'COMPANY'
+          and currency_code = 'USD'
+          and is_active = true
+        order by case when code = 'CASH-GENERAL-USD' then 0 else 1 end, created_at
+        limit 1
+      ),
+      linked as (
+        update cashboxes cb
+        set parent_cashbox_id = g.id, updated_at = now()
+        from general g
+        where cb.company_id = $1::uuid
+          and cb.parent_cashbox_id is null
+          and (
+            cb.type = 'AGENT'
+            or (
+              cb.type = 'BRANCH'
+              and exists (
+                select 1 from branches br
+                where br.id = cb.branch_id and br.code = 'BR-ALEPPO'
+              )
+            )
+          )
+        returning 1
+      )
+      select count(*)::int as count from linked
+      `,
+      [companyId],
+    );
+    return r.rows[0]?.count ?? 0;
+  }
+
+  /** إعادة حساب current_balance من الحركات النقدية الفعلية */
+  async reconcileCashboxBalances(companyId: string): Promise<number> {
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      await client.query(
+        `
+        update cashboxes cb
+        set current_balance = cb.opening_balance, updated_at = now()
+        where cb.company_id = $1::uuid
+          and not exists (select 1 from cashbox_transactions ct where ct.cashbox_id = cb.id)
+        `,
+        [companyId],
+      );
+      const r = await client.query<{ count: number }>(
+        `
+        with nets as (
+          select
+            ct.cashbox_id,
+            sum(
+              case when ct.transaction_type = 'inflow' then ct.original_amount else -ct.original_amount end
+            )::numeric as net
+          from cashbox_transactions ct
+          join cashboxes cb on cb.id = ct.cashbox_id
+          where cb.company_id = $1::uuid
+          group by ct.cashbox_id
+        ),
+        updated as (
+          update cashboxes cb
+          set
+            current_balance = cb.opening_balance + coalesce(n.net, 0),
+            updated_at = now()
+          from nets n
+          where cb.id = n.cashbox_id
+          returning 1
+        )
+        select count(*)::int as count from updated
+        `,
+        [companyId],
+      );
+      await client.query('commit');
+      return r.rows[0]?.count ?? 0;
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async syncCompanyCashboxes(companyId: string) {
+    const created = await this.backfillMissingAgentCashboxes(companyId);
+    const reassigned = await this.reassignAgentCashboxesToCanonical(companyId);
+    const linked = await this.linkChildCashboxesToGeneral(companyId);
+    const balancesReconciled = await this.reconcileCashboxBalances(companyId);
+    return { created, reassigned, linked, balancesReconciled };
   }
 
   async createCashbox(input: CashboxInput) {

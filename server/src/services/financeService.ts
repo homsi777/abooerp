@@ -381,7 +381,14 @@ export class FinanceService {
     return this.repository.listCashboxTransactions(scope);
   }
 
-  listCashboxes(scope?: DataScope, filters?: CashboxListFilters) {
+  async syncCompanyCashboxes(companyId: string) {
+    return this.repository.syncCompanyCashboxes(companyId);
+  }
+
+  async listCashboxes(scope?: DataScope, filters?: CashboxListFilters) {
+    if (scope?.companyId) {
+      await this.repository.syncCompanyCashboxes(scope.companyId);
+    }
     return this.repository.listCashboxes(scope, filters);
   }
 

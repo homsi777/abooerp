@@ -46,6 +46,17 @@ export type BackendCashboxRecord = {
   parent_cashbox_id?: string | null;
   parent_cashbox_name?: string | null;
   parent_cashbox_code?: string | null;
+  agent_governorate?: string | null;
+  transaction_count?: number;
+  agent_shipment_count?: number | null;
+  agent_operational_net_usd?: number | null;
+};
+
+export type CashboxSyncStats = {
+  created: number;
+  reassigned: number;
+  linked: number;
+  balancesReconciled: number;
 };
 
 export type BackendCashboxMovementRow = BackendCashboxTransaction & {
@@ -412,6 +423,9 @@ export const phase3FinanceGateway = {
   cashbox: {
     getTransactions: async (): Promise<BackendCashboxTransaction[]> => {
       return httpClient.get<BackendCashboxTransaction[]>('/cashbox-transactions');
+    },
+    sync: async (): Promise<CashboxSyncStats> => {
+      return httpClient.post<CashboxSyncStats>('/cashboxes/sync', {});
     },
     listMaster: async (query?: Record<string, string | undefined>): Promise<BackendCashboxRecord[]> => {
       const qs = new URLSearchParams();
