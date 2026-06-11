@@ -3760,7 +3760,23 @@ export default function ShipmentQuickLedger() {
                       {row.branchLabel ?? '—'}
                     </td>
                   )}
-                  <td><input className={duplicateReceiptRowIds.has(row.id) ? 'ledger-receipt-duplicate' : undefined} data-ledger-field="true" value={row.receiptNo} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'receiptNo', e.target.value)} title={rowIssue ?? (duplicateReceiptRowIds.has(row.id) ? 'رقم الإيصال مكرر' : undefined)} /></td>
+                  <td>
+                    <input
+                      className={duplicateReceiptRowIds.has(row.id) ? 'ledger-receipt-duplicate' : undefined}
+                      data-ledger-field="true"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      autoComplete="off"
+                      value={row.receiptNo}
+                      disabled={locked}
+                      onFocus={() => setActiveRowId(row.id)}
+                      onKeyDown={focusNext}
+                      onBlur={() => flushRowSave(row.id)}
+                      onChange={(e) => updateRow(row.id, 'receiptNo', e.target.value)}
+                      title={rowIssue ?? (duplicateReceiptRowIds.has(row.id) ? 'رقم الإيصال مكرر' : undefined)}
+                    />
+                  </td>
                   <td className="quick-ledger-dest-cell">
                     <input
                       list="ledger-destination-options"

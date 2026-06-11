@@ -4,9 +4,8 @@
  * Searches both quick contacts (senders_receivers) and registered customers
  * via /api/v1/parties/smart-search, showing type badges for each result.
  *
- * When the user types a name that doesn't exist and presses Enter,
- * the `onAddNew` callback fires — which should create a quick contact
- * (same as the existing behaviour), NOT a full customer.
+ * Enter accepts the typed text and moves to the next field unless the user
+ * highlighted a suggestion with ArrowUp/ArrowDown (then Enter picks that row).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -215,13 +214,9 @@ export default function SmartPartyInput({
         handleSelect(results[activeIdx]);
         return;
       }
-      if (isOpen && results.length > 0) {
-        handleSelect(results[0]);
-        return;
-      }
-      // No match — create quick contact
-      if (allowAddNew && value.trim()) {
-        setIsOpen(false);
+      setIsOpen(false);
+      // لا نختار أول اقتراح تلقائياً — الموظف يختار بالسهم ثم Enter
+      if (!results.length && allowAddNew && value.trim()) {
         onAddNew?.(value.trim());
       }
       focusNextField();
