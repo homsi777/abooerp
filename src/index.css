@@ -1593,6 +1593,30 @@ body {
   white-space: normal;
 }
 
+.quick-ledger-table th.quick-ledger-sortable-th {
+  cursor: pointer;
+  user-select: none;
+}
+
+.quick-ledger-table th.quick-ledger-sortable-th:hover {
+  background: #c8dbd6;
+}
+
+.quick-ledger-table th.quick-ledger-sortable-th.is-sorted {
+  background: #c5ddd8;
+}
+
+.quick-ledger-sortable-th-inner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.quick-ledger-sort-icon-muted {
+  opacity: 0.45;
+}
+
 .quick-ledger-table td {
   height: 34px;
   border: 1px solid #c5d0dc;

@@ -3,6 +3,8 @@ import TopMegaNavigation from '../components/navigation/TopMegaNavigation';
 import LicenseQuotaBar from '../components/layout/LicenseQuotaBar';
 import PrimaryRemoteUpdateBanner from '../components/layout/PrimaryRemoteUpdateBanner';
 import { getLanPort, getLanState, getResolvedApiBaseUrl } from '../lib/api/httpClient';
+import { phase15Gateway } from '../lib/api/phase15Gateway';
+import { getBackendIdFromSynthetic } from '../lib/api/syntheticEntityId';
 
 interface LayoutProps {
   children: ReactNode;
@@ -85,6 +87,7 @@ async function resolveServerLanInfo(): Promise<ServerLanInfo | null> {
 export default function Layout({ children, user, onLogout }: LayoutProps) {
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [serverLanInfo, setServerLanInfo] = useState<ServerLanInfo | null>(null);
+  const [branchName, setBranchName] = useState('غير محدد');
 
   useEffect(() => {
     const onConn = (ev: Event) => {
@@ -109,14 +112,33 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!user.branchId) {
+      setBranchName('غير محدد');
+      return;
+    }
+    let cancelled = false;
+    phase15Gateway.branches
+      .getAll()
+      .then((branches) => {
+        if (cancelled) return;
+        const matched = branches.find((b) => getBackendIdFromSynthetic(b.id) === user.branchId);
+        setBranchName(matched?.name?.trim() || 'غير محدد');
+      })
+      .catch(() => {
+        if (!cancelled) setBranchName('غير محدد');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user.branchId]);
+
   const today = new Date().toLocaleDateString('ar-SY', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
     day: 'numeric',
   });
-
-  const branchName = user.branchId ? `#${user.branchId.slice(0, 8)}` : 'غير محدد';
 
   return (
     <div className="app-container" dir="rtl">

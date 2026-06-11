@@ -1,6 +1,18 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { HelpCircle, Plus, Printer, Save, ScrollText, Search, Trash2, Truck } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  HelpCircle,
+  Plus,
+  Printer,
+  Save,
+  ScrollText,
+  Search,
+  Trash2,
+  Truck,
+} from 'lucide-react';
 import {
   buildMahmoudPreprintedReceiptHtml,
   mapRemoteLedgerRowToMahmoudReceipt,
@@ -751,6 +763,7 @@ export default function ShipmentQuickLedger() {
     vehicleId: 0,
   });
   const [searchQuick, setSearchQuick] = useState('');
+  const [destinationSort, setDestinationSort] = useState<'none' | 'asc' | 'desc'>('none');
 
   const destinations = useMemo(
     () => (cities.length ? cities.map((city) => city.name) : fallbackDestinations),
@@ -780,6 +793,14 @@ export default function ShipmentQuickLedger() {
     applyTripOriginToRows(trip.line);
   }, [branches.length, cities.length, trip.line]);
 
+  const cycleDestinationSort = () => {
+    setDestinationSort((prev) => {
+      if (prev === 'none') return 'asc';
+      if (prev === 'asc') return 'desc';
+      return 'none';
+    });
+  };
+
   const visibleRows = useMemo(() => {
     const blankNewEntries = rows.filter((row) => !row.dbId && !row.loadedAt && !isRowStarted(row));
     const trailingBlank = blankNewEntries.length ? blankNewEntries[blankNewEntries.length - 1] : null;
@@ -790,8 +811,19 @@ export default function ShipmentQuickLedger() {
     if (activeSessionId) {
       displayable = displayable.filter((row) => row.sessionId === activeSessionId || !row.dbId);
     }
-    return filterLocalRowsBySearch(displayable, searchQuick, catalogAgents);
-  }, [rows, searchQuick, activeSessionId, catalogAgents]);
+    const filtered = filterLocalRowsBySearch(displayable, searchQuick, catalogAgents);
+    if (destinationSort === 'none') return filtered;
+    const factor = destinationSort === 'asc' ? 1 : -1;
+    return [...filtered]
+      .map((row, index) => ({ row, index }))
+      .sort((a, b) => {
+        const cmp = String(a.row.destination ?? '')
+          .trim()
+          .localeCompare(String(b.row.destination ?? '').trim(), 'ar');
+        return cmp !== 0 ? cmp * factor : a.index - b.index;
+      })
+      .map(({ row }) => row);
+  }, [rows, searchQuick, activeSessionId, catalogAgents, destinationSort]);
 
   const deletableVisibleRows = useMemo(
     () => visibleRows.filter(isRowDeletable),
@@ -1275,6 +1307,7 @@ export default function ShipmentQuickLedger() {
       if (generation !== loadGenerationRef.current) return;
 
       setActiveSessionId(null);
+      setDestinationSort('none');
       setRemoteRowsRaw([]);
       setRemoteSyncedCount(0);
 
@@ -3639,7 +3672,35 @@ export default function ShipmentQuickLedger() {
                 </th>
               )}
               <th>رقم الإيصال</th>
-              <th>الجهة</th>
+              <th
+                className={`quick-ledger-sortable-th${destinationSort !== 'none' ? ' is-sorted' : ''}`}
+                onClick={cycleDestinationSort}
+                title={
+                  destinationSort === 'none'
+                    ? 'ترتيب تصاعدي حسب الجهة'
+                    : destinationSort === 'asc'
+                      ? 'ترتيب تنازلي حسب الجهة'
+                      : 'إلغاء الترتيب — العودة للترتيب الأصلي'
+                }
+                aria-sort={
+                  destinationSort === 'none'
+                    ? 'none'
+                    : destinationSort === 'asc'
+                      ? 'ascending'
+                      : 'descending'
+                }
+              >
+                <span className="quick-ledger-sortable-th-inner">
+                  الجهة
+                  {destinationSort === 'asc' ? (
+                    <ArrowUp size={14} aria-hidden />
+                  ) : destinationSort === 'desc' ? (
+                    <ArrowDown size={14} aria-hidden />
+                  ) : (
+                    <ArrowUpDown size={14} aria-hidden className="quick-ledger-sort-icon-muted" />
+                  )}
+                </span>
+              </th>
               <th className="col-parcel-type">نوع الطرود</th>
               <th className="col-parcel-count">عدد الطرود</th>
               <th>الوزن كغ</th>
