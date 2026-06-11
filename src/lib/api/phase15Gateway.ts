@@ -394,7 +394,7 @@ export const phase15Gateway = {
       return mapCity(created);
     },
     update: async (id: number, data: Partial<City>): Promise<City> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing city mapping for backend update.');
       }
@@ -407,7 +407,7 @@ export const phase15Gateway = {
       return mapCity(updated);
     },
     delete: async (id: number): Promise<void> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing city mapping for backend delete.');
       }
@@ -429,7 +429,7 @@ export const phase15Gateway = {
       return mapGoodsType(created);
     },
     update: async (id: number, data: Partial<GoodsType>): Promise<GoodsType> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing goods type mapping for backend update.');
       }
@@ -441,7 +441,7 @@ export const phase15Gateway = {
       return mapGoodsType(updated);
     },
     delete: async (id: number): Promise<void> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing goods type mapping for backend delete.');
       }
@@ -461,7 +461,7 @@ export const phase15Gateway = {
       isActive: boolean;
     }>> => {
       const params = new URLSearchParams({ destination });
-      const branchBackendId = branchId ? toBackendId(branchId) : undefined;
+      const branchBackendId = branchId ? getBackendIdFromSynthetic(branchId) : undefined;
       if (branchBackendId) params.set('branchId', branchBackendId);
       const rows = await httpClient.get<BackendAgentRecord[]>(`/agents/lookup-by-destination?${params.toString()}`);
       return rows.map((row) => ({
@@ -485,9 +485,9 @@ export const phase15Gateway = {
     },
     create: async (data: Partial<Tariff>): Promise<Tariff> => {
       await Promise.all([phase15Gateway.cities.getAll(), phase15Gateway.goodsTypes.getAll()]);
-      const fromCityBackendId = data.fromCityId ? toBackendId(data.fromCityId) : undefined;
-      const toCityBackendId = data.toCityId ? toBackendId(data.toCityId) : undefined;
-      const goodsTypeBackendId = data.goodsTypeId ? toBackendId(data.goodsTypeId) : undefined;
+      const fromCityBackendId = data.fromCityId ? getBackendIdFromSynthetic(data.fromCityId) : undefined;
+      const toCityBackendId = data.toCityId ? getBackendIdFromSynthetic(data.toCityId) : undefined;
+      const goodsTypeBackendId = data.goodsTypeId ? getBackendIdFromSynthetic(data.goodsTypeId) : undefined;
       if (!fromCityBackendId || !toCityBackendId || !goodsTypeBackendId) {
         throw new Error('Missing city/goods type mapping for tariff create.');
       }
@@ -506,14 +506,14 @@ export const phase15Gateway = {
     },
     update: async (id: number, data: Partial<Tariff>): Promise<Tariff> => {
       await Promise.all([phase15Gateway.cities.getAll(), phase15Gateway.goodsTypes.getAll()]);
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing tariff mapping for backend update.');
       }
       const updated = await httpClient.put<BackendTariffRecord>(`/tariffs/${backendId}`, {
-        from_city_id: data.fromCityId ? toBackendId(data.fromCityId) : undefined,
-        to_city_id: data.toCityId ? toBackendId(data.toCityId) : undefined,
-        goods_type_id: data.goodsTypeId ? toBackendId(data.goodsTypeId) : data.goodsTypeId === undefined ? undefined : null,
+        from_city_id: data.fromCityId ? getBackendIdFromSynthetic(data.fromCityId) : undefined,
+        to_city_id: data.toCityId ? getBackendIdFromSynthetic(data.toCityId) : undefined,
+        goods_type_id: data.goodsTypeId ? getBackendIdFromSynthetic(data.goodsTypeId) : data.goodsTypeId === undefined ? undefined : null,
         price_per_kg: data.pricePerKg,
         minimum_charge: data.minimumCharge,
         valid_from: data.validFrom,
@@ -522,7 +522,7 @@ export const phase15Gateway = {
       return mapTariff(updated);
     },
     delete: async (id: number): Promise<void> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing tariff mapping for backend delete.');
       }
@@ -546,7 +546,7 @@ export const phase15Gateway = {
       return mapCustomer(created);
     },
     update: async (id: number, data: Partial<Customer>): Promise<Customer> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing customer mapping for backend update.');
       const updated = await httpClient.put<BackendRefRecord>(`/customers/${backendId}`, {
         code: data.code,
@@ -557,7 +557,7 @@ export const phase15Gateway = {
       return mapCustomer(updated);
     },
     delete: async (id: number): Promise<void> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing customer mapping for backend delete.');
       await httpClient.delete<void>(`/customers/${backendId}`);
     },
@@ -580,7 +580,7 @@ export const phase15Gateway = {
       return mapCustomer(created);
     },
     update: async (id: number, data: Partial<Customer>): Promise<Customer> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing sender/receiver mapping for backend update.');
       const updated = await httpClient.put<BackendRefRecord>(`/senders-receivers/${backendId}`, {
         code: data.code,
@@ -592,7 +592,7 @@ export const phase15Gateway = {
       return mapCustomer(updated);
     },
     delete: async (id: number): Promise<void> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing sender/receiver mapping for backend delete.');
       await httpClient.delete<void>(`/senders-receivers/${backendId}`);
     },
@@ -614,7 +614,7 @@ export const phase15Gateway = {
       return mapDriver(created);
     },
     update: async (id: number, data: Partial<Driver>): Promise<Driver> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing driver mapping for backend update.');
       const updated = await httpClient.put<BackendRefRecord>(`/drivers/${backendId}`, {
         code: data.code,
@@ -627,7 +627,7 @@ export const phase15Gateway = {
       return mapDriver(updated);
     },
     delete: async (id: number): Promise<void> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing driver mapping for backend delete.');
       await httpClient.delete<void>(`/drivers/${backendId}`);
     },
@@ -644,25 +644,25 @@ export const phase15Gateway = {
         plate_number: data.plateNumber || '',
         model: data.model || '',
         capacity_kg: data.capacity || 0,
-        driver_id: data.driverId ? toBackendId(data.driverId) ?? null : null,
+        driver_id: data.driverId ? getBackendIdFromSynthetic(data.driverId) ?? null : null,
         status: data.isActive === false ? 'inactive' : 'active',
       });
       return mapVehicle(created);
     },
     update: async (id: number, data: Partial<Vehicle>): Promise<Vehicle> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing vehicle mapping for backend update.');
       const updated = await httpClient.put<BackendRefRecord>(`/vehicles/${backendId}`, {
         plate_number: data.plateNumber,
         model: data.model,
         capacity_kg: data.capacity,
-        driver_id: data.driverId ? toBackendId(data.driverId) ?? null : null,
+        driver_id: data.driverId ? getBackendIdFromSynthetic(data.driverId) ?? null : null,
         status: data.isActive === false ? 'inactive' : 'active',
       });
       return mapVehicle(updated);
     },
     delete: async (id: number): Promise<void> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing vehicle mapping for backend delete.');
       await httpClient.delete<void>(`/vehicles/${backendId}`);
     },
@@ -675,7 +675,7 @@ export const phase15Gateway = {
     },
     getById: async (id: number): Promise<Shipment | undefined> => {
       await ensureReferenceLookups();
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) return undefined;
       const row = await httpClient.get<BackendShipmentRecord>(`/shipments/${backendId}`);
       return mapShipment(row);
@@ -683,10 +683,10 @@ export const phase15Gateway = {
     create: async (data: Partial<Shipment>): Promise<Shipment> => {
       await ensureReferenceLookups();
 
-      const senderBackendId = data.senderId ? toBackendId(data.senderId) : undefined;
-      const receiverBackendId = data.receiverId ? toBackendId(data.receiverId) : undefined;
-      const branchBackendId = data.branchId ? toBackendId(data.branchId) : undefined;
-      const agentBackendId = data.agentId ? toBackendId(data.agentId) : undefined;
+      const senderBackendId = data.senderId ? getBackendIdFromSynthetic(data.senderId) : undefined;
+      const receiverBackendId = data.receiverId ? getBackendIdFromSynthetic(data.receiverId) : undefined;
+      const branchBackendId = data.branchId ? getBackendIdFromSynthetic(data.branchId) : undefined;
+      const agentBackendId = data.agentId ? getBackendIdFromSynthetic(data.agentId) : undefined;
 
       if (!senderBackendId || !receiverBackendId || !branchBackendId) {
         throw new Error('Missing sender/receiver/branch mapping for backend shipment create.');
@@ -739,13 +739,13 @@ export const phase15Gateway = {
     },
     update: async (id: number, data: Partial<Shipment>): Promise<Shipment> => {
       await ensureReferenceLookups();
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing shipment mapping for backend update.');
 
-      const senderBackendId = data.senderId ? toBackendId(data.senderId) : undefined;
-      const receiverBackendId = data.receiverId ? toBackendId(data.receiverId) : undefined;
-      const branchBackendId = data.branchId ? toBackendId(data.branchId) : undefined;
-      const agentBackendId = data.agentId ? toBackendId(data.agentId) : undefined;
+      const senderBackendId = data.senderId ? getBackendIdFromSynthetic(data.senderId) : undefined;
+      const receiverBackendId = data.receiverId ? getBackendIdFromSynthetic(data.receiverId) : undefined;
+      const branchBackendId = data.branchId ? getBackendIdFromSynthetic(data.branchId) : undefined;
+      const agentBackendId = data.agentId ? getBackendIdFromSynthetic(data.agentId) : undefined;
       const rate = resolveExchangeRate(data);
 
       const updated = await httpClient.put<BackendShipmentRecord>(`/shipments/${backendId}`, {
@@ -774,7 +774,7 @@ export const phase15Gateway = {
       return mapShipment(updated);
     },
     statusHistory: async (id: number) => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing shipment mapping for status history.');
       }
@@ -809,7 +809,7 @@ export const phase15Gateway = {
       return phase15Gateway.shipments._postAction(id, 'confirm', payload);
     },
     getFinancialCard: async (id: number) => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) return null;
       return httpClient.get<{
         shipmentNo: string;
@@ -829,7 +829,7 @@ export const phase15Gateway = {
       }>(`/shipments/${backendId}/financial-card`);
     },
     repostFinancials: async (id: number) => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing shipment mapping for repost financials.');
       return httpClient.post<{ alreadyPosted: boolean; message: string }>(`/shipments/${backendId}/repost-financials`, {});
     },
@@ -883,7 +883,7 @@ export const phase15Gateway = {
         | 'cancel',
       payload?: { note?: string; metadata?: Record<string, unknown> },
     ): Promise<Shipment> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing shipment mapping for lifecycle action.');
       }
@@ -928,13 +928,13 @@ export const phase15Gateway = {
       if (linkedShipmentId) {
         const sh = shipmentLookup.get(linkedShipmentId);
         if (sh?.branchId) {
-          branchBackendId = toBackendId(sh.branchId);
+          branchBackendId = getBackendIdFromSynthetic(sh.branchId);
         }
       }
       if (!branchBackendId) {
         const branches = await phase15Gateway.branches.getAll();
         if (branches[0]?.id) {
-          branchBackendId = toBackendId(branches[0].id);
+          branchBackendId = getBackendIdFromSynthetic(branches[0].id);
         }
       }
       if (!branchBackendId) {
@@ -944,10 +944,10 @@ export const phase15Gateway = {
       const created = await httpClient.post<BackendManifestRecord>('/manifests', {
         manifestNo: data.manifestNo || `MAN-${Date.now()}`,
         branchId: branchBackendId,
-        vehicleId: data.vehicleId ? toBackendId(data.vehicleId) : undefined,
-        driverId: data.driverId ? toBackendId(data.driverId) : undefined,
+        vehicleId: data.vehicleId ? getBackendIdFromSynthetic(data.vehicleId) : undefined,
+        driverId: data.driverId ? getBackendIdFromSynthetic(data.driverId) : undefined,
         status: mapManifestStatusToBackend(data.status || 'draft'),
-        shipmentIds: (data.shipments || []).map((sid) => toBackendId(sid)).filter(Boolean),
+        shipmentIds: (data.shipments || []).map((sid) => getBackendIdFromSynthetic(sid)).filter(Boolean),
       });
 
       const details = await httpClient.get<BackendManifestRecord>(`/manifests/${created.id}`);
@@ -970,14 +970,14 @@ export const phase15Gateway = {
       };
     },
     update: async (id: number, data: Partial<Manifest>): Promise<Manifest> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing manifest mapping for backend update.');
 
       const updated = await httpClient.put<BackendManifestRecord>(`/manifests/${backendId}`, {
-        vehicleId: data.vehicleId ? toBackendId(data.vehicleId) : undefined,
-        driverId: data.driverId ? toBackendId(data.driverId) : undefined,
+        vehicleId: data.vehicleId ? getBackendIdFromSynthetic(data.vehicleId) : undefined,
+        driverId: data.driverId ? getBackendIdFromSynthetic(data.driverId) : undefined,
         status: data.status ? mapManifestStatusToBackend(data.status) : undefined,
-        shipmentIds: data.shipments ? data.shipments.map((sid) => toBackendId(sid)).filter(Boolean) : undefined,
+        shipmentIds: data.shipments ? data.shipments.map((sid) => getBackendIdFromSynthetic(sid)).filter(Boolean) : undefined,
       });
       const details = await httpClient.get<BackendManifestRecord>(`/manifests/${updated.id}`);
       const shipments = (details.shipments || []).map((s) => mapShipment(s).id);
@@ -1023,7 +1023,7 @@ export const phase15Gateway = {
       });
     },
     create: async (data: Partial<Delivery>): Promise<Delivery> => {
-      const shipmentBackendId = data.shipmentId ? toBackendId(data.shipmentId) : undefined;
+      const shipmentBackendId = data.shipmentId ? getBackendIdFromSynthetic(data.shipmentId) : undefined;
       if (!shipmentBackendId) {
         throw new Error('Shipment mapping is required before creating delivery.');
       }
@@ -1032,7 +1032,7 @@ export const phase15Gateway = {
       const created = await httpClient.post<BackendDeliveryRecord>('/deliveries', {
         deliveryNo: `DEL-${Date.now()}`,
         shipmentId: shipmentBackendId,
-        branchId: shipment?.branchId ? toBackendId(shipment.branchId) : undefined,
+        branchId: shipment?.branchId ? getBackendIdFromSynthetic(shipment.branchId) : undefined,
         status: mapDeliveryStatusToBackend(data.deliveryStatus || 'pending'),
         recipientName: data.recipientName || '',
         receivedAt: data.deliveredAt || undefined,
@@ -1059,7 +1059,7 @@ export const phase15Gateway = {
       };
     },
     update: async (id: number, data: Partial<Delivery>): Promise<Delivery> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing delivery mapping for backend update.');
       const rate = resolveExchangeRate(data);
       const updated = await httpClient.put<BackendDeliveryRecord>(`/deliveries/${backendId}`, {
