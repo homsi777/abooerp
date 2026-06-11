@@ -26,3 +26,10 @@ sudo rm -rf /var/www/abooerp/frontend/*
 sudo cp -r dist/* /var/www/abooerp/frontend/
 pm2 restart abooerp-backend --update-env
 sudo nginx -t && sudo systemctl reload nginx
+
+
+
+
+
+
+

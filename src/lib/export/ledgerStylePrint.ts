@@ -1,5 +1,9 @@
 import { isElectronRuntime } from '../runtime/runtimeMode';
 import { exportPdfFromRuntimeOrBrowser } from './htmlToPdf';
+import {
+  companyPrintHeaderStyles,
+  renderCompanyPrintHeader,
+} from './companyPrintHeader';
 
 export type LedgerPrintMetaItem = { label: string; value: string };
 
@@ -25,6 +29,7 @@ function ledgerPrintStyles(orientation: 'portrait' | 'landscape'): string {
   return `
     @page { size: ${pageSize}; margin: 12mm 8mm; }
     html, body { margin: 0; padding: 0; background: white; font-family: Tahoma, Arial, sans-serif; color: #10251f; }
+    ${companyPrintHeaderStyles()}
     .doc-title { font-size: 16px; font-weight: 800; margin: 0 0 8px; text-align: center; }
     .meta { margin-bottom: 10px; font-size: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; }
     .meta div { border: 1px solid #c5d0dc; padding: 4px 6px; background: #f8fafc; }
@@ -72,12 +77,16 @@ export function buildLedgerStylePrintHtml(options: {
   meta: LedgerPrintMetaItem[];
   sections: LedgerPrintTableSection[];
   orientation?: 'portrait' | 'landscape';
+  headerFields?: Array<{ label: string; value: string | number }>;
 }): string {
   const orientation = options.orientation ?? 'landscape';
   const metaHtml = options.meta
     .map((item) => `<div><strong>${escapeLedgerPrintHtml(item.label)}:</strong> ${escapeLedgerPrintHtml(item.value)}</div>`)
     .join('');
   const sectionsHtml = options.sections.map(renderTableSection).join('');
+  const headerHtml = options.headerFields?.length
+    ? renderCompanyPrintHeader({ title: options.title, fields: options.headerFields })
+    : renderCompanyPrintHeader({ title: options.title, fields: [] });
 
   return `<!doctype html>
 <html lang="ar" dir="rtl">
@@ -88,8 +97,8 @@ export function buildLedgerStylePrintHtml(options: {
   <style>${ledgerPrintStyles(orientation)}</style>
 </head>
 <body>
-  <p class="doc-title">${escapeLedgerPrintHtml(options.title)}</p>
-  <div class="meta">${metaHtml}</div>
+  ${headerHtml}
+  ${options.meta.length ? `<div class="meta">${metaHtml}</div>` : ''}
   ${sectionsHtml}
 </body>
 </html>`;

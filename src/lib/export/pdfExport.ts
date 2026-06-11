@@ -1,4 +1,5 @@
 import { exportPdfFromRuntimeOrBrowser } from './htmlToPdf';
+import { companyPrintHeaderStyles, renderCompanyPrintHeader } from './companyPrintHeader';
 
 function escapeHtml(value: string | number | boolean | null | undefined): string {
   return String(value ?? '')
@@ -28,8 +29,7 @@ export function buildPdfTableHtml(payload: {
   <style>
     @page { size: A4 landscape; margin: 10mm; }
     html, body { margin: 0; padding: 0; background: white; font-family: Tahoma, Arial, sans-serif; }
-    .header { margin-bottom: 10px; }
-    .title { font-size: 14px; font-weight: 800; margin: 0; }
+    ${companyPrintHeaderStyles()}
     .subtitle { font-size: 11px; color: #334155; margin: 4px 0 0; }
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     th, td { border: 1px solid #111827; padding: 4px 6px; font-size: 10px; line-height: 1.35; vertical-align: top; }
@@ -38,10 +38,8 @@ export function buildPdfTableHtml(payload: {
   </style>
 </head>
 <body>
-  <div class="header">
-    <p class="title">${escapeHtml(payload.title)}</p>
-    ${payload.subtitle ? `<p class="subtitle">${escapeHtml(payload.subtitle)}</p>` : ''}
-  </div>
+  ${renderCompanyPrintHeader({ title: payload.title, fields: [] })}
+  ${payload.subtitle ? `<p class="subtitle">${escapeHtml(payload.subtitle)}</p>` : ''}
   <table>
     <thead>
       <tr>${payload.headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr>

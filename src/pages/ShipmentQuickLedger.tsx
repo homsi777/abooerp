@@ -5,6 +5,11 @@ import {
   buildMahmoudPreprintedReceiptHtml,
   mapRemoteLedgerRowToMahmoudReceipt,
 } from '../lib/shipping/mahmoudPreprintedReceiptPrint';
+import {
+  buildDailyLedgerHeaderFields,
+  companyPrintHeaderStyles,
+  renderCompanyPrintHeader,
+} from '../lib/export/companyPrintHeader';
 import { buildDailyLedgerDestinationPrintHtml } from '../lib/export/financialStatementPrint';
 import { exportLedgerStylePdf } from '../lib/export/ledgerStylePrint';
 import { useToast } from '../components/Toast';
@@ -438,15 +443,26 @@ function escapePrintHtml(value: string) {
     .replace(/'/g, '&#039;');
 }
 
+function resolvePrintDestinationLabel(
+  rows: Array<{ destination: string }>,
+  activeSearch: string,
+  scope: 'driver' | 'date' | 'agent' | 'session',
+  agentFilter: string,
+): string {
+  if (activeSearch.trim()) return activeSearch.trim();
+  if (scope === 'agent' && agentFilter.trim()) return agentFilter.trim();
+  const destinations = [...new Set(rows.map((row) => normalizeName(row.destination)).filter(Boolean))];
+  if (destinations.length === 1) return destinations[0];
+  if (destinations.length > 1) return 'كل الوجهات';
+  return '—';
+}
+
 function buildQuickLedgerPrintHtml(
   rows: QuickLedgerPrintRow[],
   meta: {
     title: string;
-    dateLabel: string;
+    destinationLabel: string;
     driverName: string;
-    vehicleLabel: string;
-    lineLabel?: string;
-    tripNo?: string;
   },
 ) {
   const num = (value: string): number => {
@@ -465,8 +481,6 @@ function buildQuickLedgerPrintHtml(
     },
     { pieces: 0, weightKg: 0, collect: 0, prepaid: 0, hawala: 0, fee: 0 },
   );
-  const screenMoneyTotal = totals.collect + totals.hawala + totals.fee;
-  const grandTotal = screenMoneyTotal + totals.prepaid;
   const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
   const tons = (totals.weightKg / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 });
 
@@ -499,6 +513,16 @@ function buildQuickLedgerPrintHtml(
 <td class="col-money">${fmt(totals.fee)}</td>
 </tr>`;
 
+  const headerHtml = renderCompanyPrintHeader({
+    title: meta.title,
+    fields: buildDailyLedgerHeaderFields({
+      rowCount: rows.length,
+      destination: meta.destinationLabel,
+      driver: meta.driverName,
+      parcelCount: fmt(totals.pieces),
+    }),
+  });
+
   return `<!doctype html>
 <html lang="ar" dir="rtl">
 <head>
@@ -508,9 +532,7 @@ function buildQuickLedgerPrintHtml(
   <style>
     @page { size: A4 portrait; margin: 12mm 8mm; }
     html, body { margin: 0; padding: 0; background: white; font-family: Tahoma, Arial, sans-serif; color: #10251f; }
-    .meta { margin-bottom: 10px; font-size: 13px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; }
-    .meta div { border: 1px solid #c5d0dc; padding: 4px 6px; background: #f8fafc; }
-    .meta strong { font-weight: 800; }
+    ${companyPrintHeaderStyles()}
     table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; page-break-inside: auto; }
     thead { display: table-header-group; }
     tr { page-break-inside: avoid; page-break-after: auto; }
@@ -530,19 +552,7 @@ function buildQuickLedgerPrintHtml(
   </style>
 </head>
 <body>
-  <div class="meta">
-    <div><strong>الفترة:</strong> ${escapePrintHtml(meta.dateLabel)}</div>
-    <div><strong>السائق:</strong> ${escapePrintHtml(meta.driverName)}</div>
-    <div><strong>المركبة:</strong> ${escapePrintHtml(meta.vehicleLabel)}</div>
-    <div><strong>عدد الأسطر:</strong> ${rows.length}</div>
-    <div><strong>إجمالي الوزن:</strong> ${fmt(totals.weightKg)} كغ / ${tons} طن</div>
-    <div><strong>عدد الطرود:</strong> ${fmt(totals.pieces)}</div>
-    <div><strong>إجمالي الدولار (تحصيل+حوالة+أجرة):</strong> ${fmt(screenMoneyTotal)}</div>
-    <div><strong>مسبق (منفصل):</strong> ${fmt(totals.prepaid)}</div>
-    <div><strong>المجموع الكلي:</strong> ${fmt(grandTotal)}</div>
-    ${meta.lineLabel ? `<div><strong>الخط:</strong> ${escapePrintHtml(meta.lineLabel)}</div>` : ''}
-    ${meta.tripNo ? `<div><strong>رقم الرحلة:</strong> ${escapePrintHtml(meta.tripNo)}</div>` : ''}
-  </div>
+  ${headerHtml}
   <table>
     <thead>
       <tr>
@@ -2575,41 +2585,27 @@ export default function ShipmentQuickLedger() {
       if (!prepared) return;
 
       const { rows, activeSearch, selectedDriver, scope } = prepared;
-      const currentTrip = tripRef.current;
-      const linkedVehicle = vehicles.find((v) => v.driverId === printDriverId);
-      const vehicleLabel =
-        scope === 'driver'
-          ? linkedVehicle
-            ? `${linkedVehicle.plateNumber}${linkedVehicle.model ? ` — ${linkedVehicle.model}` : ''}`
-            : currentTrip.vehicle || '—'
-          : scope === 'session'
-            ? activeSession?.vehicleLabel ?? 'كل المركبات'
-            : 'كل المركبات';
-      const dateLabel =
-        printDateFrom === printDateTo ? printDateFrom : `${printDateFrom} → ${printDateTo}`;
       const scopeName =
         scope === 'driver'
           ? selectedDriver?.name ?? ''
           : scope === 'agent'
-            ? `وكيل/جهة: ${printDestinationFilter}`
+            ? printDestinationFilter
             : scope === 'session'
               ? `الإرسالية #${activeSession?.displayNo ?? ''} — ${activeSession?.driverLabel ?? ''}`
               : 'كل السائقين (اليوم)';
 
-      const widePrint =
-        printAllLines ||
-        (canViewAllLedgerEntriesRef.current && ledgerBranchModeRef.current === 'all');
-      const html = buildQuickLedgerPrintHtml(
-        rows.map(remoteRowToPrint),
-        {
-          title: activeSearch ? `دفتر الشحن — ${scopeName} — ${activeSearch}` : `دفتر الشحن — ${scopeName}`,
-          dateLabel,
-          driverName: scope === 'driver' ? selectedDriver?.name ?? '—' : scopeName,
-          vehicleLabel,
-          lineLabel: widePrint ? 'كل الفروع / كل الخطوط' : currentTrip.line,
-          tripNo: currentTrip.tripNo,
-        },
+      const printRows = rows.map(remoteRowToPrint);
+      const destinationLabel = resolvePrintDestinationLabel(
+        printRows,
+        activeSearch,
+        scope,
+        printDestinationFilter,
       );
+      const html = buildQuickLedgerPrintHtml(printRows, {
+        title: activeSearch ? `دفتر الشحن — ${activeSearch}` : `دفتر الشحن — ${scopeName}`,
+        destinationLabel,
+        driverName: scope === 'driver' ? selectedDriver?.name ?? '—' : scopeName,
+      });
 
       setPrintDialogOpen(false);
       await dispatchHtmlPrint(html, 'quick_ledger');

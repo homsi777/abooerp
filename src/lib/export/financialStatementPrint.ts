@@ -10,6 +10,7 @@ import {
   type LedgerPrintMetaItem,
   type LedgerPrintTableSection,
 } from './ledgerStylePrint';
+import { buildDailyLedgerHeaderFields } from './companyPrintHeader';
 
 const transferRoleLabel: Record<string, string> = {
   origin: 'وكيل مصدر (قبض)',
@@ -443,26 +444,7 @@ export function buildDailyLedgerDestinationPrintHtml(input: {
     },
   );
 
-  const screenMoneyTotal = totals.collectAmount + totals.hawalaAmount + totals.transferServiceFee;
-  const grandTotal = screenMoneyTotal + totals.prepaidAmount;
-
-  const meta: LedgerPrintMetaItem[] = [
-    { label: 'التقرير', value: 'دفتر الشحن اليومي — حسب الوجهة' },
-    { label: 'التاريخ', value: input.reportDate || '—' },
-    { label: 'خط المصدر', value: input.lineLabel || '—' },
-    { label: 'الوجهة', value: input.destination || '—' },
-    { label: 'السائقون', value: input.driverNames.length ? input.driverNames.join('، ') : '—' },
-    { label: 'عدد الأسطر', value: String(input.rows.length) },
-    { label: 'عدد الطرود', value: totals.parcelCount.toLocaleString('en-US') },
-    { label: 'إجمالي الوزن', value: formatWeightTotal(totals.weightKg) },
-    {
-      label: 'إجمالي الدولار (تحصيل+حوالة+أجرة)',
-      value: screenMoneyTotal.toLocaleString('en-US', { maximumFractionDigits: 2 }),
-    },
-    { label: 'مسبق (منفصل)', value: totals.prepaidAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }) },
-    { label: 'المجموع الكلي', value: grandTotal.toLocaleString('en-US', { maximumFractionDigits: 2 }) },
-    { label: 'تاريخ الطباعة', value: formatLedgerDate(new Date().toISOString()) },
-  ];
+  const driverLabel = input.driverNames.length ? input.driverNames.join('، ') : '—';
 
   const sections: LedgerPrintTableSection[] = [
     {
@@ -501,7 +483,13 @@ export function buildDailyLedgerDestinationPrintHtml(input: {
 
   return buildLedgerStylePrintHtml({
     title: `دفتر الشحن اليومي — ${input.destination} — ${input.reportDate}`,
-    meta,
+    meta: [],
+    headerFields: buildDailyLedgerHeaderFields({
+      rowCount: input.rows.length,
+      destination: input.destination,
+      driver: driverLabel,
+      parcelCount: totals.parcelCount.toLocaleString('en-US'),
+    }),
     sections,
     orientation: 'landscape',
   });
