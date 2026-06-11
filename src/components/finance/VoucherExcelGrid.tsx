@@ -1,6 +1,7 @@
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Plus, Save, CheckCircle2 } from 'lucide-react';
 import SmartPartyInput from '../SmartPartyInput';
+import VoucherCashboxCombo from './VoucherCashboxCombo';
 import { useToast } from '../Toast';
 import { phase3FinanceGateway, type BackendCashboxRecord } from '../../lib/api/phase3FinanceGateway';
 import { formatCurrency, getExchangeRatesToUsd, parseDecimalAmount, type CurrencyCode } from '../../lib/currency/currency';
@@ -8,11 +9,17 @@ import {
   buildVoucherPayload,
   cashboxesForCurrency,
   createVoucherGridRow,
+  formatCashboxLabel,
   isVoucherGridRowStarted,
   resolveAgentCashbox,
   voucherGridRowUsd,
   type VoucherGridRow,
 } from '../../lib/finance/voucherGridHelpers';
+import {
+  handleVoucherGridKeyboard,
+  navigateVoucherGridField,
+  type VoucherGridField,
+} from '../../lib/finance/voucherGridNavigation';
 
 const GRID_ENTRY_SLOTS = 5;
 
@@ -194,13 +201,12 @@ export default function VoucherExcelGrid({ cashboxes, canBackdate, canUpdate, to
     setRows((prev) => ensureTrailingBlankRows([...prev, createVoucherGridRow()]));
   };
 
-  const handleGridKeyDown = (e: KeyboardEvent, rowIndex: number, field: string) => {
-    if (e.key !== 'Enter' || e.shiftKey) return;
-    e.preventDefault();
-    const next = document.querySelector<HTMLElement>(
-      `[data-voucher-row="${rowIndex + 1}"][data-voucher-field="${field}"]`,
-    );
-    next?.focus();
+  const gridKeyDown = (e: KeyboardEvent, rowIndex: number, field: VoucherGridField) => {
+    handleVoucherGridKeyboard(e, rowIndex, field, rows.length);
+  };
+
+  const advanceFromParty = (rowIndex: number) => {
+    navigateVoucherGridField(rowIndex, 'party', 'next', rows.length);
   };
 
   useEffect(() => {
@@ -276,6 +282,7 @@ export default function VoucherExcelGrid({ cashboxes, canBackdate, canUpdate, to
                       onChange={(e) =>
                         patchRow(row.localId, { kind: e.target.value as 'receipt' | 'payment' })
                       }
+                      onKeyDown={(e) => gridKeyDown(e, index, 'kind')}
                     >
                       <option value="receipt">قبض</option>
                       <option value="payment">دفع</option>
@@ -293,7 +300,7 @@ export default function VoucherExcelGrid({ cashboxes, canBackdate, canUpdate, to
                       data-voucher-row={index}
                       data-voucher-field="date"
                       onChange={(e) => patchRow(row.localId, { date: e.target.value })}
-                      onKeyDown={(e) => handleGridKeyDown(e, index, 'party')}
+                      onKeyDown={(e) => gridKeyDown(e, index, 'date')}
                     />
                   </td>
                   <td className="col-party">
@@ -304,6 +311,11 @@ export default function VoucherExcelGrid({ cashboxes, canBackdate, canUpdate, to
                       allowQuickContacts={false}
                       allowAddNew={false}
                       placeholder="عميل / وكيل / جهة"
+                      inputClassName="voucher-grid-input"
+                      data-voucher-row={index}
+                      data-voucher-field="party"
+                      onAdvance={() => advanceFromParty(index)}
+                      onKeyDown={(e) => gridKeyDown(e, index, 'party')}
                       onChange={(value) =>
                         patchRow(row.localId, {
                           relatedParty: value,
@@ -327,6 +339,7 @@ export default function VoucherExcelGrid({ cashboxes, canBackdate, canUpdate, to
                             customerId: null,
                             agentId: p.id,
                             cashboxId: box?.id ?? row.cashboxId,
+                            cashboxText: box ? formatCashboxLabel(box) : row.cashboxText,
                             ...(box && box.currency_code !== row.currency
                               ? { currency: box.currency_code as CurrencyCode }
                               : {}),
@@ -346,7 +359,7 @@ export default function VoucherExcelGrid({ cashboxes, canBackdate, canUpdate, to
                       data-voucher-row={index}
                       data-voucher-field="amount"
                       onChange={(e) => patchRow(row.localId, { amount: e.target.value })}
-                      onKeyDown={(e) => handleGridKeyDown(e, index, 'currency')}
+                      onKeyDown={(e) => gridKeyDown(e, index, 'amount')}
                     />
                   </td>
                   <td className="col-currency">
@@ -360,8 +373,10 @@ export default function VoucherExcelGrid({ cashboxes, canBackdate, canUpdate, to
                         patchRow(row.localId, {
                           currency: e.target.value as CurrencyCode,
                           cashboxId: '',
+                          cashboxText: '',
                         })
                       }
+                      onKeyDown={(e) => gridKeyDown(e, index, 'currency')}
                     >
                       <option value="USD">USD</option>
                       <option value="SYP">SYP</option>
@@ -369,21 +384,15 @@ export default function VoucherExcelGrid({ cashboxes, canBackdate, canUpdate, to
                     </select>
                   </td>
                   <td className="col-cashbox">
-                    <select
-                      className="voucher-grid-input"
-                      value={row.cashboxId}
+                    <VoucherCashboxCombo
+                      boxes={boxes}
+                      cashboxId={row.cashboxId}
+                      cashboxText={row.cashboxText}
+                      rowIndex={index}
                       disabled={readonly}
-                      data-voucher-row={index}
-                      data-voucher-field="cashbox"
-                      onChange={(e) => patchRow(row.localId, { cashboxId: e.target.value })}
-                    >
-                      <option value="">—</option>
-                      {boxes.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.code} — {c.name}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(patch) => patchRow(row.localId, patch)}
+                      onGridKeyDown={(e) => gridKeyDown(e, index, 'cashbox')}
+                    />
                   </td>
                   <td className="col-notes">
                     <input
@@ -393,7 +402,10 @@ export default function VoucherExcelGrid({ cashboxes, canBackdate, canUpdate, to
                       readOnly={readonly}
                       disabled={readonly}
                       placeholder="بيان"
+                      data-voucher-row={index}
+                      data-voucher-field="notes"
                       onChange={(e) => patchRow(row.localId, { description: e.target.value })}
+                      onKeyDown={(e) => gridKeyDown(e, index, 'notes')}
                     />
                   </td>
                   <td className="col-usd text-left">{formatCurrency(usd, 'USD')}</td>

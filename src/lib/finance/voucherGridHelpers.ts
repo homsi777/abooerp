@@ -14,6 +14,8 @@ export type VoucherGridRow = {
   amount: string;
   currency: CurrencyCode;
   cashboxId: string;
+  /** نص البحث/عرض الصندوق في خانة الإدخال */
+  cashboxText: string;
   description: string;
   voucherNo: string;
   syntheticId?: number;
@@ -38,6 +40,7 @@ export function createVoucherGridRow(partial: Partial<VoucherGridRow> = {}): Vou
     amount: partial.amount ?? '',
     currency: partial.currency ?? 'USD',
     cashboxId: partial.cashboxId ?? '',
+    cashboxText: partial.cashboxText ?? '',
     description: partial.description ?? '',
     voucherNo: partial.voucherNo ?? '',
     syntheticId: partial.syntheticId,
@@ -130,4 +133,41 @@ export function resolveAgentCashbox(
     cashboxes.find((c) => c.is_active && c.agent_id === agentId && c.currency_code === currency) ??
     cashboxes.find((c) => c.is_active && c.agent_id === agentId)
   );
+}
+
+export function formatCashboxLabel(cashbox: BackendCashboxRecord): string {
+  const agent = cashbox.agent_name ? ` · ${cashbox.agent_name}` : '';
+  return `${cashbox.code} — ${cashbox.name}${agent}`;
+}
+
+function cashboxHaystack(cashbox: BackendCashboxRecord): string {
+  return [cashbox.code, cashbox.name, cashbox.agent_name, cashbox.branch_name]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+export function resolveCashboxFromQuery(
+  query: string,
+  cashboxes: BackendCashboxRecord[],
+): BackendCashboxRecord | undefined {
+  const trimmed = query.trim();
+  if (!trimmed) return undefined;
+  const q = trimmed.toLowerCase();
+
+  const exact = cashboxes.find((c) => formatCashboxLabel(c).toLowerCase() === q || c.id === trimmed);
+  if (exact) return exact;
+
+  const codeExact = cashboxes.find((c) => c.code.toLowerCase() === q);
+  if (codeExact) return codeExact;
+
+  const matches = cashboxes.filter((c) => cashboxHaystack(c).includes(q));
+  if (matches.length === 1) return matches[0];
+  return matches.find((c) => formatCashboxLabel(c).toLowerCase().startsWith(q));
+}
+
+export function filterCashboxesByQuery(cashboxes: BackendCashboxRecord[], query: string, limit = 30): BackendCashboxRecord[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return cashboxes.slice(0, limit);
+  return cashboxes.filter((c) => cashboxHaystack(c).includes(q)).slice(0, limit);
 }

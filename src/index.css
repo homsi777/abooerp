@@ -2928,6 +2928,46 @@ body {
   padding: 4px 6px;
 }
 
+.voucher-cashbox-combo {
+  position: relative;
+}
+
+.voucher-cashbox-dropdown {
+  position: absolute;
+  z-index: 50;
+  top: 100%;
+  right: 0;
+  left: 0;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  max-height: 220px;
+  overflow: auto;
+}
+
+.voucher-cashbox-dropdown li {
+  padding: 6px 8px;
+  cursor: pointer;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.voucher-cashbox-dropdown li:last-child {
+  border-bottom: none;
+}
+
+.voucher-cashbox-dropdown li:hover,
+.voucher-cashbox-dropdown li.active {
+  background: #eef2ff;
+}
+
 .voucher-grid-status {
   display: inline-block;
   padding: 2px 8px;
