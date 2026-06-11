@@ -2866,6 +2866,27 @@ body {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
+  table-layout: fixed;
+}
+
+.voucher-excel-grid .col-amount {
+  width: 72px;
+  max-width: 72px;
+}
+
+.voucher-excel-grid .col-amount .voucher-grid-input {
+  padding-inline: 4px;
+  text-align: left;
+}
+
+.voucher-excel-grid .col-cashbox {
+  width: 240px;
+  min-width: 220px;
+}
+
+.voucher-excel-grid .col-cashbox .voucher-grid-input,
+.voucher-excel-grid .col-cashbox .voucher-cashbox-dropdown li {
+  font-size: 11px;
 }
 
 .voucher-excel-grid th,
