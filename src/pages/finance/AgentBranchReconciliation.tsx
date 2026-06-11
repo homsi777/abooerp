@@ -18,6 +18,12 @@ import {
 import { formatWesternDate, formatWesternDateTime } from '../../lib/format/westernDigits';
 import { buildAgentBranchReconciliationPrintHtml } from '../../lib/export/financialStatementPrint';
 
+const hawalaRoleLabel: Record<string, string> = {
+  origin: 'مصدر',
+  destination: 'وجهة',
+  both: 'مصدر ووجهة',
+};
+
 export default function AgentBranchReconciliation() {
   const [searchParams] = useSearchParams();
   const { showToast } = useToast();
@@ -210,6 +216,7 @@ export default function AgentBranchReconciliation() {
               showToast('لحفظ مطابقة موقّعة استخدم سند قبض/دفع أو مطابقة الوكيل في ملف الوكيل', 'info')
             }
             returnPath="/finance/agent-branch-reconciliation"
+            currencyCode={currencyCode}
           />
         </>
       )}

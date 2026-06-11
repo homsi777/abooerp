@@ -182,6 +182,8 @@ export class ShipmentFinancialPostingService {
     userContext?: UserContext;
     financial: ShipmentFinancialInput;
     shipmentRow?: Record<string, unknown>;
+    /** Business date (e.g. ledger_date) — used for posted_at instead of now() */
+    effectiveDate?: string;
   }): Promise<{ shipment: Record<string, unknown>; receiptVoucher?: Record<string, unknown> }> {
     const { client, shipmentId, scope, userContext } = params;
     let financial = params.financial;
@@ -284,6 +286,7 @@ export class ShipmentFinancialPostingService {
         shipmentNo,
         senderName,
         breakdown,
+        effectiveDate: params.effectiveDate,
       });
     }
 
@@ -334,7 +337,7 @@ export class ShipmentFinancialPostingService {
       update shipments
       set
         financial_status = $2::text,
-        financial_posted_at = now(),
+        financial_posted_at = coalesce($13::timestamptz, now()),
         financial_posted_by_user_id = $3::uuid,
         payer_party_kind = $4::text,
         payer_name_snapshot = $5::text,
@@ -361,6 +364,7 @@ export class ShipmentFinancialPostingService {
         financial.allowZeroAmountNote ?? null,
         effectiveResponsibilityType ?? null,
         effectiveResponsibilityId ?? null,
+        params.effectiveDate ?? null,
       ],
     );
 

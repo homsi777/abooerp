@@ -507,11 +507,11 @@ export class AgentRepository {
     const shipmentDateFilters: string[] = [];
     if (opts.fromAt) {
       shipmentValues.push(opts.fromAt);
-      shipmentDateFilters.push(`and s.created_at >= $${shipmentValues.length}::timestamptz`);
+      shipmentDateFilters.push(`and coalesce(s.effective_date::timestamptz, s.created_at) >= $${shipmentValues.length}::timestamptz`);
     }
     if (opts.toAt) {
       shipmentValues.push(opts.toAt);
-      shipmentDateFilters.push(`and s.created_at <= $${shipmentValues.length}::timestamptz`);
+      shipmentDateFilters.push(`and coalesce(s.effective_date::timestamptz, s.created_at) <= $${shipmentValues.length}::timestamptz`);
     }
 
     const shipments = await pool.query(
@@ -519,7 +519,7 @@ export class AgentRepository {
       select
         s.id,
         s.shipment_no,
-        s.created_at,
+        coalesce(s.effective_date::timestamptz, s.created_at) as created_at,
         s.status,
         s.destination_city,
         s.original_amount,
@@ -554,7 +554,7 @@ export class AgentRepository {
         and upper(s.status) <> 'CANCELLED'
         and ($4::text is null or upper(s.original_currency) = upper($4))
         ${shipmentDateFilters.join(' ')}
-      order by s.created_at desc
+      order by coalesce(s.effective_date::timestamptz, s.created_at) desc
       limit 500
       `,
       shipmentValues,
@@ -764,11 +764,11 @@ export class AgentRepository {
     const remittanceDateFilters: string[] = [];
     if (opts.fromAt) {
       remittanceValues.push(opts.fromAt);
-      remittanceDateFilters.push(`and s.created_at >= $${remittanceValues.length}::timestamptz`);
+      remittanceDateFilters.push(`and coalesce(s.effective_date::timestamptz, s.created_at) >= $${remittanceValues.length}::timestamptz`);
     }
     if (opts.toAt) {
       remittanceValues.push(opts.toAt);
-      remittanceDateFilters.push(`and s.created_at <= $${remittanceValues.length}::timestamptz`);
+      remittanceDateFilters.push(`and coalesce(s.effective_date::timestamptz, s.created_at) <= $${remittanceValues.length}::timestamptz`);
     }
     const remittanceResult = await pool.query(
       `
@@ -953,7 +953,7 @@ export class AgentRepository {
       select *
       from (
         select
-          s.created_at as at,
+          coalesce(s.effective_date::timestamptz, s.created_at) as at,
           'shipment_commission' as source_type,
           s.id::text as source_id,
           s.shipment_no as reference_no,

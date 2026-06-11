@@ -41,7 +41,7 @@ export class ShipmentService {
   async create(
     input: ShipmentCreateInput,
     scope?: DataScope,
-    options?: { financial?: ShipmentFinancialInput; actorUserId?: string },
+    options?: { financial?: ShipmentFinancialInput; actorUserId?: string; effectiveDate?: string },
   ) {
     if (scope?.branchId && input.branchId !== scope.branchId) {
       throw new HttpError(403, 'Cannot create shipment outside scoped branch.');
@@ -119,6 +119,7 @@ export class ShipmentService {
               payerPartyKind: payload.payerPartyKind ?? 'RECEIVER',
             } as ShipmentFinancialInput),
           shipmentRow: created,
+          effectiveDate: options?.effectiveDate ?? input.effectiveDate,
         });
         await client.query('commit');
       } catch (e) {

@@ -56,6 +56,7 @@ type BackendShipmentRecord = {
   prepaid_amount?: number;
   discount_amount?: number;
   transfer_service_fee?: number;
+  effective_date?: string;
 };
 
 type BackendShipmentHistoryRow = {
@@ -296,7 +297,7 @@ function mapShipment(record: BackendShipmentRecord): Shipment {
   const mapped: Shipment = {
     id: syntheticEntityId(record.id),
     shipmentNo: record.shipment_no,
-    date: record.created_at.split('T')[0],
+    date: record.effective_date ?? record.created_at.split('T')[0],
     branchId,
     branchName: branchLookup.get(branchId)?.name ?? '',
     agentId: agentId || undefined,

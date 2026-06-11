@@ -6,7 +6,7 @@ import type { AgentRepository } from '../repositories/agentRepository.js';
 import type { DailyLedgerRepository } from '../repositories/dailyLedgerRepository.js';
 import type { ShipmentService } from '../services/shipmentService.js';
 import { resolveAgentDestinationLabel } from '../utils/agentDestination.js';
-import type { ShipmentFinancialInput } from './shipmentFinancialPostingService.js';
+import type { ShipmentFinancialInput, ShipmentFinancialPostingService } from './shipmentFinancialPostingService.js';
 
 type LedgerRowRecord = {
   id: string;
@@ -161,6 +161,7 @@ export class DailyLedgerShipmentPostingService {
     private readonly ledgerRepo: DailyLedgerRepository,
     private readonly shipmentService: ShipmentService,
     private readonly agentRepository: AgentRepository,
+    private readonly financialPosting?: ShipmentFinancialPostingService,
   ) {}
 
   private async loadRow(scope: DataScope, rowId: string): Promise<LedgerRowRecord | null> {
@@ -519,6 +520,38 @@ export class DailyLedgerShipmentPostingService {
           `رقم الإيصال ${receiptNo} مربوط بسطر دفتر آخر (سطر ${otherLink.row_no}).`,
         );
       }
+
+      // If existing shipment has no financial posting, trigger it now
+      const shipmentFull = await pool.query<{ financial_status: string | null }>(
+        `select financial_status from shipments where id = $1`,
+        [shipmentId],
+      );
+      const fs = shipmentFull.rows[0]?.financial_status;
+      if (this.financialPosting && (!fs || fs === 'UNPOSTED')) {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await this.financialPosting.postShipmentConfirmationFinancials({
+            client,
+            shipmentId,
+            scope: { ...scope, branchId: row.branch_id, companyId: row.company_id },
+            financial,
+            effectiveDate: row.ledger_date,
+          });
+          // Also set effective_date on the existing shipment
+          await client.query(
+            `UPDATE shipments SET effective_date = coalesce($2::date, effective_date) WHERE id = $1`,
+            [shipmentId, row.ledger_date ?? null],
+          );
+          await client.query('COMMIT');
+        } catch (e) {
+          await client.query('ROLLBACK');
+          throw e;
+        } finally {
+          client.release();
+        }
+      }
+
       const posted = await this.ledgerRepo.markPosted(
         scope,
         { rowId: row.id, shipmentId, userId: scope.userId },
@@ -562,9 +595,10 @@ export class DailyLedgerShipmentPostingService {
         transferServiceFee: amounts.transferServiceFee,
         discountAmount: 0,
         createdBy: scope.userId,
+        effectiveDate: row.ledger_date,
       },
       { ...scope, branchId: row.branch_id, companyId: row.company_id },
-      { financial, actorUserId: scope.userId },
+      { financial, actorUserId: scope.userId, effectiveDate: row.ledger_date },
     );
 
     const posted = await this.ledgerRepo.markPosted(

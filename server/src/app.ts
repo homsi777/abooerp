@@ -155,6 +155,7 @@ const dailyLedgerShipmentPostingService = new DailyLedgerShipmentPostingService(
   dailyLedgerRepository,
   shipmentService,
   agentRepository,
+  shipmentFinancialPostingService,
 );
 const dailyLedgerService = new DailyLedgerService(dailyLedgerRepository, dailyLedgerShipmentPostingService);
 const dailyLedgerTransferService = new DailyLedgerTransferService();

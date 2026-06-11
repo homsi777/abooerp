@@ -84,6 +84,9 @@ export const FINANCE_CURRENCY_OPTIONS: Array<{ value: string; label: string; sho
   { value: 'USD', label: 'دولار أمريكي', short: 'د.أ' },
   { value: 'SYP', label: 'ليرة سورية', short: 'ل.س' },
   { value: 'TRY', label: 'ليرة تركية', short: 'ل.ت' },
+  { value: 'EUR', label: 'يورو', short: '€' },
+  { value: 'SAR', label: 'ريال سعودي', short: 'ر.س' },
+  { value: 'AED', label: 'درهم إماراتي', short: 'د.إ' },
 ];
 
 export const FINANCE_PROFIT_LOSS_SECTION_AR: Record<string, string> = {

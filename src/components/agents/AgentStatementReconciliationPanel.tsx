@@ -19,10 +19,12 @@ type Props = {
   onSaveReconciliation: () => void | Promise<void>;
   onRefresh?: () => void | Promise<void>;
   returnPath?: string;
+  /** Active currency filter from the parent page */
+  currencyCode?: string;
 };
 
-function money(value: number, currency = 'USD') {
-  return formatFinanceAmount(value, currency);
+function makeMoney(defaultCurrency: string) {
+  return (value: number, currency = defaultCurrency) => formatFinanceAmount(value, currency);
 }
 
 export default function AgentStatementReconciliationPanel({
@@ -31,10 +33,13 @@ export default function AgentStatementReconciliationPanel({
   onSaveReconciliation,
   onRefresh,
   returnPath,
+  currencyCode: parentCurrency,
 }: Props) {
   const navigate = useNavigate();
   const { showToast } = useToast();
   const metrics = useMemo(() => getAgentReconciliationMetrics(statementData), [statementData]);
+  const activeCurrency = parentCurrency || metrics.currencyCode || 'USD';
+  const money = useMemo(() => makeMoney(activeCurrency), [activeCurrency]);
   const [cashboxes, setCashboxes] = useState<BackendCashboxRecord[]>([]);
   const [quickKind, setQuickKind] = useState<QuickVoucherKind | null>(null);
   const [quickSaving, setQuickSaving] = useState(false);
@@ -242,7 +247,8 @@ export default function AgentStatementReconciliationPanel({
   );
 }
 
-function ReconciliationStatusBanner({ metrics }: { metrics: AgentReconciliationMetrics }) {
+function ReconciliationStatusBanner({ metrics }: { metrics: AgentReconciliationMetrics & { currencyCode: string } }) {
+  const money = makeMoney(metrics.currencyCode || 'USD');
   const periodLabel = metrics.lastReconciledAt
     ? `من ${formatWesternDate(metrics.lastReconciledAt)} حتى الآن`
     : 'من بداية الحساب حتى الآن';

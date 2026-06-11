@@ -1020,11 +1020,11 @@ export class FinanceRepository {
     }
     if (filters?.dateFrom) {
       values.push(filters.dateFrom);
-      conditions.push(`pfm.created_at >= $${values.length}::timestamptz`);
+      conditions.push(`coalesce(pfm.posted_at, pfm.created_at) >= $${values.length}::timestamptz`);
     }
     if (filters?.dateTo) {
       values.push(filters.dateTo);
-      conditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+      conditions.push(`coalesce(pfm.posted_at, pfm.created_at) <= $${values.length}::timestamptz`);
     }
     if (filters?.search?.trim()) {
       values.push(`%${filters.search.trim()}%`);
@@ -1070,7 +1070,7 @@ export class FinanceRepository {
           coalesce(sum(${debitExpr}), 0)
           - coalesce(sum(${creditExpr}), 0)
         )::numeric as balance,
-        max(pfm.created_at) as last_movement_at,
+        max(coalesce(pfm.posted_at, pfm.created_at)) as last_movement_at,
         count(*)::int as movement_count,
         count(*) over()::int as total_count
       from party_financial_movements pfm
@@ -1081,7 +1081,7 @@ export class FinanceRepository {
       ${whereClause}
       group by pfm.party_type, pfm.party_id, party_code, party_name, b.name, pfm.original_currency
       ${directionHaving}
-      order by max(pfm.created_at) desc, party_name asc
+      order by max(coalesce(pfm.posted_at, pfm.created_at)) desc, party_name asc
       limit ${limitRef}
       offset ${offsetRef}
       `,
@@ -1124,11 +1124,11 @@ export class FinanceRepository {
     }
     if (filters?.dateFrom) {
       values.push(filters.dateFrom);
-      conditions.push(`pfm.created_at >= $${values.length}::timestamptz`);
+      conditions.push(`coalesce(pfm.posted_at, pfm.created_at) >= $${values.length}::timestamptz`);
     }
     if (filters?.dateTo) {
       values.push(filters.dateTo);
-      conditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+      conditions.push(`coalesce(pfm.posted_at, pfm.created_at) <= $${values.length}::timestamptz`);
     }
     if (filters?.referenceType) {
       if (filters.referenceType === 'shipment') {
@@ -1163,7 +1163,7 @@ export class FinanceRepository {
       `
       select
         pfm.id,
-        pfm.created_at as date,
+        coalesce(pfm.posted_at, pfm.created_at) as date,
         pfm.party_type,
         pfm.party_id,
         coalesce(c.name, sr.full_name, ag.name, '-') as party_name,
@@ -1204,7 +1204,7 @@ export class FinanceRepository {
       left join senders_receivers sr on pfm.party_type = 'sender_receiver' and sr.id = pfm.party_id
       left join agents ag on pfm.party_type = 'agent' and ag.id = pfm.party_id
       ${whereClause}
-      order by pfm.created_at asc, pfm.id asc
+      order by coalesce(pfm.posted_at, pfm.created_at) asc, pfm.id asc
       limit ${limitRef}
       offset ${offsetRef}
       `,
@@ -1235,11 +1235,11 @@ export class FinanceRepository {
     }
     if (filters?.fromAt) {
       values.push(filters.fromAt);
-      conditions.push(`pfm.created_at >= $${values.length}::timestamptz`);
+      conditions.push(`coalesce(pfm.posted_at, pfm.created_at) >= $${values.length}::timestamptz`);
     }
     if (filters?.toAt) {
       values.push(filters.toAt);
-      conditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+      conditions.push(`coalesce(pfm.posted_at, pfm.created_at) <= $${values.length}::timestamptz`);
     }
     if (filters?.includeReversals === false) {
       conditions.push('pfm.is_reversal = false');
@@ -1250,6 +1250,7 @@ export class FinanceRepository {
       `
       select
         pfm.*,
+        coalesce(pfm.posted_at, pfm.created_at) as effective_at,
         case
           when pfm.direction in ('inflow', 'debit') then pfm.base_amount_usd
           when pfm.direction in ('outflow', 'credit') then -pfm.base_amount_usd
@@ -1257,7 +1258,7 @@ export class FinanceRepository {
         end as signed_base_amount_usd
       from party_financial_movements pfm
       ${whereClause}
-      order by pfm.created_at asc, pfm.id asc
+      order by coalesce(pfm.posted_at, pfm.created_at) asc, pfm.id asc
       `,
       values,
     );
@@ -1287,12 +1288,12 @@ export class FinanceRepository {
     if (filters?.fromAt) {
       values.push(filters.fromAt);
       const fromRef = `$${values.length}::timestamptz`;
-      openingConditions.push(`pfm.created_at < ${fromRef}`);
-      periodConditions.push(`pfm.created_at >= ${fromRef}`);
+      openingConditions.push(`coalesce(pfm.posted_at, pfm.created_at) < ${fromRef}`);
+      periodConditions.push(`coalesce(pfm.posted_at, pfm.created_at) >= ${fromRef}`);
     }
     if (filters?.toAt) {
       values.push(filters.toAt);
-      periodConditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+      periodConditions.push(`coalesce(pfm.posted_at, pfm.created_at) <= $${values.length}::timestamptz`);
     }
 
     const openingWhere = openingConditions.length ? `where ${openingConditions.join(' and ')}` : '';
@@ -1346,11 +1347,11 @@ export class FinanceRepository {
     }
     if (filters?.fromAt) {
       values.push(filters.fromAt);
-      conditions.push(`pfm.created_at >= $${values.length}::timestamptz`);
+      conditions.push(`coalesce(pfm.posted_at, pfm.created_at) >= $${values.length}::timestamptz`);
     }
     if (filters?.toAt) {
       values.push(filters.toAt);
-      conditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+      conditions.push(`coalesce(pfm.posted_at, pfm.created_at) <= $${values.length}::timestamptz`);
     }
     if (filters?.includeReversals === false) {
       conditions.push('pfm.is_reversal = false');
@@ -1371,6 +1372,7 @@ export class FinanceRepository {
       `
       select
         pfm.*,
+        coalesce(pfm.posted_at, pfm.created_at) as effective_at,
         case
           when pfm.direction in ('inflow', 'debit') then pfm.base_amount_usd
           when pfm.direction in ('outflow', 'credit') then -pfm.base_amount_usd
@@ -1379,7 +1381,7 @@ export class FinanceRepository {
         count(*) over()::int as total_count
       from party_financial_movements pfm
       ${whereClause}
-      order by pfm.created_at desc, pfm.id desc
+      order by coalesce(pfm.posted_at, pfm.created_at) desc, pfm.id desc
       limit ${limitRef}
       offset ${offsetRef}
       `,
@@ -1415,11 +1417,11 @@ export class FinanceRepository {
     }
     if (filters?.fromAt) {
       values.push(filters.fromAt);
-      conditions.push(`pfm.created_at >= $${values.length}::timestamptz`);
+      conditions.push(`coalesce(pfm.posted_at, pfm.created_at) >= $${values.length}::timestamptz`);
     }
     if (filters?.toAt) {
       values.push(filters.toAt);
-      conditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+      conditions.push(`coalesce(pfm.posted_at, pfm.created_at) <= $${values.length}::timestamptz`);
     }
     if (filters?.includeReversals === false) {
       conditions.push('pfm.is_reversal = false');
@@ -1468,11 +1470,11 @@ export class FinanceRepository {
     }
     if (filters?.fromAt) {
       values.push(filters.fromAt);
-      conditions.push(`pfm.created_at >= $${values.length}::timestamptz`);
+      conditions.push(`coalesce(pfm.posted_at, pfm.created_at) >= $${values.length}::timestamptz`);
     }
     if (filters?.toAt) {
       values.push(filters.toAt);
-      conditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+      conditions.push(`coalesce(pfm.posted_at, pfm.created_at) <= $${values.length}::timestamptz`);
     }
     if (filters?.includeReversals === false) {
       conditions.push('pfm.is_reversal = false');
@@ -1546,7 +1548,7 @@ export class FinanceRepository {
       pool.query(
         `
         select
-          date_trunc('day', pfm.created_at) as day,
+          date_trunc('day', coalesce(pfm.posted_at, pfm.created_at)) as day,
           coalesce(sum(case when pfm.direction in ('inflow', 'debit') then pfm.base_amount_usd else 0 end), 0)::numeric as inflow_base_usd,
           coalesce(sum(case when pfm.direction in ('outflow', 'credit') then pfm.base_amount_usd else 0 end), 0)::numeric as outflow_base_usd,
           (
@@ -1555,7 +1557,7 @@ export class FinanceRepository {
           )::numeric as net_base_usd
         from party_financial_movements pfm
         ${whereClause}
-        group by date_trunc('day', pfm.created_at)
+        group by date_trunc('day', coalesce(pfm.posted_at, pfm.created_at))
         order by day asc
         `,
         values.slice(0, -1),
@@ -2025,6 +2027,7 @@ export class FinanceRepository {
       shipmentNo: string;
       senderName?: string | null;
       breakdown: ShipmentFinancialBreakdown;
+      effectiveDate?: string;
     },
   ) {
     const metadata = buildShipmentBreakdownMetadata(input.breakdown);
@@ -2082,7 +2085,7 @@ export class FinanceRepository {
           $5, $6, 'debit', $7, $8, $9,
           $10, $11, $12,
           'SHIPMENT', $4, $13,
-          $8, 0, $9, $10, now(), $14::jsonb
+          $8, 0, $9, $10, coalesce($15::timestamptz, now()), $14::jsonb
         )
         on conflict do nothing
         `,
@@ -2101,6 +2104,7 @@ export class FinanceRepository {
           input.createdByUserId,
           input.shipmentNo,
           JSON.stringify({ ...metadata, component: component.movementType }),
+          input.effectiveDate ?? null,
         ],
       );
     }
@@ -2113,9 +2117,9 @@ export class FinanceRepository {
     const whereClause = conditions.length ? `where ${conditions.join(' and ')}` : '';
     const result = await pool.query(
       `
-      select pfm.* from party_financial_movements pfm
+      select pfm.*, coalesce(pfm.posted_at, pfm.created_at) as effective_at from party_financial_movements pfm
       ${whereClause}
-      order by pfm.created_at asc, pfm.id asc
+      order by coalesce(pfm.posted_at, pfm.created_at) asc, pfm.id asc
       `,
       values,
     );

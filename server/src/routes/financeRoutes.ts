@@ -1756,14 +1756,14 @@ export function createFinanceRouter(service: FinanceService) {
                 pfm.party_id as posted_to_receiver_id,
                 s.agent_id,
                 s.financial_status,
-                pfm.created_at
+                coalesce(pfm.posted_at, pfm.created_at) as created_at
          from party_financial_movements pfm
          join shipments s on s.id = pfm.shipment_id
          where pfm.party_type = 'sender_receiver'
            and pfm.movement_type = 'shipment_charge'
            and pfm.is_reversal = false
            ${scope?.companyId ? `and s.company_id = '${scope.companyId}'` : ''}
-         order by pfm.created_at desc
+         order by coalesce(pfm.posted_at, pfm.created_at) desc
          limit 100`,
       );
 
@@ -1826,7 +1826,7 @@ export function createFinanceRouter(service: FinanceService) {
         from party_financial_movements pfm
         join shipments s on s.id = pfm.shipment_id
         where ${conditions.join(' and ')}
-        order by pfm.created_at desc
+        order by coalesce(pfm.posted_at, pfm.created_at) desc
         limit 200
         `,
         values,

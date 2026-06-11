@@ -103,11 +103,11 @@ export class AccountingReportsService {
     }
     if (fromAt) {
       partyValues.push(fromAt);
-      partyConditions.push(`pfm.created_at >= $${partyValues.length}::timestamptz`);
+      partyConditions.push(`coalesce(pfm.posted_at, pfm.created_at) >= $${partyValues.length}::timestamptz`);
     }
     if (toAt) {
       partyValues.push(toAt);
-      partyConditions.push(`pfm.created_at <= $${partyValues.length}::timestamptz`);
+      partyConditions.push(`coalesce(pfm.posted_at, pfm.created_at) <= $${partyValues.length}::timestamptz`);
     }
     const partyAgg = await pool.query(
       `
@@ -173,11 +173,11 @@ export class AccountingReportsService {
     }
     if (fromAt) {
       shipmentValues.push(fromAt);
-      shipmentConditions.push(`s.created_at >= $${shipmentValues.length}::timestamptz`);
+      shipmentConditions.push(`coalesce(s.effective_date::timestamptz, s.created_at) >= $${shipmentValues.length}::timestamptz`);
     }
     if (toAt) {
       shipmentValues.push(toAt);
-      shipmentConditions.push(`s.created_at <= $${shipmentValues.length}::timestamptz`);
+      shipmentConditions.push(`coalesce(s.effective_date::timestamptz, s.created_at) <= $${shipmentValues.length}::timestamptz`);
     }
     const shipmentRevenue = await pool.query(
       `

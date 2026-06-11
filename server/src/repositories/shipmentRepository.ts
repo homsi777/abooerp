@@ -47,6 +47,8 @@ export interface ShipmentCreateInput {
   agentCommissionBaseAmount?: number;
   agentCommissionPercentageSnapshot?: number;
   agentCommissionAmountSnapshot?: number;
+  /** Business date for the shipment (ledger_date from daily shipping book) */
+  effectiveDate?: string;
 }
 
 export class ShipmentRepository {
@@ -138,7 +140,7 @@ export class ShipmentRepository {
         limit 1
       ) latest_driver_load on true
       where ${conditions.join(' and ')}
-      order by s.created_at desc
+      order by coalesce(s.effective_date, s.created_at::date) desc, s.created_at desc
       `,
       values,
     );
@@ -206,11 +208,13 @@ export class ShipmentRepository {
         payer_party_kind, default_cashbox_id,
         freight_charge, transfer_fee, additional_charges, hawala_amount, prepaid_amount, discount_amount, transfer_service_fee,
         agent_commission_base_type, agent_commission_base_amount,
-        agent_commission_percentage_snapshot, agent_commission_amount_snapshot
+        agent_commission_percentage_snapshot, agent_commission_amount_snapshot,
+        effective_date, created_at
       )
       values(
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-        $20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32
+        $20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,
+        coalesce($33::date, now()::date), coalesce($33::timestamptz, now())
       )
       returning *
       `,
@@ -247,6 +251,7 @@ export class ShipmentRepository {
         typeof input.agentCommissionBaseAmount === 'number' ? input.agentCommissionBaseAmount : null,
         typeof input.agentCommissionPercentageSnapshot === 'number' ? input.agentCommissionPercentageSnapshot : null,
         typeof input.agentCommissionAmountSnapshot === 'number' ? input.agentCommissionAmountSnapshot : null,
+        input.effectiveDate ?? null,
       ],
     );
 
