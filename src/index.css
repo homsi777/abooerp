@@ -2750,6 +2750,10 @@ body {
     display: none !important;
   }
 
+  .quick-ledger-branch-cell {
+    display: none !important;
+  }
+
   .quick-ledger-table-shell {
     overflow: visible !important;
     border: 0 !important;

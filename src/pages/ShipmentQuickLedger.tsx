@@ -1197,7 +1197,7 @@ export default function ShipmentQuickLedger() {
     );
   }, [activeBranchId, branchSearch, branches, canViewAllLedgerEntries, ledgerBranchMode]);
 
-  const showBranchColumn = canViewAllLedgerEntries && ledgerBranchMode === 'all';
+  /** branchLabel يُحفظ مع السطر للخادم — لا يُعرض (الخط = مصدر البضاعة). */
 
   /** يعمل المستخدم على تاريخ سابق — تنبيه أن الإدخال تصحيح ويستلزم إعادة الطباعة */
   const isBackdateMode = useMemo(() => Boolean(trip.date && trip.date < todayIso), [trip.date, todayIso]);
@@ -1287,8 +1287,8 @@ export default function ShipmentQuickLedger() {
     }
     let displayId = 1;
     const consolidated = sorted.map((remote) => mapRemoteRowToLocal(remote, displayId++));
-    if (viewAllBranches) return consolidated;
-    return [...consolidated, ...buildEntrySlotRows(displayId, origin)];
+    const nextEntryId = consolidated.length > 0 ? displayId : 1;
+    return [...consolidated, ...buildEntrySlotRows(nextEntryId, origin)];
   };
 
   const loadRemoteRows = async () => {
@@ -1313,7 +1313,7 @@ export default function ShipmentQuickLedger() {
       setRemoteSyncedCount(0);
 
       const origin = resolveTripOrigin(currentTrip.line);
-      setRows(viewAllBranches ? [] : buildEntrySlotRows(1, origin));
+      setRows(buildEntrySlotRows(1, origin));
 
       const queryScope = buildLedgerRowsQueryScope(
         branchId || '',
@@ -2724,12 +2724,6 @@ export default function ShipmentQuickLedger() {
       return;
     }
 
-    const branchName = viewAllBranchesPdf
-      ? 'كل الفروع'
-      : branches.find((branch) => getBackendIdFromSynthetic(branch.id) === activeBranchId)?.name
-        ?? branchSearch
-        ?? '—';
-
     if (
       destinationPdfDriverKey !== ALL_DRIVERS_PDF_OPTION &&
       !destinationPdfDriverOptions.some((option) => option.key === destinationPdfDriverKey)
@@ -2767,7 +2761,6 @@ export default function ShipmentQuickLedger() {
           reportDate: destinationPdfDate,
           lineLabel,
           destination,
-          branchName,
           driverNames,
           rows: rowsForDestination.map((row) => {
             const collect = remoteRowCollectionUsd(row);
@@ -3570,7 +3563,7 @@ export default function ShipmentQuickLedger() {
                   className={`quick-ledger-session-box${activeSessionId === session.id ? ' is-active' : ''}${session.reprintRequired ? ' needs-reprint' : ''}`}
                   onClick={() => void selectSession(session.id)}
                   disabled={sessionSwitching}
-                  title={`${showBranchColumn ? `${session.branchLabel} — ` : ''}${session.driverLabel} — ${session.vehicleLabel} — ${session.rowsCount} سطر — ${formatWeightKgTons(session.weightKg)}${session.reprintRequired ? ' — تحتاج إعادة طباعة' : ''}`}
+                  title={`${session.driverLabel} — ${session.vehicleLabel} — ${session.rowsCount} سطر — ${formatWeightKgTons(session.weightKg)}${session.reprintRequired ? ' — تحتاج إعادة طباعة' : ''}`}
                 >
                   {session.displayNo}
                   {session.reprintRequired ? ' ⚠' : ''}
@@ -3694,7 +3687,6 @@ export default function ShipmentQuickLedger() {
                   )}
                 </th>
               )}
-              {showBranchColumn && <th>الفرع</th>}
               <th>رقم الإيصال</th>
               <th>الجهة</th>
               <th className="col-parcel-type">نوع الطرود</th>
@@ -3753,11 +3745,6 @@ export default function ShipmentQuickLedger() {
                         }
                         onChange={() => toggleTransferRowSelection(row.id)}
                       />
-                    </td>
-                  )}
-                  {showBranchColumn && (
-                    <td className="quick-ledger-branch-cell" title={row.branchLabel}>
-                      {row.branchLabel ?? '—'}
                     </td>
                   )}
                   <td>

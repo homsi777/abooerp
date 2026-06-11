@@ -401,7 +401,6 @@ export function buildDailyLedgerDestinationPrintHtml(input: {
   reportDate: string;
   lineLabel: string;
   destination: string;
-  branchName?: string;
   driverNames: string[];
   rows: Array<{
     receiptNo: string;
@@ -452,7 +451,6 @@ export function buildDailyLedgerDestinationPrintHtml(input: {
     { label: 'التاريخ', value: input.reportDate || '—' },
     { label: 'خط المصدر', value: input.lineLabel || '—' },
     { label: 'الوجهة', value: input.destination || '—' },
-    ...(input.branchName ? [{ label: 'الفرع', value: input.branchName }] : []),
     { label: 'السائقون', value: input.driverNames.length ? input.driverNames.join('، ') : '—' },
     { label: 'عدد الأسطر', value: String(input.rows.length) },
     { label: 'عدد الطرود', value: totals.parcelCount.toLocaleString('en-US') },
