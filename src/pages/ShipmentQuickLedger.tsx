@@ -702,6 +702,8 @@ export default function ShipmentQuickLedger() {
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedDeleteRowIds, setSelectedDeleteRowIds] = useState<number[]>([]);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [cancelSessionConfirmOpen, setCancelSessionConfirmOpen] = useState(false);
+  const [cancelingSession, setCancelingSession] = useState(false);
   const [deletingRows, setDeletingRows] = useState(false);
   const [transferMode, setTransferMode] = useState(false);
   const [selectedTransferRowIds, setSelectedTransferRowIds] = useState<number[]>([]);
@@ -928,6 +930,7 @@ export default function ShipmentQuickLedger() {
       groups.set(sessionId, existing);
     }
     return [...groups.values()]
+      .filter((session) => Boolean(session.driverBackendId || session.vehicleBackendId))
       .sort((a, b) => {
         const cmp = String(a.earliest).localeCompare(String(b.earliest));
         if (cmp !== 0) return cmp;
@@ -1121,6 +1124,8 @@ export default function ShipmentQuickLedger() {
 
   const canLedgerExportPdf = hasPermission('daily_ledger.export_pdf');
   const canLedgerTransfer = hasPermission('daily_ledger.transfer.create');
+  const canLedgerCancelSession =
+    hasPermission('daily_ledger.session.cancel') || hasPermission('daily_ledger.transfer.create');
   const canLedgerCloseSection = hasPermission('daily_ledger.close_section');
   const canLedgerSaveLog = hasPermission('daily_ledger.save_log');
   const canLedgerViewLoaded = hasPermission('daily_ledger.view_loaded');
@@ -2254,12 +2259,39 @@ export default function ShipmentQuickLedger() {
     }
   };
 
-  /** الخروج من عرض الإرسالية النشطة إلى وضع «الكل» دون حذف أي بيانات */
-  const cancelActiveSession = async () => {
-    if (!activeSessionId || sessionSwitching) return;
+  /** حلّ الإرسالية النشطة: إرجاع الأسطر للعرض العام وإزالة رقم الإرسالية */
+  const requestCancelActiveSession = () => {
+    if (!activeSessionId || sessionSwitching || !canLedgerCancelSession) return;
+    setCancelSessionConfirmOpen(true);
+  };
+
+  const confirmCancelActiveSession = async () => {
+    if (!activeSessionId || sessionSwitching || cancelingSession) return;
     if (transferMode) exitTransferMode();
     if (deleteMode) exitDeleteMode();
-    await selectSession(null);
+
+    const sessionId = activeSessionId;
+    setCancelingSession(true);
+    try {
+      await flushPendingRowSaves(sessionId);
+      const result = await httpClient.post<{ movedRowsCount: number; poolSessionId: string }>(
+        '/daily-ledger/sessions/cancel',
+        { sessionId },
+      );
+      setCancelSessionConfirmOpen(false);
+      setActiveSessionId(null);
+      await loadRemoteRows();
+      showToast(
+        result.movedRowsCount > 0
+          ? `تم إلغاء الإرسالية — عاد ${result.movedRowsCount} سطر إلى العرض العام`
+          : 'تم إلغاء الإرسالية الفارغة',
+        'success',
+      );
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر إلغاء الإرسالية', 'error');
+    } finally {
+      setCancelingSession(false);
+    }
   };
 
   const enterTransferMode = () => {
@@ -3361,12 +3393,12 @@ export default function ShipmentQuickLedger() {
               تصدير PDF
             </button>
           ) : null}
-          {activeSessionId && !transferMode && !deleteMode ? (
+          {activeSessionId && canLedgerCancelSession && !transferMode && !deleteMode ? (
             <button
               type="button"
-              onClick={() => void cancelActiveSession()}
-              disabled={sessionSwitching}
-              title="العودة إلى عرض كل إرساليات اليوم دون حذف البيانات"
+              onClick={() => requestCancelActiveSession()}
+              disabled={sessionSwitching || cancelingSession}
+              title="حلّ الإرسالية وإرجاع أسطرها إلى «الكل» دون حذف البيانات"
             >
               <X size={16} />
               إلغاء إرسالية
@@ -3605,15 +3637,17 @@ export default function ShipmentQuickLedger() {
             >
               <Printer size={14} /> طباعة الإرسالية الحالية
             </button>
-            <button
-              type="button"
-              className="quick-ledger-session-cancel-btn"
-              onClick={() => void cancelActiveSession()}
-              disabled={sessionSwitching}
-              title="العودة إلى عرض «الكل» دون حذف البيانات"
-            >
-              <X size={14} /> إلغاء إرسالية
-            </button>
+            {canLedgerCancelSession ? (
+              <button
+                type="button"
+                className="quick-ledger-session-cancel-btn"
+                onClick={() => requestCancelActiveSession()}
+                disabled={sessionSwitching || cancelingSession}
+                title="حلّ الإرسالية وإرجاع أسطرها إلى «الكل» دون حذف البيانات"
+              >
+                <X size={14} /> إلغاء إرسالية
+              </button>
+            ) : null}
           </div>
         )}
       </section>
@@ -4002,6 +4036,39 @@ export default function ShipmentQuickLedger() {
               </button>
               <button type="button" className="danger" onClick={() => void deleteSelectedRows()} disabled={deletingRows}>
                 {deletingRows ? 'جاري الحذف...' : 'تأكيد الحذف'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cancelSessionConfirmOpen && activeSession && (
+        <div className="quick-ledger-confirm" role="dialog" aria-modal="true">
+          <div className="quick-ledger-confirm-panel">
+            <h3>إلغاء الإرسالية #{activeSession.displayNo}؟</h3>
+            <p>
+              سيتم حلّ الإرسالية وإرجاع {activeSession.rowsCount} سطر إلى العرض العام «الكل».
+              {' '}
+              لن تُحذف بيانات الإيصالات أو المبالغ — يختفي رقم الإرسالية فقط من الشريط.
+              {activeSession.rowsCount > 0 && activeSession.reprintRequired
+                ? ' قد تحتاج إرساليات أخرى لإعادة طباعة بعد التعديل.'
+                : ''}
+            </p>
+            <div>
+              <button
+                type="button"
+                onClick={() => setCancelSessionConfirmOpen(false)}
+                disabled={cancelingSession}
+              >
+                تراجع
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => void confirmCancelActiveSession()}
+                disabled={cancelingSession}
+              >
+                {cancelingSession ? 'جاري الإلغاء...' : 'تأكيد إلغاء الإرسالية'}
               </button>
             </div>
           </div>

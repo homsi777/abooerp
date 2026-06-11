@@ -70,6 +70,19 @@ export class DailyLedgerService {
     );
   }
 
+  cancelSession(
+    scope: DataScope,
+    sessionId: string,
+    allowedBranchIds: string[],
+    createdByUserId?: string,
+  ) {
+    return this.repo.cancelSession(
+      scope,
+      { sessionId, userId: scope.userId, createdByUserId },
+      allowedBranchIds,
+    );
+  }
+
   recordSessionPrint(
     scope: DataScope,
     input: {

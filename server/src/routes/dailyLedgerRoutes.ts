@@ -8,6 +8,7 @@ import {
   dailyLedgerOwnerUserId,
   DAILY_LEDGER_DELETE_ROWS_PERMISSION,
   DAILY_LEDGER_POST_SHIPMENTS_PERMISSION,
+  DAILY_LEDGER_CANCEL_SESSION_PERMISSION,
   DAILY_LEDGER_TRANSFER_CREATE_PERMISSION,
   DAILY_LEDGER_VIEW_LOADED_PERMISSION,
   isDailyLedgerScopedOperator,
@@ -373,6 +374,39 @@ export function createDailyLedgerRouter(
       const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, permissions);
       const result = await service.deleteRows(scope, rowIds, allowedBranchIds, createdByUserId);
       res.json({ success: true, data: result });
+    },
+  );
+
+  router.post(
+    '/sessions/cancel',
+    requirePermissions(['shipments.write']),
+    async (req, res) => {
+      const userContext = (req as any).requestUserContext as any;
+      const allowedBranchIds: string[] = Array.isArray(userContext?.allowedBranchIds) ? userContext.allowedBranchIds : [];
+      const roleCode = String(userContext?.roleCode ?? '').toLowerCase();
+      const userType = String(userContext?.userType ?? '').toLowerCase();
+      const permissions = getRequestPermissions(req);
+      if (
+        !canUseDailyLedgerAction(roleCode, userType, permissions, DAILY_LEDGER_CANCEL_SESSION_PERMISSION) &&
+        !canUseDailyLedgerAction(roleCode, userType, permissions, DAILY_LEDGER_TRANSFER_CREATE_PERMISSION)
+      ) {
+        res.status(403).json({ success: false, error: 'لا تملك صلاحية إلغاء إرسالية.' });
+        return;
+      }
+      const scope = parseDataScope(req);
+      const bodySchema = z.object({ sessionId: uuid });
+      const { sessionId } = bodySchema.parse(req.body);
+      const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, permissions);
+      try {
+        const result = await service.cancelSession(scope, sessionId, allowedBranchIds, createdByUserId);
+        res.json({ success: true, data: result });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          res.status(error.statusCode).json({ success: false, error: error.message });
+          return;
+        }
+        throw error;
+      }
     },
   );
 

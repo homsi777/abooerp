@@ -832,6 +832,158 @@ export class DailyLedgerRepository {
     return result.rowCount ?? 0;
   }
 
+  /**
+   * يحلّ إرسالية (جلسة سائق/مركبة): ينقل الأسطر إلى جلسة «بدون سائق» ويُخفِي الجلسة من القائمة.
+   * لا يحذف بيانات الأسطر (إيصال، مبالغ، …).
+   */
+  async cancelSession(
+    scope: DataScope,
+    input: { sessionId: string; userId?: string; createdByUserId?: string },
+    allowedBranchIds: string[],
+  ): Promise<{ movedRowsCount: number; poolSessionId: string }> {
+    if (!scope.companyId) {
+      throw new Error('Company scope is required.');
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+
+      const sessionResult = await client.query<DailyLedgerSession>(
+        `
+        select s.*
+        from daily_ledger_sessions s
+        where s.id = $1::uuid
+          and s.company_id = $2::uuid
+          and s.deleted_at is null
+        for update
+        `,
+        [input.sessionId, scope.companyId],
+      );
+      const session = sessionResult.rows[0];
+      if (!session) {
+        throw new HttpError(404, 'الإرسالية غير موجودة أو محذوفة مسبقاً.');
+      }
+
+      if (
+        allowedBranchIds.length &&
+        !allowedBranchIds.includes(session.branch_id)
+      ) {
+        throw new HttpError(403, 'لا يمكن إلغاء إرسالية خارج نطاق الفروع المسموح.');
+      }
+
+      if (!session.driver_id && !session.vehicle_id) {
+        throw new HttpError(409, 'لا يمكن إلغاء جلسة «الكل» — اختر إرسالية محددة (سائق/مركبة).');
+      }
+
+      const rowsResult = await client.query<{ id: string; row_no: number; receipt_no: string | null; loaded_at: string | null; created_by: string | null }>(
+        `
+        select r.id, r.row_no, r.receipt_no, r.loaded_at, r.created_by
+        from daily_ledger_rows r
+        where r.session_id = $1::uuid
+          and r.deleted_at is null
+        order by r.row_no asc
+        for update
+        `,
+        [input.sessionId],
+      );
+      const rows = rowsResult.rows;
+
+      if (rows.some((row) => row.loaded_at)) {
+        throw new HttpError(
+          409,
+          'لا يمكن إلغاء إرسالية تحتوي أسطراً محمّلة على بيان — أزل التحميل أولاً أو انقل الأسطر غير المحمّلة.',
+        );
+      }
+
+      if (input.createdByUserId && rows.some((row) => row.created_by !== input.createdByUserId)) {
+        throw new HttpError(409, 'لا يمكنك إلغاء إرسالية تحتوي إدخالات موظفين آخرين.');
+      }
+
+      const poolSession = await ensureDriverSession(
+        client,
+        scope,
+        {
+          branchId: session.branch_id,
+          ledgerDate: session.ledger_date,
+          lineLabel: session.line_label,
+          originLabel: session.origin_label,
+          tripNo: null,
+          vehicleLabel: null,
+          driverLabel: null,
+          driverId: null,
+          vehicleId: null,
+          rowNo: 1,
+          userId: input.userId ?? scope.userId,
+        },
+        null,
+        null,
+      );
+
+      if (poolSession.id === session.id) {
+        throw new HttpError(409, 'لا يمكن إلغاء هذه الإرسالية.');
+      }
+
+      let movedRowsCount = 0;
+      if (rows.length) {
+        const movingReceipts = rows
+          .map((row) => normalizeLedgerReceiptNo(row.receipt_no))
+          .filter((value) => value.length > 0);
+        if (movingReceipts.length) {
+          const dup = await client.query<{ receipt_no: string | null; row_no: number }>(
+            `
+            select r.receipt_no, r.row_no
+            from daily_ledger_rows r
+            where r.session_id = $1::uuid
+              and r.deleted_at is null
+              and r.id <> all($2::uuid[])
+              and lower(trim(r.receipt_no)) = any($3::text[])
+            limit 1
+            `,
+            [poolSession.id, rows.map((row) => row.id), movingReceipts.map((r) => r.toLowerCase())],
+          );
+          if (dup.rows[0]) {
+            throw new HttpError(
+              409,
+              `تعارض أرقام إيصالات: «${dup.rows[0].receipt_no}» موجود في الدفتر الرئيسي (سطر ${dup.rows[0].row_no}) — عدّل أو احذف المكرر أولاً.`,
+            );
+          }
+        }
+
+        let nextRowNo = await nextRowNoForSession(client, poolSession.id);
+        for (const row of rows) {
+          await client.query(
+            `
+            update daily_ledger_rows
+            set session_id = $2::uuid, row_no = $3, updated_by = $4, updated_at = now()
+            where id = $1::uuid
+            `,
+            [row.id, poolSession.id, nextRowNo, input.userId ?? scope.userId ?? null],
+          );
+          nextRowNo += 1;
+          movedRowsCount += 1;
+        }
+      }
+
+      await client.query(
+        `
+        update daily_ledger_sessions
+        set deleted_at = now(), updated_by = $2, updated_at = now()
+        where id = $1::uuid
+        `,
+        [input.sessionId, input.userId ?? scope.userId ?? null],
+      );
+
+      await client.query('commit');
+      return { movedRowsCount, poolSessionId: poolSession.id };
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async deleteRows(
     scope: DataScope,
     input: { rowIds: string[]; userId?: string; createdByUserId?: string },

@@ -130,6 +130,10 @@ const permissionArabicMeta: Record<string, { label: string; description: string;
     label: 'تأكيد نقل إرسالية',
     description: 'يسمح بتأكيد نقل الإرسالية بعد التحقق.',
   },
+  'daily_ledger.session.cancel': {
+    label: 'إلغاء إرسالية',
+    description: 'يسمح بحلّ إرسالية وإرجاع أسطرها إلى العرض العام دون حذف البيانات.',
+  },
   'drivers.view': { label: 'عرض السائقين', description: 'يسمح برؤية قائمة السائقين.' },
   'drivers.manage': { label: 'إدارة السائقين', description: 'يسمح بإضافة وتعديل السائقين.' },
   'vehicles.view': { label: 'عرض المركبات', description: 'يسمح برؤية قائمة المركبات.' },
@@ -285,6 +289,7 @@ const roleTemplates: PermissionTemplate[] = [
       'daily_ledger.post_shipments',
       'daily_ledger.transfer.create',
       'daily_ledger.transfer.confirm',
+      'daily_ledger.session.cancel',
       'daily_ledger.view_all_entries',
     ],
   },
