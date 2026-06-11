@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { phase3FinanceGateway } from '../../lib/api/phase3FinanceGateway';
 import { phase15Gateway } from '../../lib/api/phase15Gateway';
 import { useToast } from '../../components/Toast';
+import { formatWesternDateTime } from '../../lib/format/westernDigits';
+import FinanceCurrencySelect from '../../components/finance/FinanceCurrencySelect';
 import FinanceExportToolbar from '../../components/finance/FinanceExportToolbar';
 import { buildTrialBalancePrintHtml, buildBalanceSheetPrintHtml } from '../../lib/export/financialStatementPrint';
 
@@ -88,9 +90,10 @@ export default function PeriodClosing() {
           <option value="">الشركة (كل الفروع)</option>
           {branches.map((b) => <option key={b.id} value={String(b.id)}>{b.name}</option>)}
         </select>
-        <select className="form-select" value={form.currencyCode} onChange={(e) => setForm((p) => ({ ...p, currencyCode: e.target.value }))}>
-          <option value="USD">USD</option><option value="SYP">SYP</option><option value="TRY">TRY</option>
-        </select>
+        <FinanceCurrencySelect
+          value={form.currencyCode}
+          onChange={(currencyCode) => setForm((p) => ({ ...p, currencyCode }))}
+        />
         <input className="form-input" placeholder="ملاحظات" value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} />
         <button type="button" className="toolbar-btn primary" disabled={closing} onClick={() => void closePeriod()}>
           {closing ? 'جاري الإقفال...' : 'إقفال الفترة'}
@@ -112,7 +115,7 @@ export default function PeriodClosing() {
                 <td>{row.period_end}</td>
                 <td>{row.branch_name ?? 'الشركة'}</td>
                 <td>{row.currency_code}</td>
-                <td>{row.closed_at ? new Date(row.closed_at).toLocaleString('ar-SY') : '—'}</td>
+                <td>{row.closed_at ? formatWesternDateTime(row.closed_at) : '—'}</td>
                 <td>{row.closed_by_username ?? '—'}</td>
                 <td>{row.notes ?? '—'}</td>
                 <td>

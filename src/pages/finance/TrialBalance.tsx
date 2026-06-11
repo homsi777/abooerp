@@ -3,6 +3,12 @@ import { phase3FinanceGateway } from '../../lib/api/phase3FinanceGateway';
 import { phase15Gateway } from '../../lib/api/phase15Gateway';
 import { useToast } from '../../components/Toast';
 import FinanceExportToolbar from '../../components/finance/FinanceExportToolbar';
+import FinanceCurrencySelect from '../../components/finance/FinanceCurrencySelect';
+import {
+  financeAccountCodeLabel,
+  financeAccountSectionLabel,
+} from '../../lib/finance/financeArabicLabels';
+import { formatWesternNumber } from '../../lib/format/westernDigits';
 import { buildTrialBalancePrintHtml } from '../../lib/export/financialStatementPrint';
 
 export default function TrialBalance() {
@@ -56,20 +62,19 @@ export default function TrialBalance() {
           <option value="">كل الفروع</option>
           {branches.map((b) => <option key={b.id} value={String(b.id)}>{b.name}</option>)}
         </select>
-        <select className="form-select" value={filters.currencyCode} onChange={(e) => setFilters((p) => ({ ...p, currencyCode: e.target.value }))}>
-          <option value="USD">USD</option>
-          <option value="SYP">SYP</option>
-          <option value="TRY">TRY</option>
-        </select>
+        <FinanceCurrencySelect
+          value={filters.currencyCode}
+          onChange={(currencyCode) => setFilters((p) => ({ ...p, currencyCode }))}
+        />
         <button type="button" className="toolbar-btn primary" onClick={() => void load()}>تطبيق</button>
         <FinanceExportToolbar
           disabled={loading || rows.length === 0}
           csvFileName={`trial-balance-${new Date().toISOString().split('T')[0]}.csv`}
           csvHeaders={['الكود', 'الحساب', 'القسم', 'مدين', 'دائن', 'صافي']}
           csvRows={rows.map((r: any) => [
-            r.accountCode,
+            financeAccountCodeLabel(r.accountCode),
             r.accountName,
-            r.section,
+            financeAccountSectionLabel(r.section),
             r.debit,
             r.credit,
             r.netDebit,
@@ -100,12 +105,12 @@ export default function TrialBalance() {
           <tbody>
             {rows.map((row: any) => (
               <tr key={row.accountCode}>
-                <td>{row.accountCode}</td>
+                <td>{financeAccountCodeLabel(row.accountCode)}</td>
                 <td>{row.accountName}</td>
-                <td>{row.section}</td>
-                <td className="text-left">{Number(row.debit).toLocaleString()}</td>
-                <td className="text-left">{Number(row.credit).toLocaleString()}</td>
-                <td className="text-left">{Number(row.netDebit).toLocaleString()}</td>
+                <td>{financeAccountSectionLabel(row.section)}</td>
+                <td className="text-left">{formatWesternNumber(row.debit)}</td>
+                <td className="text-left">{formatWesternNumber(row.credit)}</td>
+                <td className="text-left">{formatWesternNumber(row.netDebit)}</td>
               </tr>
             ))}
             {!loading && rows.length === 0 && <tr><td colSpan={6} className="text-center p-6 text-gray-500">لا بيانات — طبّق الفلاتر واضغط تطبيق.</td></tr>}
@@ -114,9 +119,9 @@ export default function TrialBalance() {
             <tfoot>
               <tr>
                 <td colSpan={3}>الإجمالي</td>
-                <td className="text-left">{Number(totals.totalDebit ?? 0).toLocaleString()}</td>
-                <td className="text-left">{Number(totals.totalCredit ?? 0).toLocaleString()}</td>
-                <td className="text-left">{Number(totals.difference ?? 0).toLocaleString()}</td>
+                <td className="text-left">{formatWesternNumber(totals.totalDebit ?? 0)}</td>
+                <td className="text-left">{formatWesternNumber(totals.totalCredit ?? 0)}</td>
+                <td className="text-left">{formatWesternNumber(totals.difference ?? 0)}</td>
               </tr>
             </tfoot>
           )}

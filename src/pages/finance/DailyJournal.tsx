@@ -5,6 +5,14 @@ import { getBackendIdFromSynthetic, phase15Gateway } from '../../lib/api/phase15
 import { useToast } from '../../components/Toast';
 import { downloadCsv } from '../../lib/export/csvDownload';
 import FinanceExportToolbar from '../../components/finance/FinanceExportToolbar';
+import FinanceCurrencySelect from '../../components/finance/FinanceCurrencySelect';
+import {
+  financeCurrencyLabel,
+  financePartyTypeLabel,
+  financePaymentMethodLabel,
+  financeReferenceTypeLabel,
+} from '../../lib/finance/financeArabicLabels';
+import { formatWesternDateTime, formatWesternNumber } from '../../lib/format/westernDigits';
 import { buildDetailedAccountStatementPrintHtml } from '../../lib/export/financialStatementPrint';
 
 type JournalRow = {
@@ -25,20 +33,6 @@ type JournalRow = {
   branchName: string;
   username: string;
   notes: string;
-};
-
-const PARTY_TYPE_LABEL: Record<string, string> = {
-  agent: 'وكيل',
-  customer: 'عميل',
-  sender_receiver: 'مرسل/مستلم',
-};
-
-const REFERENCE_TYPE_LABEL: Record<string, string> = {
-  shipment: 'شحنة',
-  receipt: 'سند قبض',
-  payment: 'سند دفع',
-  expense: 'مصروف',
-  settlement: 'تسوية',
 };
 
 export default function FinanceDailyJournal() {
@@ -108,18 +102,18 @@ export default function FinanceDailyJournal() {
       ['#', 'التاريخ', 'نوع الحساب', 'اسم الحساب', 'نوع المرجع', 'رقم المرجع', 'رقم الشحنة', 'البيان', 'مدين', 'دائن', 'الرصيد الجاري', 'العملة', 'طريقة الدفع', 'الفرع', 'المستخدم', 'ملاحظات'],
       rows.map((r, i) => [
         i + 1,
-        new Date(r.date).toLocaleString('ar-SY'),
-        PARTY_TYPE_LABEL[r.partyType] ?? r.partyType,
+        formatWesternDateTime(r.date),
+        financePartyTypeLabel(r.partyType),
         r.partyName,
-        REFERENCE_TYPE_LABEL[r.referenceType] ?? r.referenceType,
+        financeReferenceTypeLabel(r.referenceType),
         r.referenceNo,
         r.shipmentNo,
         r.description,
         r.debit,
         r.credit,
         r.runningBalance,
-        r.currencyCode,
-        r.paymentMethod,
+        financeCurrencyLabel(r.currencyCode),
+        financePaymentMethodLabel(r.paymentMethod),
         r.branchName,
         r.username,
         r.notes,
@@ -130,12 +124,12 @@ export default function FinanceDailyJournal() {
 
   const buildSubtitle = () => {
     const subtitleParts: string[] = [];
-    if (filters.partyType) subtitleParts.push(`نوع الحساب: ${PARTY_TYPE_LABEL[filters.partyType] ?? filters.partyType}`);
+    if (filters.partyType) subtitleParts.push(`نوع الحساب: ${financePartyTypeLabel(filters.partyType)}`);
     if (filters.partyId) subtitleParts.push(`معرف: ${filters.partyId}`);
     if (filters.branchId) subtitleParts.push(`الفرع: ${branches.find((b) => String(b.id) === filters.branchId)?.name ?? filters.branchId}`);
-    if (filters.currencyCode) subtitleParts.push(`العملة: ${filters.currencyCode}`);
+    if (filters.currencyCode) subtitleParts.push(`العملة: ${financeCurrencyLabel(filters.currencyCode)}`);
     if (filters.dateFrom || filters.dateTo) subtitleParts.push(`من ${filters.dateFrom || '—'} إلى ${filters.dateTo || '—'}`);
-    if (filters.referenceType) subtitleParts.push(`المرجع: ${REFERENCE_TYPE_LABEL[filters.referenceType] ?? filters.referenceType}`);
+    if (filters.referenceType) subtitleParts.push(`المرجع: ${financeReferenceTypeLabel(filters.referenceType)}`);
     if (filters.search.trim()) subtitleParts.push(`بحث: ${filters.search.trim()}`);
     return subtitleParts.length ? subtitleParts.join(' | ') : undefined;
   };
@@ -158,9 +152,9 @@ export default function FinanceDailyJournal() {
       </div>
 
       <div className="grid grid-cols-3 gap-3 mb-3 max-w-3xl">
-        <div className="stat-card"><div className="stat-value">{totals.totalDebit.toLocaleString()}</div><div className="stat-label">إجمالي المدين</div></div>
-        <div className="stat-card"><div className="stat-value">{totals.totalCredit.toLocaleString()}</div><div className="stat-label">إجمالي الدائن</div></div>
-        <div className="stat-card"><div className="stat-value">{totals.finalBalance.toLocaleString()}</div><div className="stat-label">الرصيد الجاري (آخر سطر)</div></div>
+        <div className="stat-card"><div className="stat-value">{formatWesternNumber(totals.totalDebit)}</div><div className="stat-label">إجمالي المدين</div></div>
+        <div className="stat-card"><div className="stat-value">{formatWesternNumber(totals.totalCredit)}</div><div className="stat-label">إجمالي الدائن</div></div>
+        <div className="stat-card"><div className="stat-value">{formatWesternNumber(totals.finalBalance)}</div><div className="stat-label">الرصيد الجاري (آخر سطر)</div></div>
       </div>
 
       <div className="card mb-3 p-2">
@@ -172,9 +166,12 @@ export default function FinanceDailyJournal() {
           <select className="form-select" value={filters.branchId} onChange={(e) => setFilters((p) => ({ ...p, branchId: e.target.value }))}>
             <option value="">الفرع</option>{branches.map((b) => <option key={b.id} value={String(b.id)}>{b.name}</option>)}
           </select>
-          <select className="form-select" value={filters.currencyCode} onChange={(e) => setFilters((p) => ({ ...p, currencyCode: e.target.value }))}>
-            <option value="">العملة</option><option value="USD">USD</option><option value="SYP">SYP</option><option value="TRY">TRY</option>
-          </select>
+          <FinanceCurrencySelect
+            allowEmpty
+            emptyLabel="العملة"
+            value={filters.currencyCode}
+            onChange={(currencyCode) => setFilters((p) => ({ ...p, currencyCode }))}
+          />
           <input type="date" className="form-input" value={filters.dateFrom} onChange={(e) => setFilters((p) => ({ ...p, dateFrom: e.target.value }))} />
           <input type="date" className="form-input" value={filters.dateTo} onChange={(e) => setFilters((p) => ({ ...p, dateTo: e.target.value }))} />
           <select className="form-select" value={filters.referenceType} onChange={(e) => setFilters((p) => ({ ...p, referenceType: e.target.value }))}>
@@ -189,7 +186,7 @@ export default function FinanceDailyJournal() {
             csvHeaders={['#', 'التاريخ', 'نوع الحساب', 'اسم الحساب', 'مرجع', 'بيان', 'مدين', 'دائن', 'رصيد']}
             csvRows={rows.map((r, i) => [
               String(i + 1),
-              new Date(r.date).toLocaleString('ar-SY'),
+              formatWesternDateTime(r.date),
               r.partyType,
               r.partyName,
               r.referenceNo,
@@ -229,18 +226,18 @@ export default function FinanceDailyJournal() {
             {rows.map((row, idx) => (
               <tr key={row.id}>
                 <td>{idx + 1}</td>
-                <td>{new Date(row.date).toLocaleString('ar-SY')}</td>
-                <td>{PARTY_TYPE_LABEL[row.partyType] ?? row.partyType}</td>
+                <td>{formatWesternDateTime(row.date)}</td>
+                <td>{financePartyTypeLabel(row.partyType)}</td>
                 <td>{row.partyName}</td>
-                <td>{REFERENCE_TYPE_LABEL[row.referenceType] ?? row.referenceType}</td>
+                <td>{financeReferenceTypeLabel(row.referenceType)}</td>
                 <td>{row.referenceNo || '-'}</td>
                 <td>{row.shipmentNo || '-'}</td>
                 <td>{row.description || '-'}</td>
-                <td className="text-left">{row.debit.toLocaleString()}</td>
-                <td className="text-left">{row.credit.toLocaleString()}</td>
-                <td className="text-left">{row.runningBalance.toLocaleString()}</td>
-                <td>{row.currencyCode}</td>
-                <td>{row.paymentMethod || '-'}</td>
+                <td className="text-left">{formatWesternNumber(row.debit)}</td>
+                <td className="text-left">{formatWesternNumber(row.credit)}</td>
+                <td className="text-left">{formatWesternNumber(row.runningBalance)}</td>
+                <td>{financeCurrencyLabel(row.currencyCode)}</td>
+                <td>{financePaymentMethodLabel(row.paymentMethod)}</td>
                 <td>{row.branchName || '-'}</td>
                 <td>{row.username || '-'}</td>
                 <td>{row.notes || '-'}</td>
@@ -251,9 +248,9 @@ export default function FinanceDailyJournal() {
           <tfoot>
             <tr>
               <td colSpan={8}>الإجماليات</td>
-              <td className="text-left">{totals.totalDebit.toLocaleString()}</td>
-              <td className="text-left">{totals.totalCredit.toLocaleString()}</td>
-              <td className="text-left">{totals.finalBalance.toLocaleString()}</td>
+              <td className="text-left">{formatWesternNumber(totals.totalDebit)}</td>
+              <td className="text-left">{formatWesternNumber(totals.totalCredit)}</td>
+              <td className="text-left">{formatWesternNumber(totals.finalBalance)}</td>
               <td colSpan={5}></td>
             </tr>
           </tfoot>

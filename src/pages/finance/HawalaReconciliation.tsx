@@ -4,6 +4,8 @@ import { httpClient } from '../../lib/api/httpClient';
 import { phase3FinanceGateway } from '../../lib/api/phase3FinanceGateway';
 import { useToast } from '../../components/Toast';
 import FinanceExportToolbar from '../../components/finance/FinanceExportToolbar';
+import { formatFinanceAmount } from '../../lib/finance/financeArabicLabels';
+import { formatWesternDateTime } from '../../lib/format/westernDigits';
 import { buildHawalaReconciliationPrintHtml } from '../../lib/export/financialStatementPrint';
 
 const roleLabel: Record<string, string> = {
@@ -53,7 +55,7 @@ export default function HawalaReconciliation() {
   };
 
   const summary = data?.summary ?? {};
-  const money = (v: unknown) => Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const money = (v: unknown, currency = currencyCode) => formatFinanceAmount(v, currency);
 
   const csvRows = useMemo(() => {
     if (!data) return [];
@@ -133,7 +135,7 @@ export default function HawalaReconciliation() {
               <tbody>
                 {(data.shipments ?? []).map((s: any) => (
                   <tr key={s.id}>
-                    <td>{new Date(s.created_at).toLocaleString('ar-SY')}</td>
+                    <td>{formatWesternDateTime(s.created_at)}</td>
                     <td>{s.shipment_no}</td>
                     <td>{s.destination_city ?? '—'}</td>
                     <td className="text-left">{money(s.hawala_amount)}</td>
@@ -154,7 +156,7 @@ export default function HawalaReconciliation() {
               <tbody>
                 {(data.transfers ?? []).filter((t: any) => !t.shipment_id).map((t: any) => (
                   <tr key={t.id}>
-                    <td>{new Date(t.transfer_date ?? t.created_at).toLocaleString('ar-SY')}</td>
+                    <td>{formatWesternDateTime(t.transfer_date ?? t.created_at)}</td>
                     <td>{t.sender_name} / {t.receiver_name}</td>
                     <td>{roleLabel[t.agent_role] ?? t.agent_role}</td>
                     <td className="text-left">{money(t.amount)}</td>

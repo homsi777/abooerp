@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthProvider';
 import { useToast } from '../../components/Toast';
 import { downloadCsv } from '../../lib/export/csvDownload';
 import FinancialStatementPrintButtons from '../../components/finance/FinancialStatementPrintButtons';
+import { formatWesternDate } from '../../lib/format/westernDigits';
 import { buildAgentCodStatementPrintHtml } from '../../lib/export/financialStatementPrint';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -217,7 +218,7 @@ export default function AgentCodStatement() {
         ],
         allRows.map((r, i) => [
           i + 1,
-          new Date(r.shipmentDate).toLocaleDateString('ar-SY'),
+          formatWesternDate(r.shipmentDate),
           r.shipmentNo,
           ...(isAgentUser ? [] : [r.agentName]),
           r.branchName,
@@ -266,7 +267,7 @@ export default function AgentCodStatement() {
 
   const mapCodRowToPrint = (r: AgentCodRow, index: number) => [
     String(index + 1),
-    new Date(r.shipmentDate).toLocaleDateString('ar-SY'),
+    formatWesternDate(r.shipmentDate),
     r.shipmentNo,
     ...(isAgentUser ? [] : [r.agentName]),
     r.branchName,
@@ -493,7 +494,7 @@ export default function AgentCodStatement() {
                   className={`border-b border-gray-100 hover:bg-blue-50 ${isHighlighted && row.paymentStatus !== 'PAID' ? 'bg-amber-50/40' : ''}`}
                 >
                   <td className="px-2 py-1 text-gray-500">{(page - 1) * 200 + i + 1}</td>
-                  <td className="px-2 py-1 whitespace-nowrap">{new Date(row.shipmentDate).toLocaleDateString('ar-SY')}</td>
+                  <td className="px-2 py-1 whitespace-nowrap">{formatWesternDate(row.shipmentDate)}</td>
                   <td className="px-2 py-1 font-mono font-semibold text-blue-700">{row.shipmentNo}</td>
                   {!isAgentUser && <td className="px-2 py-1">{row.agentName}</td>}
                   <td className="px-2 py-1">{row.branchName}</td>

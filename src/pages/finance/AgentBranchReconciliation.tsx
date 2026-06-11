@@ -10,14 +10,13 @@ import {
   resolveStatementRowReconciliationClass,
 } from '../../lib/agents/agentStatementReconciliation';
 import FinanceExportToolbar from '../../components/finance/FinanceExportToolbar';
+import FinanceCurrencySelect from '../../components/finance/FinanceCurrencySelect';
+import {
+  financeAgentRoleLabel,
+  formatFinanceAmount,
+} from '../../lib/finance/financeArabicLabels';
+import { formatWesternDate, formatWesternDateTime } from '../../lib/format/westernDigits';
 import { buildAgentBranchReconciliationPrintHtml } from '../../lib/export/financialStatementPrint';
-
-const hawalaRoleLabel: Record<string, string> = {
-  origin: 'مصدر (قبض)',
-  destination: 'وجهة (دفع)',
-  both: 'مصدر ووجهة',
-  none: '—',
-};
 
 export default function AgentBranchReconciliation() {
   const [searchParams] = useSearchParams();
@@ -60,7 +59,7 @@ export default function AgentBranchReconciliation() {
   };
 
   const money = (value: unknown, currency = currencyCode || 'USD') =>
-    `${Number(value || 0).toLocaleString('ar-SY', { maximumFractionDigits: 2 })} ${currency}`;
+    formatFinanceAmount(value, currency);
 
   const mainBranch = data?.mainBranch ?? {};
   const hawala = data?.hawalaSection ?? {};
@@ -72,7 +71,7 @@ export default function AgentBranchReconciliation() {
   const csvRows = useMemo(() => {
     if (!data) return [];
     const shipRows = (data.shipments ?? []).map((s: any) => [
-      new Date(s.created_at).toLocaleString('ar-SY'),
+      formatWesternDateTime(s.created_at),
       s.shipment_no,
       s.destination_city ?? '',
       s.prepaid_at_main_branch ?? 0,
@@ -85,7 +84,7 @@ export default function AgentBranchReconciliation() {
     const trRows = (hawala.transfers ?? [])
       .filter((t: any) => !t.shipment_id)
       .map((t: any) => [
-        new Date(t.transfer_date ?? t.created_at).toLocaleString('ar-SY'),
+        formatWesternDateTime(t.transfer_date ?? t.created_at),
         'حوالة',
         t.destination_city ?? '',
         0,
@@ -131,11 +130,7 @@ export default function AgentBranchReconciliation() {
         </select>
         <input type="date" className="form-input" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
         <input type="date" className="form-input" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-        <select className="form-select" value={currencyCode} onChange={(e) => setCurrencyCode(e.target.value)}>
-          <option value="USD">USD</option>
-          <option value="SYP">SYP</option>
-          <option value="TRY">TRY</option>
-        </select>
+        <FinanceCurrencySelect value={currencyCode} onChange={setCurrencyCode} />
         <button type="button" className="toolbar-btn primary" onClick={() => void load()}>تطبيق</button>
         <FinanceExportToolbar
           disabled={loading || !data}
@@ -192,7 +187,7 @@ export default function AgentBranchReconciliation() {
                       .filter((t: any) => !t.shipment_id)
                       .map((t: any) => (
                         <tr key={t.id}>
-                          <td>{new Date(t.transfer_date ?? t.created_at).toLocaleDateString('ar-SY')}</td>
+                          <td>{formatWesternDate(t.transfer_date ?? t.created_at)}</td>
                           <td>{t.sender_name} / {t.receiver_name}</td>
                           <td>{t.destination_city ?? '—'}</td>
                           <td>{hawalaRoleLabel[String(t.agent_role)] ?? t.agent_role}</td>

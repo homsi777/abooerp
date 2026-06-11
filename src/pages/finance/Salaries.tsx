@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthProvider';
 import { useRegisterEscape } from '../../context/EscapeRegistryContext';
 import { downloadCsv } from '../../lib/export/csvDownload';
 import { exportPdfTable } from '../../lib/export/pdfExport';
+import { formatWesternNumber } from '../../lib/format/westernDigits';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -136,7 +137,7 @@ const SALARY_TYPE_AR: Record<'monthly' | 'weekly', string> = {
 
 function fmt(n: string | number): string {
   const v = typeof n === 'string' ? parseFloat(n) : n;
-  return isNaN(v) ? '0' : v.toLocaleString('ar-SY', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  return isNaN(v) ? '0' : formatWesternNumber(v, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
 function today(): string {

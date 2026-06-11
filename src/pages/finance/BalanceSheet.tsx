@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { phase3FinanceGateway } from '../../lib/api/phase3FinanceGateway';
 import { phase15Gateway } from '../../lib/api/phase15Gateway';
 import { useToast } from '../../components/Toast';
+import FinanceCurrencySelect from '../../components/finance/FinanceCurrencySelect';
 import FinanceExportToolbar from '../../components/finance/FinanceExportToolbar';
+import { formatWesternNumber } from '../../lib/format/westernDigits';
 import { buildBalanceSheetPrintHtml } from '../../lib/export/financialStatementPrint';
 
 export default function BalanceSheet() {
@@ -59,9 +61,10 @@ export default function BalanceSheet() {
           <option value="">كل الفروع</option>
           {branches.map((b) => <option key={b.id} value={String(b.id)}>{b.name}</option>)}
         </select>
-        <select className="form-select" value={filters.currencyCode} onChange={(e) => setFilters((p) => ({ ...p, currencyCode: e.target.value }))}>
-          <option value="USD">USD</option><option value="SYP">SYP</option><option value="TRY">TRY</option>
-        </select>
+        <FinanceCurrencySelect
+          value={filters.currencyCode}
+          onChange={(currencyCode) => setFilters((p) => ({ ...p, currencyCode }))}
+        />
         <button type="button" className="toolbar-btn primary" onClick={() => void load()}>تطبيق</button>
         <FinanceExportToolbar
           disabled={loading || sections.length === 0}
@@ -78,9 +81,9 @@ export default function BalanceSheet() {
 
       {summary.totalAssets !== undefined && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="stat-card"><div className="stat-value">{Number(summary.totalAssets).toLocaleString()}</div><div className="stat-label">الأصول</div></div>
-          <div className="stat-card"><div className="stat-value">{Number(summary.totalLiabilities).toLocaleString()}</div><div className="stat-label">الخصوم</div></div>
-          <div className="stat-card"><div className="stat-value">{Number(summary.totalEquity).toLocaleString()}</div><div className="stat-label">حقوق الملكية / النتيجة</div></div>
+          <div className="stat-card"><div className="stat-value">{formatWesternNumber(summary.totalAssets)}</div><div className="stat-label">الأصول</div></div>
+          <div className="stat-card"><div className="stat-value">{formatWesternNumber(summary.totalLiabilities)}</div><div className="stat-label">الخصوم</div></div>
+          <div className="stat-card"><div className="stat-value">{formatWesternNumber(summary.totalEquity)}</div><div className="stat-label">حقوق الملكية / النتيجة</div></div>
           <div className="stat-card"><div className="stat-value">{summary.balanced ? 'متوازن' : 'فارق'}</div><div className="stat-label">التوازن</div></div>
         </div>
       )}
@@ -93,10 +96,10 @@ export default function BalanceSheet() {
               <thead><tr><th>البند</th><th className="text-left">المبلغ</th></tr></thead>
               <tbody>
                 {(section.lines ?? []).map((line: any, idx: number) => (
-                  <tr key={`${section.id}-${idx}`}><td>{line.label}</td><td className="text-left">{Number(line.amount).toLocaleString()}</td></tr>
+                  <tr key={`${section.id}-${idx}`}><td>{line.label}</td><td className="text-left">{formatWesternNumber(line.amount)}</td></tr>
                 ))}
               </tbody>
-              <tfoot><tr><td>الإجمالي</td><td className="text-left">{Number(section.total).toLocaleString()}</td></tr></tfoot>
+              <tfoot><tr><td>الإجمالي</td><td className="text-left">{formatWesternNumber(section.total)}</td></tr></tfoot>
             </table>
           </div>
         ))}

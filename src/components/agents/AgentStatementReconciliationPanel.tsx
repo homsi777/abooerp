@@ -8,6 +8,8 @@ import {
   type AgentReconciliationMetrics,
 } from '../../lib/agents/agentStatementReconciliation';
 import { useToast } from '../Toast';
+import { formatFinanceAmount } from '../../lib/finance/financeArabicLabels';
+import { formatWesternDate } from '../../lib/format/westernDigits';
 
 type QuickVoucherKind = 'receipt' | 'payment';
 
@@ -20,7 +22,7 @@ type Props = {
 };
 
 function money(value: number, currency = 'USD') {
-  return `${Number(value || 0).toLocaleString('ar-SY', { maximumFractionDigits: 2 })} ${currency}`;
+  return formatFinanceAmount(value, currency);
 }
 
 export default function AgentStatementReconciliationPanel({
@@ -155,7 +157,7 @@ export default function AgentStatementReconciliationPanel({
 
       <div className="flex flex-wrap gap-2 text-sm">
         <Link className="toolbar-btn text-xs" to={`/finance/agent-cod-statement?agentId=${encodeURIComponent(metrics.agentId)}&currencyCode=${encodeURIComponent(metrics.currencyCode)}`}>
-          كشف COD / الذمم
+          كشف مبالغ التسليم / الذمم
         </Link>
         <Link className="toolbar-btn text-xs" to={`/finance/general-ledger?partyType=agent&search=${encodeURIComponent(metrics.agentName)}`}>
           دفتر الأستاذ
@@ -242,7 +244,7 @@ export default function AgentStatementReconciliationPanel({
 
 function ReconciliationStatusBanner({ metrics }: { metrics: AgentReconciliationMetrics }) {
   const periodLabel = metrics.lastReconciledAt
-    ? `من ${new Date(metrics.lastReconciledAt).toLocaleDateString('ar-SY')} حتى الآن`
+    ? `من ${formatWesternDate(metrics.lastReconciledAt)} حتى الآن`
     : 'من بداية الحساب حتى الآن';
 
   if (metrics.isMatched) {

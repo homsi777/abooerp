@@ -5,6 +5,13 @@ import { getBackendIdFromSynthetic, phase15Gateway } from '../../lib/api/phase15
 import { useToast } from '../../components/Toast';
 import { downloadCsv } from '../../lib/export/csvDownload';
 import FinanceExportToolbar from '../../components/finance/FinanceExportToolbar';
+import FinanceCurrencySelect from '../../components/finance/FinanceCurrencySelect';
+import {
+  financeBalanceDirectionLabel,
+  financeCurrencyLabel,
+  financePartyTypeLabel,
+} from '../../lib/finance/financeArabicLabels';
+import { formatWesternDateTime, formatWesternNumber } from '../../lib/format/westernDigits';
 import { buildDebitCreditPrintHtml } from '../../lib/export/financialStatementPrint';
 
 type Row = {
@@ -20,12 +27,6 @@ type Row = {
   balanceDirection: string;
   lastMovementAt: string | null;
   movementCount: number;
-};
-
-const PARTY_TYPE_LABEL: Record<string, string> = {
-  agent: 'وكيل',
-  customer: 'عميل',
-  sender_receiver: 'مرسل/مستلم',
 };
 
 export default function GeneralLedger() {
@@ -117,14 +118,14 @@ export default function GeneralLedger() {
         i + 1,
         r.partyCode,
         r.partyName,
-        PARTY_TYPE_LABEL[r.partyType] ?? r.partyType,
+        financePartyTypeLabel(r.partyType),
         r.branchName,
-        r.currencyCode,
+        financeCurrencyLabel(r.currencyCode),
         r.totalDebit,
         r.totalCredit,
         r.balance,
-        r.balanceDirection,
-        r.lastMovementAt ? new Date(r.lastMovementAt).toLocaleString('ar-SY') : '',
+        financeBalanceDirectionLabel(r.balanceDirection),
+        r.lastMovementAt ? formatWesternDateTime(r.lastMovementAt) : '',
         r.movementCount,
       ]),
     );
@@ -134,9 +135,9 @@ export default function GeneralLedger() {
   const buildSubtitle = () => {
     const subtitleParts: string[] = [];
     if (filters.search.trim()) subtitleParts.push(`بحث: ${filters.search.trim()}`);
-    if (filters.partyType) subtitleParts.push(`نوع الحساب: ${PARTY_TYPE_LABEL[filters.partyType] ?? filters.partyType}`);
+    if (filters.partyType) subtitleParts.push(`نوع الحساب: ${financePartyTypeLabel(filters.partyType)}`);
     if (filters.branchId) subtitleParts.push(`الفرع: ${branches.find((b) => String(b.id) === filters.branchId)?.name ?? filters.branchId}`);
-    if (filters.currencyCode) subtitleParts.push(`العملة: ${filters.currencyCode}`);
+    if (filters.currencyCode) subtitleParts.push(`العملة: ${financeCurrencyLabel(filters.currencyCode)}`);
     if (filters.dateFrom || filters.dateTo) subtitleParts.push(`من ${filters.dateFrom || '—'} إلى ${filters.dateTo || '—'}`);
     return subtitleParts.length ? subtitleParts.join(' | ') : undefined;
   };
@@ -158,9 +159,9 @@ export default function GeneralLedger() {
       </div>
 
       <div className="grid grid-cols-4 gap-3 mb-3">
-        <div className="stat-card"><div className="stat-value">{totals.totalDebit.toLocaleString()}</div><div className="stat-label">إجمالي المدين</div></div>
-        <div className="stat-card"><div className="stat-value">{totals.totalCredit.toLocaleString()}</div><div className="stat-label">إجمالي الدائن</div></div>
-        <div className="stat-card"><div className="stat-value">{totals.net.toLocaleString()}</div><div className="stat-label">صافي الرصيد</div></div>
+        <div className="stat-card"><div className="stat-value">{formatWesternNumber(totals.totalDebit)}</div><div className="stat-label">إجمالي المدين</div></div>
+        <div className="stat-card"><div className="stat-value">{formatWesternNumber(totals.totalCredit)}</div><div className="stat-label">إجمالي الدائن</div></div>
+        <div className="stat-card"><div className="stat-value">{formatWesternNumber(totals.net)}</div><div className="stat-label">صافي الرصيد</div></div>
         <div className="stat-card"><div className="stat-value">{totals.parties}</div><div className="stat-label">عدد الحسابات</div></div>
       </div>
 
@@ -174,9 +175,12 @@ export default function GeneralLedger() {
             <option value="">الفرع</option>
             {branches.map((b) => <option key={b.id} value={String(b.id)}>{b.name}</option>)}
           </select>
-          <select className="form-select" value={filters.currencyCode} onChange={(e) => setFilters((p) => ({ ...p, currencyCode: e.target.value }))}>
-            <option value="">العملة</option><option value="USD">USD</option><option value="SYP">SYP</option><option value="TRY">TRY</option>
-          </select>
+          <FinanceCurrencySelect
+            allowEmpty
+            emptyLabel="العملة"
+            value={filters.currencyCode}
+            onChange={(currencyCode) => setFilters((p) => ({ ...p, currencyCode }))}
+          />
           <input type="date" className="form-input" value={filters.dateFrom} onChange={(e) => setFilters((p) => ({ ...p, dateFrom: e.target.value }))} />
           <input type="date" className="form-input" value={filters.dateTo} onChange={(e) => setFilters((p) => ({ ...p, dateTo: e.target.value }))} />
           <select className="form-select" value={filters.balanceDirection} onChange={(e) => setFilters((p) => ({ ...p, balanceDirection: e.target.value }))}>
@@ -193,9 +197,9 @@ export default function GeneralLedger() {
                 String(i + 1),
                 r.partyCode,
                 r.partyName,
-                r.partyType,
+                financePartyTypeLabel(r.partyType),
                 r.branchName,
-                r.currencyCode,
+                financeCurrencyLabel(r.currencyCode),
                 String(r.totalDebit),
                 String(r.totalCredit),
                 String(r.balance),
@@ -236,14 +240,14 @@ export default function GeneralLedger() {
                 <td>{idx + 1}</td>
                 <td>{row.partyCode}</td>
                 <td>{row.partyName}</td>
-                <td>{PARTY_TYPE_LABEL[row.partyType] ?? row.partyType}</td>
-                <td>{row.branchName || '-'}</td>
-                <td>{row.currencyCode}</td>
-                <td className="text-left">{row.totalDebit.toLocaleString()}</td>
-                <td className="text-left">{row.totalCredit.toLocaleString()}</td>
-                <td className="text-left">{row.balance.toLocaleString()}</td>
-                <td>{row.balanceDirection}</td>
-                <td>{row.lastMovementAt ? new Date(row.lastMovementAt).toLocaleString('ar-SY') : '-'}</td>
+                <td>{financePartyTypeLabel(row.partyType)}</td>
+                <td>{row.branchName || '—'}</td>
+                <td>{financeCurrencyLabel(row.currencyCode)}</td>
+                <td className="text-left">{formatWesternNumber(row.totalDebit)}</td>
+                <td className="text-left">{formatWesternNumber(row.totalCredit)}</td>
+                <td className="text-left">{formatWesternNumber(row.balance)}</td>
+                <td>{financeBalanceDirectionLabel(row.balanceDirection)}</td>
+                <td>{row.lastMovementAt ? formatWesternDateTime(row.lastMovementAt) : '—'}</td>
                 <td>{row.movementCount}</td>
                 <td>
                   <div className="flex flex-wrap gap-1">
@@ -264,9 +268,9 @@ export default function GeneralLedger() {
           <tfoot>
             <tr>
               <td colSpan={6}>الإجمالي</td>
-              <td className="text-left">{totals.totalDebit.toLocaleString()}</td>
-              <td className="text-left">{totals.totalCredit.toLocaleString()}</td>
-              <td className="text-left">{totals.net.toLocaleString()}</td>
+              <td className="text-left">{formatWesternNumber(totals.totalDebit)}</td>
+              <td className="text-left">{formatWesternNumber(totals.totalCredit)}</td>
+              <td className="text-left">{formatWesternNumber(totals.net)}</td>
               <td colSpan={4}></td>
             </tr>
           </tfoot>

@@ -10,6 +10,8 @@ import {
   resolveStatementRowReconciliationClass,
 } from '../../lib/agents/agentStatementReconciliation';
 import FinanceExportToolbar from '../../components/finance/FinanceExportToolbar';
+import { formatFinanceAmount } from '../../lib/finance/financeArabicLabels';
+import { formatWesternDateTime } from '../../lib/format/westernDigits';
 import { buildAgentSettlementPrintHtml } from '../../lib/export/financialStatementPrint';
 
 export default function AgentSettlement() {
@@ -52,7 +54,7 @@ export default function AgentSettlement() {
   };
 
   const money = (value: unknown, currency = currencyCode || 'USD') =>
-    `${Number(value || 0).toLocaleString('ar-SY', { maximumFractionDigits: 2 })} ${currency}`;
+    formatFinanceAmount(value, currency);
 
   const settlement = data?.settlement ?? {};
   const metrics = data ? getAgentReconciliationMetrics(data) : null;
@@ -62,7 +64,7 @@ export default function AgentSettlement() {
   const csvRows = useMemo(() => {
     if (!data) return [];
     const shipRows = (data.shipments ?? []).map((s: any) => [
-      new Date(s.created_at).toLocaleString('ar-SY'),
+      formatWesternDateTime(s.created_at),
       s.shipment_no,
       s.destination_city ?? '',
       s.transfer_fee,
