@@ -2823,3 +2823,176 @@ body {
     display: none !important;
   }
 }
+
+/* ── Finance vouchers — Excel grid ── */
+.voucher-view-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.voucher-excel-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.voucher-excel-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #dbe3ea;
+  background: #f8fafc;
+}
+
+.voucher-excel-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.voucher-excel-toolbar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.voucher-excel-scroll {
+  overflow: auto;
+  max-height: min(70vh, 720px);
+}
+
+.voucher-excel-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.voucher-excel-grid th,
+.voucher-excel-grid td {
+  border: 1px solid #c5d0dc;
+  padding: 4px 5px;
+  vertical-align: middle;
+}
+
+.voucher-excel-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #dce8e5;
+  font-weight: 800;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.voucher-excel-grid tbody tr.row-receipt {
+  background: #f0fdf4;
+}
+
+.voucher-excel-grid tbody tr.row-payment {
+  background: #fef2f2;
+}
+
+.voucher-excel-grid tbody tr.row-draft {
+  box-shadow: inset 3px 0 0 #eab308;
+}
+
+.voucher-excel-grid tbody tr.row-confirmed {
+  box-shadow: inset 3px 0 0 #16a34a;
+}
+
+.voucher-excel-grid tbody tr.row-error {
+  box-shadow: inset 3px 0 0 #dc2626;
+  background: #fff1f2 !important;
+}
+
+.voucher-grid-input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 4px 6px;
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+.voucher-grid-input:focus {
+  border-color: #6366f1;
+  background: #fff;
+  outline: none;
+}
+
+.voucher-excel-grid .col-party input,
+.voucher-excel-grid .col-party .smart-party-input-wrap input {
+  font-size: 12px;
+  padding: 4px 6px;
+}
+
+.voucher-grid-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.voucher-grid-status.status-new {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.voucher-grid-status.status-draft {
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+.voucher-grid-status.status-confirmed {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.voucher-grid-save-btn {
+  border: 1px solid #6366f1;
+  background: #eef2ff;
+  color: #4338ca;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.voucher-excel-actions-row td {
+  background: #f1f5f9;
+  border-top: 2px solid #94a3b8;
+}
+
+.voucher-excel-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 8px;
+}
+
+.voucher-excel-footer-note {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.voucher-register-filters {
+  padding: 12px 14px;
+}
+
+.voucher-register-filters-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.voucher-register-filters-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}

@@ -5,47 +5,18 @@ import { phase3FinanceGateway, type BackendCashboxRecord } from '../../lib/api/p
 import { useToast } from '../../components/Toast';
 import { useAuth } from '../../context/AuthProvider';
 import SmartPartyInput from '../../components/SmartPartyInput';
-import type { PaymentVoucher, ReceiptVoucher } from '../../types';
+import VoucherExcelGrid from '../../components/finance/VoucherExcelGrid';
+import VoucherRegisterPanel, { type RegisterFilters } from '../../components/finance/VoucherRegisterPanel';
+import type { ReceiptVoucher, PaymentVoucher } from '../../types';
 import { downloadCsv } from '../../lib/export/csvDownload';
 import { exportPdfTable } from '../../lib/export/pdfExport';
-
-interface Voucher {
-  id: number;
-  kind: 'receipt' | 'payment';
-  voucherNo: string;
-  voucherType: string;
-  date: string;
-  relatedParty: string;
-  customerId?: string | null;
-  agentId?: string | null;
-  relatedEntityType?: string | null;
-  amount: number;
-  currency: CurrencyCode;
-  amountUsd: number;
-  cashBox: string;
-  cashboxId?: string;
-  description: string;
-  refNo: string;
-  status: string;
-}
+import { type Voucher, voucherStatusColors, voucherStatusLabelAr } from './voucherTypes';
 
 const voucherTypes = ['سند قبض', 'سند دفع', 'تحويل', 'تسوية'];
+const statusColors = voucherStatusColors;
+const voucherStatusLabel = voucherStatusLabelAr;
 
-const statusColors: Record<string, string> = {
-  'مؤكد': 'bg-green-100 text-green-800',
-  'معلق': 'bg-yellow-100 text-yellow-800',
-  'مرفوض': 'bg-red-100 text-red-800',
-  draft: 'bg-yellow-100 text-yellow-800',
-  confirmed: 'bg-green-100 text-green-800',
-  cancelled: 'bg-red-100 text-red-800',
-};
-
-function voucherStatusLabel(s: string): string {
-  if (s === 'draft') return 'مسودة';
-  if (s === 'confirmed') return 'مؤكد';
-  if (s === 'cancelled') return 'ملغى';
-  return s;
-}
+type VoucherViewMode = 'entry' | 'register';
 
 function mapReceipt(r: ReceiptVoucher, rates: ReturnType<typeof getExchangeRatesToUsd>): Voucher {
   const currency = (r.currency || 'USD') as CurrencyCode;
@@ -108,8 +79,14 @@ export default function FinanceVouchers() {
 
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [cashboxes, setCashboxes] = useState<BackendCashboxRecord[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
+  const [viewMode, setViewMode] = useState<VoucherViewMode>('entry');
+  const [registerFilters, setRegisterFilters] = useState<RegisterFilters>({
+    searchTerm: '',
+    typeFilter: '',
+    statusFilter: '',
+    dateFrom: '',
+    dateTo: '',
+  });
   const [showForm, setShowForm] = useState(false);
   const [editingVoucher, setEditingVoucher] = useState<Voucher | null>(null);
   const [formData, setFormData] = useState({
@@ -258,11 +235,17 @@ export default function FinanceVouchers() {
   const pendingCount = useMemo(() => vouchers.filter((v) => v.status === 'draft').length, [vouchers]);
   const totalNet = useMemo(() => totalReceipt - totalPayment, [totalPayment, totalReceipt]);
 
-  const filteredVouchers = vouchers.filter((v) => {
-    if (searchTerm && !v.voucherNo.includes(searchTerm) && !v.relatedParty.includes(searchTerm)) return false;
-    if (typeFilter && v.voucherType !== typeFilter) return false;
-    return true;
-  });
+  const filteredVouchers = useMemo(() => {
+    return vouchers.filter((v) => {
+      const { searchTerm, typeFilter, statusFilter, dateFrom, dateTo } = registerFilters;
+      if (searchTerm && !v.voucherNo.includes(searchTerm) && !v.relatedParty.includes(searchTerm)) return false;
+      if (typeFilter && v.voucherType !== typeFilter) return false;
+      if (statusFilter && v.status !== statusFilter) return false;
+      if (dateFrom && v.date < dateFrom) return false;
+      if (dateTo && v.date > dateTo) return false;
+      return true;
+    });
+  }, [vouchers, registerFilters]);
 
   const exportCsv = () => {
     downloadCsv(
@@ -287,8 +270,12 @@ export default function FinanceVouchers() {
 
   const exportPdf = async () => {
     const subtitleParts: string[] = [];
-    if (typeFilter) subtitleParts.push(`النوع: ${typeFilter}`);
-    if (searchTerm.trim()) subtitleParts.push(`بحث: ${searchTerm.trim()}`);
+    if (registerFilters.typeFilter) subtitleParts.push(`النوع: ${registerFilters.typeFilter}`);
+    if (registerFilters.statusFilter) subtitleParts.push(`الحالة: ${voucherStatusLabel(registerFilters.statusFilter)}`);
+    if (registerFilters.searchTerm.trim()) subtitleParts.push(`بحث: ${registerFilters.searchTerm.trim()}`);
+    if (registerFilters.dateFrom || registerFilters.dateTo) {
+      subtitleParts.push(`التاريخ: ${registerFilters.dateFrom || '…'} → ${registerFilters.dateTo || '…'}`);
+    }
     const subtitle = subtitleParts.length ? subtitleParts.join(' | ') : undefined;
 
     const result = await exportPdfTable({
@@ -335,6 +322,7 @@ export default function FinanceVouchers() {
 
   const handleEdit = (voucher: Voucher) => {
     if (isAgent || !canUpdateVoucher) return;
+    setViewMode('entry');
     setEditingVoucher(voucher);
     setFormData({
       voucherNo: voucher.voucherNo,
@@ -471,14 +459,22 @@ export default function FinanceVouchers() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-bold">السندات المالية</h2>
-        <div className="flex gap-2">
-          <button type="button" onClick={() => setShowForm(!showForm)} className="toolbar-btn primary">
-            + سند جديد
+        <div className="voucher-view-tabs">
+          <button
+            type="button"
+            className={`toolbar-btn${viewMode === 'entry' ? ' primary' : ''}`}
+            onClick={() => setViewMode('entry')}
+          >
+            إدخال سريع
           </button>
-          <button type="button" className="toolbar-btn">
-            طباعة
+          <button
+            type="button"
+            className={`toolbar-btn${viewMode === 'register' ? ' primary' : ''}`}
+            onClick={() => setViewMode('register')}
+          >
+            سجل السندات
           </button>
         </div>
       </div>
@@ -504,7 +500,7 @@ export default function FinanceVouchers() {
 
       {showForm && (
         <div className="card">
-          <div className="card-header">سند جديد</div>
+          <div className="card-header">{editingVoucher ? `تعديل ${editingVoucher.voucherNo}` : 'سند متقدم (مناقلة / تعديل)'}</div>
           <div className="grid grid-cols-4 gap-4">
             <div className="form-group">
               <label className="form-label">نوع السند</label>
@@ -692,91 +688,30 @@ export default function FinanceVouchers() {
         </div>
       )}
 
-      <div className="card">
-        <div className="flex flex-wrap gap-2 items-center">
-          <input
-            type="text"
-            placeholder="بحث برقم السند أو الجهة..."
-            className="form-input flex-1 min-w-[240px]"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-          <select className="form-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-            <option value="">كل الأنواع</option>
-            {voucherTypes
-              .filter((type) => type === 'سند قبض' || type === 'سند دفع')
-              .map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-          </select>
-          <button type="button" className="toolbar-btn" onClick={exportCsv}>
-            تصدير Excel (CSV)
-          </button>
-          <button type="button" className="toolbar-btn" onClick={() => void exportPdf()}>
-            تصدير PDF
-          </button>
-        </div>
-      </div>
+      {viewMode === 'entry' ? (
+        <VoucherExcelGrid
+          cashboxes={cashboxes}
+          canBackdate={canBackdateVoucher}
+          canUpdate={canUpdateVoucher}
+          todayIso={todayIso}
+          onSaved={loadVouchers}
+        />
+      ) : (
+        <VoucherRegisterPanel
+          vouchers={filteredVouchers}
+          filters={registerFilters}
+          onFiltersChange={(patch) => setRegisterFilters((prev) => ({ ...prev, ...patch }))}
+          displayRelatedParty={displayRelatedParty}
+          voucherStatusLabel={voucherStatusLabel}
+          statusColors={statusColors}
+          isAgent={isAgent}
+          canUpdateVoucher={canUpdateVoucher}
+          onEdit={handleEdit}
+          onExportCsv={exportCsv}
+          onExportPdf={() => void exportPdf()}
+        />
+      )}
 
-      <div className="card overflow-auto">
-        <table className="data-grid">
-          <thead>
-            <tr>
-              <th>رقم السند</th>
-              <th>النوع</th>
-              <th>التاريخ</th>
-              <th>الجهة</th>
-              <th>المبلغ الأصلي</th>
-              <th>المبلغ USD</th>
-              <th>الصندوق</th>
-              <th>الوصف</th>
-              <th>المرجع</th>
-              <th>الحالة</th>
-              {!isAgent && canUpdateVoucher && <th>إجراء</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {filteredVouchers.map((voucher) => (
-              <tr
-                key={`${voucher.kind}-${voucher.id}`}
-                className={
-                  voucher.kind === 'receipt'
-                    ? 'bg-green-50 hover:bg-green-100/60'
-                    : voucher.kind === 'payment'
-                      ? 'bg-red-50 hover:bg-red-100/60'
-                      : undefined
-                }
-              >
-                <td>{voucher.voucherNo}</td>
-                <td>{voucher.voucherType}</td>
-                <td>{voucher.date}</td>
-                <td>{displayRelatedParty(voucher)}</td>
-                <td className="text-left">{formatCurrency(voucher.amount, voucher.currency)}</td>
-                <td className="text-left">
-                  {formatCurrency(voucher.amountUsd || convertToUsd(voucher.amount, voucher.currency, rates), 'USD')}
-                </td>
-                <td>{voucher.cashBox}</td>
-                <td>{voucher.description}</td>
-                <td>{voucher.refNo || '-'}</td>
-                <td>
-                  <span className={`status-badge ${statusColors[voucher.status] ?? 'bg-gray-100 text-gray-800'}`}>
-                    {voucherStatusLabel(voucher.status)}
-                  </span>
-                </td>
-                {!isAgent && canUpdateVoucher && (
-                  <td>
-                    <button type="button" className="toolbar-btn" onClick={() => handleEdit(voucher)}>
-                      تعديل
-                    </button>
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 }
