@@ -12,8 +12,8 @@ import retrofit2.converter.moshi.MoshiConverterFactory
 object NetworkModule {
     private var apiService: ApiService? = null
     
-    // VPS URL provided by the user
-    private const val DEFAULT_BASE_URL = "http://65.21.136.217:2730/api/v1/" 
+    // Cloud API — same origin as https://www.abooerp.org/
+    private const val DEFAULT_BASE_URL = "https://www.abooerp.org/api/v1/"
     
     fun provideApiService(context: Context): ApiService {
         if (apiService == null) {

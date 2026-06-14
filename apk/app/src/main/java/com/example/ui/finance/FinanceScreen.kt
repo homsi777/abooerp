@@ -18,10 +18,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import android.widget.Toast
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.*
 import com.example.ui.*
+
+private val decimalKeyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -492,6 +496,8 @@ private fun CreateAgentVoucherDialog(
                     { amount = it },
                     label = { Text("المبلغ USD") },
                     modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = decimalKeyboardOptions,
                 )
                 OutlinedTextField(
                     description,
@@ -533,8 +539,20 @@ private fun CreateTransferDialog(onDismiss: () -> Unit, onConfirm: (CreateAgentT
                 OutlinedTextField(sender, { sender = it }, label = { Text("اسم المرسل") })
                 OutlinedTextField(receiver, { receiver = it }, label = { Text("اسم المستلم") })
                 OutlinedTextField(destination, { destination = it }, label = { Text("الوجهة") })
-                OutlinedTextField(amount, { amount = it }, label = { Text("المبلغ USD") })
-                OutlinedTextField(fee, { fee = it }, label = { Text("أجرة الحوالة USD") })
+                OutlinedTextField(
+                    amount,
+                    { amount = it },
+                    label = { Text("المبلغ USD") },
+                    singleLine = true,
+                    keyboardOptions = decimalKeyboardOptions,
+                )
+                OutlinedTextField(
+                    fee,
+                    { fee = it },
+                    label = { Text("أجرة الحوالة USD") },
+                    singleLine = true,
+                    keyboardOptions = decimalKeyboardOptions,
+                )
                 OutlinedTextField(notes, { notes = it }, label = { Text("ملاحظات") })
             }
         },

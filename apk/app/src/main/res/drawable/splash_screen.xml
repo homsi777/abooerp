@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/splash_background" />
+    <item
+        android:bottom="80dp"
+        android:left="48dp"
+        android:right="48dp"
+        android:top="80dp">
+        <bitmap
+            android:gravity="center"
+            android:src="@drawable/company_logo" />
+    </item>
+</layer-list>

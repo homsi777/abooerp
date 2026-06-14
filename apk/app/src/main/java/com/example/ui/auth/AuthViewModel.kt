@@ -64,25 +64,28 @@ class AuthViewModel(
                     _authState.value = AuthState.Error(errorMsg)
                 }
             } catch (e: retrofit2.HttpException) {
-                // Try to parse the error body if possible, fallback to standard messages
                 val errorBody = e.response()?.errorBody()?.string()
-                val errorMessage = if (errorBody?.contains("DEVICE_NOT_REGISTERED") == true) {
-                    "الجهاز غير مصرح له بالدخول"
-                } else if (e.code() == 401 || errorBody?.contains("Invalid username or password") == true) {
-                    "اسم المستخدم أو كلمة المرور غير صحيحة"
-                } else if (e.code() >= 500) {
-                    "حدث خطأ في الخادم"
-                } else {
-                    "استجابة غير متوقعة من الخادم"
+                val serverError = extractApiError(errorBody)
+                val errorMessage = when {
+                    serverError == "DEVICE_NOT_REGISTERED" -> "الجهاز غير مصرح له بالدخول"
+                    serverError == "DEVICE_BLOCKED" -> "هذا الجهاز محظور"
+                    serverError == "DEVICE_PENDING_APPROVAL" -> "الجهاز بانتظار موافقة الإدارة"
+                    serverError == "Invalid username or password." ||
+                        serverError == "Invalid username or password" ||
+                        e.code() == 401 -> "اسم المستخدم أو كلمة المرور غير صحيحة"
+                    e.code() >= 500 -> "حدث خطأ في الخادم"
+                    !serverError.isNullOrBlank() -> serverError
+                    else -> "استجابة غير متوقعة من الخادم"
                 }
                 _authState.value = AuthState.Error(errorMessage)
             } catch (e: java.io.IOException) {
                 _authState.value = AuthState.Error("تعذر الاتصال بالخادم")
             } catch (e: Exception) {
-                val errorMessage = if (e.message?.contains("DEVICE_NOT_REGISTERED") == true) {
-                    "الجهاز غير مصرح له بالدخول"
-                } else {
-                    "استجابة غير متوقعة من الخادم"
+                val errorMessage = when {
+                    e.message?.contains("DEVICE_NOT_REGISTERED") == true -> "الجهاز غير مصرح له بالدخول"
+                    e.message?.contains("Expected") == true || e.message?.contains("Non-null") == true ->
+                        "تعذّر قراءة استجابة الخادم — تأكد من نشر آخر إصدار للـ API"
+                    else -> "استجابة غير متوقعة من الخادم"
                 }
                 _authState.value = AuthState.Error(errorMessage)
             }
@@ -106,6 +109,14 @@ class AuthViewModel(
         if (_authState.value is AuthState.Error) {
             _authState.value = AuthState.Idle
         }
+    }
+
+    private fun extractApiError(errorBody: String?): String? {
+        if (errorBody.isNullOrBlank()) return null
+        val match = """"error"\s*:\s*"((?:\\.|[^"\\])*)"""".toRegex().find(errorBody) ?: return null
+        return match.groupValues[1]
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
     }
 
     class Factory(

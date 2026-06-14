@@ -1,6 +1,6 @@
 # نشر الويب + API على VPS (تطبيق الوكيل APK يتصل بنفس السحابة)
 
-> **APK** يتصل بـ `http://65.21.136.217:2730/api/v1/` — أي ميزة جديدة في `agent-portal` تحتاج **نشر Backend + Frontend** على السحابة قبل تجربة التطبيق.
+> **APK** يتصل بـ `https://www.abooerp.org/api/v1/` — أي ميزة جديدة في `agent-portal` تحتاج **نشر Backend + Frontend** على السحابة قبل تجربة التطبيق.
 
 ## نشر سريع (موصى به)
 
@@ -39,9 +39,9 @@ sudo nginx -t && sudo systemctl reload nginx
 ## تحقق بعد النشر
 
 ```bash
-curl -s http://127.0.0.1:2730/api/v1/system/lan-health
+curl -s https://www.abooerp.org/api/v1/system/lan-health
 # أو من المتصفح:
-# http://65.21.136.217:2730/#/login
+# https://www.abooerp.org/#/login
 ```
 
 **ميزات بوابة الوكيل (APK):**

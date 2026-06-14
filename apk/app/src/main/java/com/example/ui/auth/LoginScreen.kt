@@ -1,15 +1,18 @@
 package com.example.ui.auth
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -17,9 +20,12 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.R
 
-import androidx.compose.ui.layout.ContentScale
-import coil.compose.AsyncImage
+private val BrandGreen = Color(0xFF0F4D3A)
+private val BrandGreenDark = Color(0xFF083528)
+private val HeroLight = Color(0xFFF5F9F7)
+private val ScreenDark = Color(0xFF121212)
 
 @Composable
 fun LoginScreen(
@@ -37,155 +43,151 @@ fun LoginScreen(
     }
 
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(androidx.compose.ui.graphics.Color(0xFF121212))
+                .background(ScreenDark),
         ) {
-            // Background Image - Shipping Company Theme
-            AsyncImage(
-                model = "https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?q=80&w=1000&auto=format&fit=crop",
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight(0.7f) // Takes upper 70% of screen
-            )
-
-            // Smooth elegant gradient overlay fading into dark
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
+                    .weight(0.50f)
                     .background(
-                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                        Brush.verticalGradient(
                             colors = listOf(
-                                androidx.compose.ui.graphics.Color.Transparent,
-                                androidx.compose.ui.graphics.Color(0xFF121212).copy(alpha = 0.5f),
-                                androidx.compose.ui.graphics.Color(0xFF121212).copy(alpha = 0.9f),
-                                androidx.compose.ui.graphics.Color(0xFF121212)
+                                Color.White,
+                                HeroLight,
+                                BrandGreen.copy(alpha = 0.12f),
+                                ScreenDark,
                             ),
-                            startY = 0f
-                        )
-                    )
-            )
+                        ),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.company_logo),
+                    contentDescription = "شعار عبو المحمود",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth(0.96f)
+                        .fillMaxHeight(0.94f)
+                        .padding(horizontal = 12.dp, vertical = 24.dp),
+                )
 
-            // Form Content beautifully aligned at the bottom
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(72.dp)
+                        .align(Alignment.BottomCenter)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    ScreenDark.copy(alpha = 0.35f),
+                                    ScreenDark,
+                                ),
+                            ),
+                        ),
+                )
+            }
+
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
+                    .fillMaxWidth()
+                    .weight(0.50f)
+                    .padding(horizontal = 28.dp)
+                    .padding(bottom = 24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Bottom
+                verticalArrangement = Arrangement.SpaceBetween,
             ) {
-                // Header Texts
                 Column(
                     horizontalAlignment = Alignment.Start,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 40.dp)
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
-                        text = "شركة عبو",
-                        style = MaterialTheme.typography.displaySmall,
-                        fontWeight = FontWeight.Black,
-                        color = androidx.compose.ui.graphics.Color.White,
-                    )
-                    Text(
-                        text = "المحمود للشحن",
-                        style = MaterialTheme.typography.headlineMedium,
+                        text = "نظام إدارة الوكلاء",
+                        style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary, // The elegant purple
-                        modifier = Modifier.padding(bottom = 12.dp)
+                        color = Color.White,
                     )
                     Text(
-                        text = "قم بتسجيل الدخول للوصول إلى نظام إدارة الوكلاء",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.7f)
+                        text = "سجّل الدخول للمتابعة",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.68f),
+                        modifier = Modifier.padding(top = 6.dp, bottom = 20.dp),
                     )
-                }
 
-                // Premium Dark TextField
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it },
-                    label = { Text("اسم المستخدم") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 16.dp),
-                    singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.2f),
-                        focusedLabelColor = MaterialTheme.colorScheme.primary,
-                        unfocusedLabelColor = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.6f),
-                        focusedTextColor = androidx.compose.ui.graphics.Color.White,
-                        unfocusedTextColor = androidx.compose.ui.graphics.Color.White,
-                        focusedContainerColor = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.05f),
-                        unfocusedContainerColor = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.05f),
-                        cursorColor = MaterialTheme.colorScheme.primary
+                    val fieldColors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = BrandGreen,
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.22f),
+                        focusedLabelColor = BrandGreen,
+                        unfocusedLabelColor = Color.White.copy(alpha = 0.62f),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedContainerColor = Color.White.copy(alpha = 0.06f),
+                        unfocusedContainerColor = Color.White.copy(alpha = 0.04f),
+                        cursorColor = BrandGreen,
                     )
-                )
 
-                // Premium Dark TextField
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("كلمة المرور") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 32.dp),
-                    singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
-                    visualTransformation = PasswordVisualTransformation(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.2f),
-                        focusedLabelColor = MaterialTheme.colorScheme.primary,
-                        unfocusedLabelColor = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.6f),
-                        focusedTextColor = androidx.compose.ui.graphics.Color.White,
-                        unfocusedTextColor = androidx.compose.ui.graphics.Color.White,
-                        focusedContainerColor = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.05f),
-                        unfocusedContainerColor = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.05f),
-                        cursorColor = MaterialTheme.colorScheme.primary
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { username = it },
+                        label = { Text("اسم المستخدم") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 14.dp),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = fieldColors,
                     )
-                )
 
-                if (authState is AuthState.Error) {
-                    Text(
-                        text = (authState as AuthState.Error).message,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.labelMedium,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(bottom = 16.dp)
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text("كلمة المرور") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        visualTransformation = PasswordVisualTransformation(),
+                        colors = fieldColors,
                     )
+
+                    if (authState is AuthState.Error) {
+                        Text(
+                            text = (authState as AuthState.Error).message,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelMedium,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 12.dp),
+                        )
+                    }
                 }
 
                 Button(
                     onClick = { viewModel.login(username, password) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp)
-                        .padding(bottom = 8.dp),
+                        .height(56.dp),
                     shape = RoundedCornerShape(16.dp),
                     enabled = authState !is AuthState.Loading,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = androidx.compose.ui.graphics.Color.White
-                    )
+                        containerColor = BrandGreen,
+                        contentColor = Color.White,
+                        disabledContainerColor = BrandGreenDark.copy(alpha = 0.5f),
+                    ),
                 ) {
                     if (authState is AuthState.Loading) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(24.dp),
-                            color = androidx.compose.ui.graphics.Color.White,
-                            strokeWidth = 3.dp
+                            color = Color.White,
+                            strokeWidth = 3.dp,
                         )
                     } else {
                         Text("دخول", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-                
-                Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }

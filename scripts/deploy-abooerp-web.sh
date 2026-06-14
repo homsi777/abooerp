@@ -4,7 +4,7 @@ set -euo pipefail
 BRANCH="${ABOOERP_DEPLOY_BRANCH:-web-browser-mode}"
 FRONTEND_DIR="${ABOOERP_FRONTEND_DIR:-/var/www/abooerp/frontend}"
 WEB_OWNER="${ABOOERP_WEB_OWNER:-www-data:www-data}"
-PUBLIC_URL="${ABOOERP_PUBLIC_URL:-http://65.21.136.217:2730}"
+PUBLIC_URL="${ABOOERP_PUBLIC_URL:-https://www.abooerp.org}"
 
 current_branch="$(git branch --show-current)"
 if [[ "$current_branch" != "$BRANCH" ]]; then
