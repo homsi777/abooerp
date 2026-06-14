@@ -79,6 +79,38 @@ fun agentRoleLabel(value: String?): String = when (value?.uppercase()) {
     else -> "غير محدد"
 }
 
+fun voucherStatusLabel(value: String?): String = when (value?.lowercase()) {
+    "draft" -> "بانتظار اعتماد الفرع"
+    "confirmed" -> "معتمد"
+    "cancelled" -> "مرفوض / ملغى"
+    else -> statusLabel(value)
+}
+
+fun formatIsoDateOnly(value: String?): String {
+    if (value.isNullOrBlank()) return "—"
+    return value.take(10).replace('-', '/')
+}
+
+fun buildAgentVoucherShareText(
+    kindLabelAr: String?,
+    voucherNo: String?,
+    counterpartyLabel: String?,
+    amount: Double?,
+    currency: String?,
+    description: String?,
+    status: String?,
+    createdAt: String?,
+): String = """
+    شركة عبو المحمود
+    سند وكيل — ${safeText(kindLabelAr)}
+    رقم السند: ${safeText(voucherNo)}
+    الجهة: ${safeText(counterpartyLabel ?: "الفرع الرئيسي")}
+    المبلغ: ${money(amount, currency)}
+    البيان: ${safeText(description)}
+    الحالة: ${voucherStatusLabel(status)}
+    التاريخ: ${formatDate(createdAt)}
+""".trimIndent()
+
 fun referenceTypeLabel(value: String?): String = when (value?.uppercase()) {
     "SHIPMENT" -> "شحنة"
     "TRANSFER" -> "حوالة"

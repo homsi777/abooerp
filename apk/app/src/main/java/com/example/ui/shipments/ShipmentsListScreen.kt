@@ -20,7 +20,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.CreateShipmentRequest
 import com.example.data.Shipment
+import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material3.rememberDatePickerState
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import com.example.ui.formatDate
+import com.example.ui.formatIsoDateOnly
 import com.example.ui.money
 import com.example.ui.safeText
 import com.example.ui.statusLabel
@@ -29,19 +35,47 @@ import com.example.ui.statusLabel
 @Composable
 fun ShipmentsListScreen(viewModel: ShipmentsViewModel, onBack: () -> Unit, onShipmentClick: (Shipment) -> Unit) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val selectedDate by viewModel.selectedDate.collectAsStateWithLifecycle()
     var showCreateDialog by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val damascusZone = remember { ZoneId.of("Asia/Damascus") }
+    val todayIso = remember { LocalDate.now(damascusZone).toString() }
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("الشحنات") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع") }
-                },
-                actions = {
-                    IconButton(onClick = { showCreateDialog = true }) { Icon(Icons.Default.Add, contentDescription = "شحنة جديدة") }
-                    IconButton(onClick = viewModel::loadShipments) { Icon(Icons.Default.Refresh, contentDescription = "تحديث") }
-                },
-            )
+            Column {
+                TopAppBar(
+                    title = { Text("الشحنات") },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع") }
+                    },
+                    actions = {
+                        IconButton(onClick = { showCreateDialog = true }) { Icon(Icons.Default.Add, contentDescription = "شحنة جديدة") }
+                        IconButton(onClick = viewModel::loadShipments) { Icon(Icons.Default.Refresh, contentDescription = "تحديث") }
+                    },
+                )
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FilterChip(
+                        selected = selectedDate == todayIso,
+                        onClick = viewModel::selectToday,
+                        label = { Text("اليوم") },
+                    )
+                    FilterChip(
+                        selected = selectedDate != todayIso,
+                        onClick = { showDatePicker = true },
+                        label = { Text(formatIsoDateOnly(selectedDate)) },
+                        leadingIcon = { Icon(Icons.Default.CalendarToday, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    )
+                    FilterChip(
+                        selected = false,
+                        onClick = viewModel::selectYesterday,
+                        label = { Text("أمس") },
+                    )
+                }
+            }
         },
     ) { padding ->
         PullToRefreshBox(
@@ -61,7 +95,10 @@ fun ShipmentsListScreen(viewModel: ShipmentsViewModel, onBack: () -> Unit, onShi
                         Button(onClick = viewModel::loadShipments) { Text("إعادة المحاولة") }
                     }
                     is ShipmentsState.Success -> if (current.shipments.isEmpty()) {
-                        Text("لا توجد شحنات حالياً", modifier = Modifier.align(Alignment.Center))
+                        Text(
+                            "لا توجد شحنات في ${formatIsoDateOnly(current.selectedDate)}",
+                            modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                        )
                     } else {
                         LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             items(current.shipments, key = { it.id }) { shipment ->
@@ -81,6 +118,27 @@ fun ShipmentsListScreen(viewModel: ShipmentsViewModel, onBack: () -> Unit, onShi
                 showCreateDialog = false
             },
         )
+    }
+    if (showDatePicker) {
+        val initialMillis = runCatching {
+            LocalDate.parse(selectedDate).atStartOfDay(damascusZone).toInstant().toEpochMilli()
+        }.getOrElse { System.currentTimeMillis() }
+        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        val picked = Instant.ofEpochMilli(millis).atZone(damascusZone).toLocalDate().toString()
+                        viewModel.setSelectedDate(picked)
+                    }
+                    showDatePicker = false
+                }) { Text("تطبيق") }
+            },
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("إلغاء") } },
+        ) {
+            DatePicker(state = datePickerState)
+        }
     }
 }
 

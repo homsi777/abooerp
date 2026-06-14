@@ -349,3 +349,25 @@ data class LinkedShipment(
     val id: String?,
     val shipmentNo: String?
 )
+
+@JsonClass(generateAdapter = false)
+data class AgentVoucher(
+    val id: String,
+    val voucherNo: String?,
+    val kind: String?,
+    val kindLabelAr: String?,
+    val status: String?,
+    val amount: Double?,
+    val currency: String?,
+    val description: String?,
+    val createdAt: String?,
+    val counterpartyLabel: String? = "الفرع الرئيسي",
+)
+
+@JsonClass(generateAdapter = false)
+data class CreateAgentVoucherRequest(
+    val kind: String,
+    val amount: Double,
+    val currency: String = "USD",
+    val description: String,
+)

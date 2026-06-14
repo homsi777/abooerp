@@ -326,6 +326,8 @@ function internalVoucherPartyLabel(row: BackendVoucher, fallback: string): strin
     const match = String(row.notes ?? '').match(/^\s*جهة:\s*([^-|]+)/);
     return match?.[1]?.trim() || 'جهة يدوية';
   }
+  if (row.related_entity_type === 'agent_remittance') return 'توريد وكيل — الفرع الرئيسي';
+  if (row.related_entity_type === 'agent_receipt_from_branch') return 'استلام وكيل — الفرع الرئيسي';
   return fallback;
 }
 

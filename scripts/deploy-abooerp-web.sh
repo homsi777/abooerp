@@ -45,6 +45,9 @@ npm run server:migrate
 echo "Building browser frontend"
 npm run build
 
+echo "Building backend"
+npm run server:build
+
 echo "Publishing frontend to: $FRONTEND_DIR"
 sudo install -d -m 0755 "$FRONTEND_DIR"
 sudo find "$FRONTEND_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
@@ -52,7 +55,14 @@ sudo cp -r dist/. "$FRONTEND_DIR/"
 sudo chown -R "$WEB_OWNER" "$FRONTEND_DIR"
 
 echo "Reloading Nginx"
-sudo systemctl reload nginx
+sudo nginx -t && sudo systemctl reload nginx
+
+if command -v pm2 >/dev/null 2>&1; then
+  echo "Restarting backend (pm2)"
+  pm2 restart abooerp-backend --update-env
+else
+  echo "pm2 not found — restart backend manually: npm run server:prod:start"
+fi
 
 cat <<EOF
 

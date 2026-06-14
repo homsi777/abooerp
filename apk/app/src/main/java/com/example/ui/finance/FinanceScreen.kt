@@ -35,8 +35,10 @@ fun FinanceScreen(
     var selectedTab by remember { mutableIntStateOf(0) }
     var selectedMovement by remember { mutableStateOf<Movement?>(null) }
     var showCreateTransfer by remember { mutableStateOf(false) }
+    var showCreateVoucher by remember { mutableStateOf(false) }
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
-    val tabs = listOf("ملخص الحساب", "كشف الحساب", "الحوالات")
+    val shareVoucher by viewModel.shareVoucher.collectAsStateWithLifecycle()
+    val tabs = listOf("ملخص الحساب", "كشف الحساب", "الحوالات", "السندات")
 
     Scaffold(
         topBar = {
@@ -52,6 +54,11 @@ fun FinanceScreen(
                         if (selectedTab == 2) {
                             IconButton(onClick = { showCreateTransfer = true }) {
                                 Icon(Icons.Default.Add, contentDescription = "إنشاء حوالة")
+                            }
+                        }
+                        if (selectedTab == 3) {
+                            IconButton(onClick = { showCreateVoucher = true }) {
+                                Icon(Icons.Default.Add, contentDescription = "إرسال سند")
                             }
                         }
                         IconButton(onClick = viewModel::loadData) {
@@ -79,7 +86,11 @@ fun FinanceScreen(
                     is FinanceState.Success -> when (selectedTab) {
                         0 -> FinancialSummaryView(current.financial)
                         1 -> AccountStatementView(current.account) { selectedMovement = it }
-                        else -> TransfersView(current.transfers, current.transfersUnavailable, viewModel::completeTransfer, onOpenShipment)
+                        2 -> TransfersView(current.transfers, current.transfersUnavailable, viewModel::completeTransfer, onOpenShipment)
+                        else -> AgentVouchersView(
+                            vouchers = current.vouchers,
+                            onCreate = { showCreateVoucher = true },
+                        )
                     }
                 }
             }
@@ -99,6 +110,46 @@ fun FinanceScreen(
             onConfirm = {
                 viewModel.createTransfer(it)
                 showCreateTransfer = false
+            },
+        )
+    }
+
+    if (showCreateVoucher) {
+        CreateAgentVoucherDialog(
+            onDismiss = { showCreateVoucher = false },
+            onConfirm = { kind, amount, description ->
+                viewModel.createVoucher(kind, amount, description)
+                showCreateVoucher = false
+            },
+        )
+    }
+
+    shareVoucher?.let { voucher ->
+        val shareText = buildAgentVoucherShareText(
+            kindLabelAr = voucher.kindLabelAr,
+            voucherNo = voucher.voucherNo,
+            counterpartyLabel = voucher.counterpartyLabel,
+            amount = voucher.amount,
+            currency = voucher.currency,
+            description = voucher.description,
+            status = voucher.status,
+            createdAt = voucher.createdAt,
+        )
+        AlertDialog(
+            onDismissRequest = { viewModel.clearShareVoucher() },
+            icon = { Icon(Icons.Default.Share, contentDescription = null) },
+            title = { Text("تم إرسال السند") },
+            text = {
+                Text("يمكنك مشاركة تفاصيل السند مع الفرع الرئيسي عبر واتساب أو أي تطبيق آخر.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    shareArabicText(context, "سند وكيل", shareText)
+                    viewModel.clearShareVoucher()
+                }) { Text("مشاركة الآن") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.clearShareVoucher() }) { Text("لاحقاً") }
             },
         )
     }
@@ -353,6 +404,116 @@ private fun TransfersView(
             }
         }
     }
+}
+
+@Composable
+private fun AgentVouchersView(vouchers: List<AgentVoucher>, onCreate: () -> Unit) {
+    val context = LocalContext.current
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("سندات الوكيل ↔ الفرع الرئيسي", fontWeight = FontWeight.Bold)
+                    Text(
+                        "عند الإرسال يُسجَّل السند بانتظار اعتماد المحاسب/المدير. لا تُحرَّك الأموال حتى الاعتماد.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Button(onClick = onCreate, modifier = Modifier.fillMaxWidth()) {
+                        Text("إرسال سند جديد")
+                    }
+                }
+            }
+        }
+        if (vouchers.isEmpty()) {
+            item { Text("لا توجد سندات مرسلة حالياً", modifier = Modifier.padding(vertical = 24.dp)) }
+        }
+        items(vouchers, key = { it.id }) { voucher ->
+            val shareText = buildAgentVoucherShareText(
+                kindLabelAr = voucher.kindLabelAr,
+                voucherNo = voucher.voucherNo,
+                counterpartyLabel = voucher.counterpartyLabel,
+                amount = voucher.amount,
+                currency = voucher.currency,
+                description = voucher.description,
+                status = voucher.status,
+                createdAt = voucher.createdAt,
+            )
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(safeText(voucher.kindLabelAr), fontWeight = FontWeight.Bold)
+                        Text(voucherStatusLabel(voucher.status), color = MaterialTheme.colorScheme.primary)
+                    }
+                    Text("رقم السند: ${safeText(voucher.voucherNo)}")
+                    Text("الجهة: ${safeText(voucher.counterpartyLabel)}")
+                    Text("المبلغ: ${money(voucher.amount, voucher.currency)}", fontWeight = FontWeight.Bold)
+                    Text("البيان: ${safeText(voucher.description)}")
+                    Text("التاريخ: ${formatDate(voucher.createdAt)}", style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(
+                        onClick = { shareArabicText(context, "سند وكيل", shareText) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("مشاركة السند")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CreateAgentVoucherDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (kind: String, amount: Double, description: String) -> Unit,
+) {
+    var kind by remember { mutableIntStateOf(0) }
+    var amount by remember { mutableStateOf("") }
+    var description by remember { mutableStateOf("") }
+    val parsedAmount = amount.toDoubleOrNull() ?: 0.0
+    val valid = parsedAmount > 0 && description.isNotBlank()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("إرسال سند للاعتماد") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("الجهة ثابتة: الفرع الرئيسي", style = MaterialTheme.typography.bodySmall)
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    SegmentedButton(selected = kind == 0, onClick = { kind = 0 }, shape = SegmentedButtonDefaults.itemShape(0, 2)) {
+                        Text("توريد للفرع", maxLines = 1)
+                    }
+                    SegmentedButton(selected = kind == 1, onClick = { kind = 1 }, shape = SegmentedButtonDefaults.itemShape(1, 2)) {
+                        Text("استلام من الفرع", maxLines = 1)
+                    }
+                }
+                OutlinedTextField(
+                    amount,
+                    { amount = it },
+                    label = { Text("المبلغ USD") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    description,
+                    { description = it },
+                    label = { Text("البيان") },
+                    placeholder = { Text("مثال: توريد محصلات — شام كاش") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = valid,
+                onClick = {
+                    val voucherKind = if (kind == 0) "remittance" else "receipt_from_branch"
+                    onConfirm(voucherKind, parsedAmount, description.trim())
+                },
+            ) { Text("حفظ وإرسال") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
+    )
 }
 
 @Composable

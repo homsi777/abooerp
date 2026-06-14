@@ -24,7 +24,7 @@ interface ApiService {
     suspend fun getWorkspaceSummary(): ApiResponse<WorkspaceSummary>
 
     @GET("agent-portal/shipments")
-    suspend fun getShipments(): ApiResponse<List<Shipment>>
+    suspend fun getShipments(@Query("date") date: String? = null): ApiResponse<List<Shipment>>
 
     @POST("agent-portal/shipments")
     suspend fun createShipment(@Body request: CreateShipmentRequest): ApiResponse<Shipment>
@@ -70,4 +70,10 @@ interface ApiService {
 
     @POST("agent-portal/transfers/{id}/complete")
     suspend fun completeTransfer(@Path("id") id: String): ApiResponse<AgentTransfer>
+
+    @GET("agent-portal/vouchers")
+    suspend fun getAgentVouchers(): ApiResponse<List<AgentVoucher>>
+
+    @POST("agent-portal/vouchers")
+    suspend fun createAgentVoucher(@Body request: CreateAgentVoucherRequest): ApiResponse<AgentVoucher>
 }

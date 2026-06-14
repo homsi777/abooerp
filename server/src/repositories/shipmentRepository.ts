@@ -110,10 +110,14 @@ export class ShipmentRepository {
     }
   }
 
-  async list(scope?: DataScope) {
+  async list(scope?: DataScope, filters?: { date?: string }) {
     const conditions: string[] = ['s.deleted_at is null'];
     const values: unknown[] = [];
     this.applyScope(conditions, values, scope, 's');
+    if (filters?.date) {
+      values.push(filters.date);
+      conditions.push(`coalesce(s.effective_date, s.created_at::date) = $${values.length}::date`);
+    }
 
     const result = await pool.query(
       `

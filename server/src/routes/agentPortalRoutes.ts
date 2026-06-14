@@ -11,6 +11,7 @@ import { normalizeShipmentStatus, type CanonicalShipmentStatus } from '../domain
 import { pool } from '../db/pool.js';
 import { HttpError } from '../utils/errors.js';
 import { AuditService } from '../services/auditService.js';
+import { emit } from '../events/eventBus.js';
 import { calculateShipmentFinancialBreakdown } from '../utils/shipmentFinancialBreakdown.js';
 
 const actionSchema = z.object({
@@ -34,6 +35,10 @@ const transfersQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+const shipmentsQuerySchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
 const createTransferSchema = z.object({
   senderName: z.string().min(1).max(255),
   receiverName: z.string().min(1).max(255),
@@ -42,6 +47,13 @@ const createTransferSchema = z.object({
   currency: z.string().min(1).max(10).default('USD'),
   transferServiceFee: z.coerce.number().min(0).default(0),
   notes: z.string().max(1000).optional(),
+});
+
+const createAgentVoucherSchema = z.object({
+  kind: z.enum(['remittance', 'receipt_from_branch']),
+  amount: z.coerce.number().positive(),
+  currency: z.string().min(1).max(10).default('USD'),
+  description: z.string().min(1).max(1000),
 });
 
 const createShipmentSchema = z.object({
@@ -416,8 +428,57 @@ export function createAgentPortalRouter(
     requirePermissions(['agent_portal.view']),
     asyncHandler(async (req, res) => {
       const scope = parseDataScope(req);
-      const items = await service.list(scope);
+      const query = shipmentsQuerySchema.parse(req.query);
+      const items = await service.list(scope, query.date ? { date: query.date } : undefined);
       res.json({ success: true, data: items });
+    }),
+  );
+
+  router.get(
+    '/vouchers',
+    requirePermissions(['agent_portal.view']),
+    asyncHandler(async (req, res) => {
+      const { companyId, agentId } = requireAgentPortalContext(req);
+      const items = await financeService.agentPortalVouchers().listForAgent(companyId, agentId);
+      res.json({ success: true, data: items });
+    }),
+  );
+
+  router.post(
+    '/vouchers',
+    requirePermissions(['agent_portal.view']),
+    asyncHandler(async (req, res) => {
+      const { companyId, agentId, currency } = requireAgentPortalContext(req);
+      const ctx = (req as any).requestUserContext as any;
+      const branchId = ctx?.scope?.branchId as string | undefined;
+      const payload = createAgentVoucherSchema.parse(req.body);
+      const item = await financeService.agentPortalVouchers().createDraftRequest({
+        companyId,
+        agentId,
+        branchId,
+        userId: ctx?.userId,
+        kind: payload.kind,
+        amount: payload.amount,
+        currency: payload.currency ?? currency,
+        description: payload.description,
+        baseCurrency: ctx?.baseCurrency,
+      });
+      auditService.logAsync({
+        req,
+        action: 'AGENT_PORTAL_VOUCHER_SUBMITTED',
+        entityType: 'payment_voucher',
+        entityId: item.id,
+        metadata: { agentId, kind: payload.kind, amount: payload.amount, currency: payload.currency },
+      });
+      emit({
+        type: 'voucher.created',
+        companyId,
+        branchId: branchId ?? null,
+        entityId: item.id,
+        timestamp: new Date().toISOString(),
+        correlationId: (req as any).correlationId,
+      });
+      res.status(201).json({ success: true, data: item });
     }),
   );
 

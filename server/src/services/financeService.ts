@@ -1,5 +1,6 @@
 import { HttpError } from '../utils/errors.js';
 import type { DataScope } from '../utils/scope.js';
+import { AgentPortalVoucherService } from './agentPortalVoucherService.js';
 import { computeBaseAmountUsd } from '../utils/money.js';
 import { env } from '../config/env.js';
 import { ExchangeRateRepository } from '../repositories/exchangeRateRepository.js';
@@ -93,10 +94,18 @@ export class FinanceService {
 
   private readonly exchangeRateRepository = new ExchangeRateRepository();
 
+  private readonly agentPortalVoucherService: AgentPortalVoucherService;
+
   constructor(
     private readonly repository: FinanceRepository,
     private readonly agentRepository?: AgentRepository,
-  ) {}
+  ) {
+    this.agentPortalVoucherService = new AgentPortalVoucherService(this.repository, this);
+  }
+
+  agentPortalVouchers() {
+    return this.agentPortalVoucherService;
+  }
 
   private async validateConfirmedCashbox(
     cashboxId: string | null | undefined,
@@ -127,7 +136,7 @@ export class FinanceService {
     }
   }
 
-  private async resolveExchangeRateToUsd(options: {
+  async resolveExchangeRateToUsd(options: {
     originalCurrency: string;
     exchangeRateToUsd?: number;
     companyId?: string;
@@ -716,7 +725,7 @@ export class FinanceService {
       agentId: input.agentId ?? scope?.agentId,
     };
     if (payload.status === 'confirmed') {
-      const internalPayment = ['expense', 'salary_record', 'cashbox_transfer', 'manual_party'].includes(String(payload.relatedEntityType ?? ''));
+      const internalPayment = ['expense', 'salary_record', 'cashbox_transfer', 'manual_party', 'agent_remittance', 'agent_receipt_from_branch'].includes(String(payload.relatedEntityType ?? ''));
       if (!internalPayment && !payload.customerId && !payload.senderReceiverId && !payload.agentId) {
         throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
       }
@@ -749,7 +758,7 @@ export class FinanceService {
       const nextCustomerId = payload.customerId ?? existing.customer_id;
       const nextSenderReceiverId = payload.senderReceiverId ?? existing.sender_receiver_id;
       const nextAgentId = payload.agentId ?? existing.agent_id;
-      const internalPayment = ['expense', 'salary_record', 'cashbox_transfer', 'manual_party'].includes(String(payload.relatedEntityType ?? existing.related_entity_type ?? ''));
+      const internalPayment = ['expense', 'salary_record', 'cashbox_transfer', 'manual_party', 'agent_remittance', 'agent_receipt_from_branch'].includes(String(payload.relatedEntityType ?? existing.related_entity_type ?? ''));
       if (!internalPayment && !nextCustomerId && !nextSenderReceiverId && !nextAgentId) {
         throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
       }
@@ -833,7 +842,9 @@ export class FinanceService {
         payload.relatedEntityType === 'expense' ||
         payload.relatedEntityType === 'salary_record' ||
         payload.relatedEntityType === 'cashbox_transfer' ||
-        payload.relatedEntityType === 'manual_party';
+        payload.relatedEntityType === 'manual_party' ||
+        payload.relatedEntityType === 'agent_remittance' ||
+        payload.relatedEntityType === 'agent_receipt_from_branch';
       if (!isInternalPayment && !payload.customerId && !payload.senderReceiverId && !payload.agentId) {
         throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
       }
@@ -871,7 +882,9 @@ export class FinanceService {
         nextRelatedEntityType === 'expense' ||
         nextRelatedEntityType === 'salary_record' ||
         nextRelatedEntityType === 'cashbox_transfer' ||
-        nextRelatedEntityType === 'manual_party';
+        nextRelatedEntityType === 'manual_party' ||
+        nextRelatedEntityType === 'agent_remittance' ||
+        nextRelatedEntityType === 'agent_receipt_from_branch';
       if (!isInternalPayment && !nextCustomerId && !nextSenderReceiverId && !nextAgentId) {
         throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
       }
@@ -889,6 +902,24 @@ export class FinanceService {
       if (current !== next && !allowedVoucherTransitions[current]?.includes(next)) {
         throw new HttpError(400, `Invalid payment voucher status transition: ${current} -> ${next}`);
       }
+    }
+
+    const movingToConfirmed =
+      existing.status === 'draft' && (payload.status ?? existing.status) === 'confirmed';
+    if (
+      movingToConfirmed &&
+      this.agentPortalVoucherService.isAgentPortalSettlementType(existing.related_entity_type)
+    ) {
+      const updated = await this.agentPortalVoucherService.confirmDraftPaymentVoucher(id, scope, {
+        companyId: fxContext?.companyId,
+        baseCurrency: fxContext?.baseCurrency,
+        actorUserId: undefined,
+      });
+      if (updated) {
+        this.invalidateDashboardCache();
+        await this.persistDashboardCacheMetrics();
+      }
+      return updated;
     }
 
     const updatePayload = { ...payload };

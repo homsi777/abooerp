@@ -232,6 +232,10 @@ export default function FinanceVouchers() {
     () => vouchers.filter((v) => v.kind === 'payment').reduce((sum, v) => sum + v.amountUsd, 0),
     [vouchers],
   );
+  const pendingAgentCount = useMemo(
+    () => vouchers.filter((v) => v.status === 'draft' && (v.relatedEntityType === 'agent_remittance' || v.relatedEntityType === 'agent_receipt_from_branch')).length,
+    [vouchers],
+  );
   const pendingCount = useMemo(() => vouchers.filter((v) => v.status === 'draft').length, [vouchers]);
   const totalNet = useMemo(() => totalReceipt - totalPayment, [totalPayment, totalReceipt]);
 
@@ -479,7 +483,7 @@ export default function FinanceVouchers() {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
         <div className="stat-card">
           <div className="stat-value">{formatCurrency(totalReceipt, 'USD')}</div>
           <div className="stat-label">سندات القبض (USD)</div>
@@ -489,8 +493,12 @@ export default function FinanceVouchers() {
           <div className="stat-label">سندات الدفع (USD)</div>
         </div>
         <div className="stat-card">
+          <div className="stat-value">{pendingAgentCount}</div>
+          <div className="stat-label">سندات وكيل بانتظار الاعتماد</div>
+        </div>
+        <div className="stat-card">
           <div className="stat-value">{pendingCount}</div>
-          <div className="stat-label">مسودة</div>
+          <div className="stat-label">مسودة (كل السندات)</div>
         </div>
         <div className="stat-card">
           <div className="stat-value">{formatCurrency(totalNet, 'USD')}</div>

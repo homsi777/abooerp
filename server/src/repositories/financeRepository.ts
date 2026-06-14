@@ -1626,7 +1626,7 @@ export class FinanceRepository {
     return (hq.rows[0]?.id as string) ?? null;
   }
 
-  private async insertCashboxAndMovementForReceipt(client: any, voucher: any) {
+  async insertCashboxAndMovementForReceipt(client: any, voucher: any) {
     await client.query(
       `
       insert into cashbox_transactions(
@@ -1706,7 +1706,7 @@ export class FinanceRepository {
     }
   }
 
-  private async insertCashboxAndMovementForPayment(client: any, voucher: any) {
+  async insertCashboxAndMovementForPayment(client: any, voucher: any) {
     await client.query(
       `
       insert into cashbox_transactions(

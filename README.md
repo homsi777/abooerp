@@ -1,54 +1,55 @@
-cd ~/abooerp && \
-git pull origin web-browser-mode && \
-npm install && \
-npm run build && \
-sudo rm -rf /var/www/abooerp/frontend/* && \
-sudo cp -r dist/* /var/www/abooerp/frontend/ && \
-pm2 restart abooerp-backend --update-env && \
-sudo nginx -t && \
-sudo systemctl reload nginx
+# نشر الويب + API على VPS (تطبيق الوكيل APK يتصل بنفس السحابة)
 
+> **APK** يتصل بـ `http://65.21.136.217:2730/api/v1/` — أي ميزة جديدة في `agent-portal` تحتاج **نشر Backend + Frontend** على السحابة قبل تجربة التطبيق.
 
+## نشر سريع (موصى به)
 
+```bash
 cd ~/abooerp
-git diff package.json          # اختياري: شوف الفرق
-git checkout -- package.json   # تجاهل التعديل المحلي
+git checkout -- dist/
+git clean -fd dist/
 git pull origin web-browser-mode
-npm install
-npm run build
-sudo rm -rf /var/www/abooerp/frontend/*
-sudo cp -r dist/* /var/www/abooerp/frontend/
-pm2 restart abooerp-backend --update-env
-sudo nginx -t && sudo systemctl reload nginx
+bash scripts/deploy-abooerp-web.sh
+```
 
+السكربت ينفّذ: `npm install` → `server:migrate` → بناء الويب → بناء الـ API → نشر `dist/` → `nginx reload` → `pm2 restart abooerp-backend`.
 
+## نشر يدوي (نفس الخطوات)
 
-
-
+```bash
 cd ~/abooerp
-
-# 1) تجاهل تعديلات dist ثم السحب
 git checkout -- dist/
 git clean -fd dist/
 git pull origin web-browser-mode
 
-# 2) تأكد أنك وصلت للcommit الصحيح
 git log -1 --oneline
-# يجب أن يظهر: eeb0d1f تعديل السندات للمحاسب
 
-# 3) تأكد أن الملفات الجديدة موجودة
-ls -la src/components/finance/VoucherExcelGrid.tsx
-
-# 4) بناء ونشر
+npm install
+npm run server:migrate
 npm run build
-# يجب أن ترى: ✓ 1887 modules transformed
+npm run server:build
 
 sudo rm -rf /var/www/abooerp/frontend/*
 sudo cp -r dist/* /var/www/abooerp/frontend/
 
 pm2 restart abooerp-backend --update-env
 sudo nginx -t && sudo systemctl reload nginx
+```
 
+## تحقق بعد النشر
 
+```bash
+curl -s http://127.0.0.1:2730/api/v1/system/lan-health
+# أو من المتصفح:
+# http://65.21.136.217:2730/#/login
+```
 
+**ميزات بوابة الوكيل (APK):**
 
+- `GET /api/v1/agent-portal/shipments?date=YYYY-MM-DD`
+- `GET|POST /api/v1/agent-portal/vouchers`
+
+## تطبيق Android (APK)
+
+يُبنى محلياً من مجلد `apk/` في Android Studio — **لا يُرفع إلى VPS**.  
+بعد نشر السحابة، ثبّت APK على الجهاز وجرب بحساب وكيل من النظام.

@@ -9,6 +9,8 @@ import com.example.data.ShipmentPortalDetails
 import com.example.data.CreateShipmentRequest
 import com.example.network.ApiService
 import java.io.IOException
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,11 +18,16 @@ import kotlinx.coroutines.launch
 
 sealed class ShipmentsState {
     object Loading : ShipmentsState()
-    data class Success(val shipments: List<Shipment>) : ShipmentsState()
+    data class Success(val shipments: List<Shipment>, val selectedDate: String) : ShipmentsState()
     data class Error(val message: String) : ShipmentsState()
 }
 
 class ShipmentsViewModel(private val apiService: ApiService) : ViewModel() {
+    private val damascusZone = ZoneId.of("Asia/Damascus")
+
+    private val _selectedDate = MutableStateFlow(todayIso())
+    val selectedDate: StateFlow<String> = _selectedDate.asStateFlow()
+
     private val _uiState = MutableStateFlow<ShipmentsState>(ShipmentsState.Loading)
     val uiState: StateFlow<ShipmentsState> = _uiState.asStateFlow()
 
@@ -33,13 +40,23 @@ class ShipmentsViewModel(private val apiService: ApiService) : ViewModel() {
         loadShipments()
     }
 
+    fun setSelectedDate(date: String) {
+        _selectedDate.value = date
+        loadShipments()
+    }
+
+    fun selectToday() = setSelectedDate(todayIso())
+
+    fun selectYesterday() = setSelectedDate(LocalDate.now(damascusZone).minusDays(1).toString())
+
     fun loadShipments() {
         viewModelScope.launch {
             _uiState.value = ShipmentsState.Loading
+            val date = _selectedDate.value
             try {
-                val res = apiService.getShipments()
+                val res = apiService.getShipments(date)
                 if (res.success && res.data != null) {
-                    _uiState.value = ShipmentsState.Success(res.data)
+                    _uiState.value = ShipmentsState.Success(res.data, date)
                 } else {
                     _uiState.value = ShipmentsState.Error(res.error ?: "خطأ في تحميل الشحنات")
                 }
@@ -108,7 +125,7 @@ class ShipmentsViewModel(private val apiService: ApiService) : ViewModel() {
                 val response = action()
                 if (response.success) {
                     _actionState.value = "تمت العملية بنجاح"
-                    loadShipments() // Refresh data
+                    loadShipments()
                 } else {
                     _actionState.value = response.error ?: "حدث خطأ أثناء التنفيذ"
                 }
@@ -121,6 +138,8 @@ class ShipmentsViewModel(private val apiService: ApiService) : ViewModel() {
     fun clearActionState() {
         _actionState.value = null
     }
+
+    private fun todayIso(): String = LocalDate.now(damascusZone).toString()
 
     class Factory(private val apiService: ApiService) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")

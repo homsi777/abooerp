@@ -5,8 +5,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.AccountStatement
 import com.example.data.AgentTransfer
-import com.example.data.FinancialStatement
+import com.example.data.AgentVoucher
+import com.example.data.AgentVoucher
 import com.example.data.CreateAgentTransferRequest
+import com.example.data.CreateAgentVoucherRequest
+import com.example.data.FinancialStatement
 import com.example.network.ApiService
 import java.io.IOException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +24,7 @@ sealed class FinanceState {
         val financial: FinancialStatement,
         val account: AccountStatement,
         val transfers: List<AgentTransfer>,
+        val vouchers: List<AgentVoucher>,
         val transfersUnavailable: Boolean = false,
     ) : FinanceState()
     data class Error(val message: String) : FinanceState()
@@ -31,6 +35,8 @@ class FinanceViewModel(private val apiService: ApiService) : ViewModel() {
     val uiState: StateFlow<FinanceState> = _uiState.asStateFlow()
     private val _actionMessage = MutableStateFlow<String?>(null)
     val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
+    private val _shareVoucher = MutableStateFlow<AgentVoucher?>(null)
+    val shareVoucher: StateFlow<AgentVoucher?> = _shareVoucher.asStateFlow()
 
     init {
         loadData()
@@ -42,6 +48,27 @@ class FinanceViewModel(private val apiService: ApiService) : ViewModel() {
                 val response = apiService.createTransfer(request)
                 _actionMessage.value = if (response.success) "تم إنشاء الحوالة وتسجيل قبضها بنجاح" else response.error ?: "تعذر إنشاء الحوالة"
                 if (response.success) loadData()
+            } catch (error: Exception) {
+                _actionMessage.value = errorMessage(error)
+            }
+        }
+    }
+
+    fun createVoucher(kind: String, amount: Double, description: String) {
+        viewModelScope.launch {
+            try {
+                val response = apiService.createAgentVoucher(
+                    CreateAgentVoucherRequest(kind = kind, amount = amount, description = description),
+                )
+                _actionMessage.value = if (response.success) {
+                    "تم إرسال السند — بانتظار اعتماد الفرع الرئيسي"
+                } else {
+                    response.error ?: "تعذر إرسال السند"
+                }
+                if (response.success && response.data != null) {
+                    _shareVoucher.value = response.data
+                    loadData()
+                }
             } catch (error: Exception) {
                 _actionMessage.value = errorMessage(error)
             }
@@ -62,6 +89,10 @@ class FinanceViewModel(private val apiService: ApiService) : ViewModel() {
 
     fun clearActionMessage() {
         _actionMessage.value = null
+    }
+
+    fun clearShareVoucher() {
+        _shareVoucher.value = null
     }
 
     fun loadData() {
@@ -97,7 +128,18 @@ class FinanceViewModel(private val apiService: ApiService) : ViewModel() {
                         throw error
                     }
                 }
-                _uiState.value = FinanceState.Success(financial, account, transfers, transfersUnavailable)
+
+                var vouchers = emptyList<AgentVoucher>()
+                try {
+                    val vouchersResponse = apiService.getAgentVouchers()
+                    if (vouchersResponse.success) {
+                        vouchers = vouchersResponse.data.orEmpty()
+                    }
+                } catch (_: HttpException) {
+                    // Older backend builds may not expose vouchers yet.
+                }
+
+                _uiState.value = FinanceState.Success(financial, account, transfers, vouchers, transfersUnavailable)
             } catch (error: Exception) {
                 _uiState.value = FinanceState.Error(errorMessage(error))
             }

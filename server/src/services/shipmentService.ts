@@ -26,8 +26,8 @@ export class ShipmentService {
     private agentRepository?: AgentRepository,
   ) {}
 
-  list(scope?: DataScope) {
-    return this.repository.list(scope);
+  list(scope?: DataScope, filters?: { date?: string }) {
+    return this.repository.list(scope, filters);
   }
 
   async getById(id: string, scope?: DataScope) {
