@@ -12,6 +12,7 @@ import { licenseGuard } from '../middleware/licenseGuard.js';
 import { calculateShipmentFinancialBreakdown } from '../utils/shipmentFinancialBreakdown.js';
 import { computeAgentRemittanceDue } from '../utils/agentShipmentSettlement.js';
 import { HttpError } from '../utils/errors.js';
+import { buildLedgerFinanceAuditReport } from '../services/ledgerFinanceAuditService.js';
 
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
@@ -226,6 +227,10 @@ const accountingReportQuerySchema = z.object({
 
 const agentReconciliationQuerySchema = accountingReportQuerySchema.extend({
   agentId: z.string().uuid(),
+});
+
+const ledgerFinanceAuditQuerySchema = z.object({
+  fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).default('2026-06-01'),
 });
 
 const closePeriodSchema = z.object({
@@ -819,6 +824,24 @@ export function createFinanceRouter(service: FinanceService) {
         entityType: 'agent_branch_reconciliation',
         entityId: query.agentId,
         metadata: { fromAt: query.fromAt, toAt: query.toAt, currencyCode: query.currencyCode },
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/ledger-finance-audit',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'تحقق الدفter المالي غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = ledgerFinanceAuditQuerySchema.parse(req.query);
+      const companyId = requireCompanyId(req);
+      const data = await buildLedgerFinanceAuditReport(companyId, query.fromDate);
+      auditService.logAsync({
+        req,
+        action: 'LEDGER_FINANCE_AUDIT_GENERATED',
+        entityType: 'ledger_finance_audit',
+        metadata: { fromDate: query.fromDate },
       });
       res.json({ success: true, data });
     }),

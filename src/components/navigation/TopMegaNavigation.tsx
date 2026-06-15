@@ -119,6 +119,7 @@ const NAV_FINANCE_ACCOUNTANT: NavModule = {
   children: [
     { label: 'دفتر الأستاذ — ذمم وأرصدة', path: '/finance/general-ledger', icon: '📒', permission: 'finance.read' },
     { label: 'دفتر اليومية — تفاصيل الحركات', path: '/finance/daily-journal', icon: '📓', permission: 'finance.read' },
+    { label: 'تحقق الدفter ↔ الذمم', path: '/finance/ledger-finance-audit', icon: '✓', permission: 'finance.read' },
     { label: 'مطابقة الوكيل ↔ الفرع', path: '/finance/agent-branch-reconciliation', icon: '🤝', permission: 'finance.read' },
     { label: 'كشف مبالغ التسليم', path: '/finance/agent-cod-statement', icon: '◈', permission: 'finance.read' },
     { label: 'ميزان المراجعة', path: '/finance/trial-balance', icon: '⚖️', permission: 'finance.read' },

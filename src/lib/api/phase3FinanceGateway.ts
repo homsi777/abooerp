@@ -940,6 +940,11 @@ export const phase3FinanceGateway = {
       if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
       return httpClient.get(`/agent-branch-reconciliation?${q.toString()}`);
     },
+    ledgerFinanceAudit: async (filters: { fromDate?: string }) => {
+      const q = new URLSearchParams();
+      if (filters.fromDate) q.set('fromDate', filters.fromDate);
+      return httpClient.get(`/ledger-finance-audit?${q.toString()}`);
+    },
   },
 };
 

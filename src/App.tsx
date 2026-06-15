@@ -25,6 +25,7 @@ import CashBoxMovements from './pages/finance/CashBoxMovements';
 import FinanceVouchers from './pages/finance/Vouchers';
 import FinanceRecords from './pages/finance/Records';
 import DailyJournal from './pages/finance/DailyJournal';
+import LedgerFinanceAudit from './pages/finance/LedgerFinanceAudit';
 import FinanceReports from './pages/finance/Reports';
 import FinanceReportsShell from './pages/finance/reports/FinanceReportsShell';
 import ProfitLossReport from './pages/finance/reports/ProfitLossReport';
@@ -339,6 +340,18 @@ export default function App() {
                       ) : (
                         <RequirePermission permission="finance.read">
                           <DailyJournal />
+                        </RequirePermission>
+                      )
+                    }
+                  />
+                  <Route
+                    path="/finance/ledger-finance-audit"
+                    element={
+                      user?.userType === 'agent' ? (
+                        <Navigate to="/agent-portal" replace />
+                      ) : (
+                        <RequirePermission permission="finance.read">
+                          <LedgerFinanceAudit />
                         </RequirePermission>
                       )
                     }

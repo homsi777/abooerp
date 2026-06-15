@@ -26,6 +26,8 @@
     "server:prepare": "npm run server:db:ensure && npm run server:migrate",
     "server:restore-backup": "node server/scripts/restoreBackup.cjs",
     "server:inspect-ledger": "node server/scripts/inspectLedgerReceipts.cjs",
+    "server:verify-ledger-finance": "node server/scripts/verifyLedgerFinanceSinceDate.cjs",
+    "server:repair-ledger-finance": "tsx server/src/scripts/repairLedgerFinanceSinceDate.ts",
     "server:verify-ledger-scope": "node server/scripts/verifyDailyLedgerScope.cjs",
     "server:activate-license": "node server/scripts/activateProductionLicense.cjs",
     "server:verify-ledger-operators": "node server/scripts/verifyDailyLedgerOperatorScope.cjs",
