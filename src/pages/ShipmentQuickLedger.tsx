@@ -692,6 +692,8 @@ export default function ShipmentQuickLedger() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [activeRowId, setActiveRowId] = useState(1);
+  /** السطر الذي يُحرَّر فيه رقم الإيصال — لا نتحقق من التكرار أثناء الكتابة */
+  const [receiptEditingRowId, setReceiptEditingRowId] = useState<number | null>(null);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [destinationPdfDialogOpen, setDestinationPdfDialogOpen] = useState(false);
@@ -770,6 +772,8 @@ export default function ShipmentQuickLedger() {
   const saveTimersRef = useRef<Record<number, number>>({});
   const saveInFlightRef = useRef<Record<number, Promise<void>>>({});
   const saveRowToServerRef = useRef<(displayRowId: number) => Promise<void>>(async () => {});
+  const receiptEditingRowIdRef = useRef<number | null>(null);
+  const receiptCommittedViaEnterRef = useRef(false);
   const [branchSearch, setBranchSearch] = useState('');
   const [trip, setTrip] = useState({
     line: '',
@@ -1010,12 +1014,17 @@ export default function ShipmentQuickLedger() {
   }, [daySessions, activeSessionId]);
 
   useEffect(() => {
+    receiptEditingRowIdRef.current = receiptEditingRowId;
+  }, [receiptEditingRowId]);
+
+  useEffect(() => {
     setFailedSaveRows(loadFailedSaveRows(trip.date, trip.line));
   }, [trip.date, trip.line]);
 
   const duplicateReceiptRowIds = useMemo(() => {
     const byKey = new Map<string, LedgerRow[]>();
     for (const row of rows) {
+      if (row.id === receiptEditingRowId) continue;
       const key = normalizeReceiptNo(row.receiptNo);
       if (!key) continue;
       const list = byKey.get(key) ?? [];
@@ -1033,7 +1042,7 @@ export default function ShipmentQuickLedger() {
       }
     }
     return dupIds;
-  }, [rows]);
+  }, [rows, receiptEditingRowId]);
 
   const issueRowIds = useMemo(() => {
     const ids = new Set<number>(duplicateReceiptRowIds);
@@ -1525,20 +1534,6 @@ export default function ShipmentQuickLedger() {
   };
 
   const updateRow = (id: number, field: keyof LedgerRow, value: string, skipTariff = false) => {
-    if (field === 'receiptNo') {
-      const normalized = normalizeName(value);
-      if (normalized) {
-        const self = rowsRef.current.find((entry) => entry.id === id);
-        if (self) {
-          const dup = findReceiptConflictForRow({ ...self, receiptNo: normalized }, rowsRef.current);
-          if (dup) {
-            showToast(describeReceiptConflict(rowsRef.current, { ...self, receiptNo: normalized }, dup), 'error');
-            return;
-          }
-        }
-      }
-    }
-
     setRows((prev) => {
       const before = prev.find((row) => row.id === id);
       const mapped = prev.map((row) => {
@@ -1575,7 +1570,46 @@ export default function ShipmentQuickLedger() {
     if (field === 'receiptNo' || field === 'destination' || field === 'sender' || field === 'receiver') {
       clearFailedSaveRow(id);
     }
-    queueRowSave(id);
+    if (field !== 'receiptNo') {
+      queueRowSave(id);
+    }
+  };
+
+  const validateReceiptNoCommit = (rowId: number): boolean => {
+    const row = rowsRef.current.find((entry) => entry.id === rowId);
+    if (!row) return true;
+    const normalized = normalizeName(row.receiptNo);
+    if (!normalized) return true;
+    const dup = findReceiptConflictForRow(row, rowsRef.current);
+    if (!dup) return true;
+    showToast(describeReceiptConflict(rowsRef.current, row, dup), 'error');
+    return false;
+  };
+
+  const commitReceiptNoCell = (rowId: number) => {
+    if (receiptCommittedViaEnterRef.current) {
+      receiptCommittedViaEnterRef.current = false;
+      return;
+    }
+    setReceiptEditingRowId(null);
+    if (validateReceiptNoCommit(rowId)) {
+      flushRowSave(rowId);
+    }
+  };
+
+  const handleReceiptKeyDown = (event: KeyboardEvent<HTMLInputElement>, rowId: number) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (!validateReceiptNoCommit(rowId)) return;
+      receiptCommittedViaEnterRef.current = true;
+      setReceiptEditingRowId(null);
+      const fields = Array.from(document.querySelectorAll<HTMLElement>('[data-ledger-field="true"]'));
+      const currentIndex = fields.indexOf(event.currentTarget as HTMLElement);
+      focusEditable(fields[currentIndex + 1]);
+      flushRowSave(rowId);
+      return;
+    }
+    focusNext(event);
   };
 
   const syncPostedShipmentInBackground = (
@@ -1682,6 +1716,7 @@ export default function ShipmentQuickLedger() {
     }
     const row = rowsRef.current.find((r) => r.id === displayRowId);
     if (!row) return;
+    if (receiptEditingRowIdRef.current === displayRowId) return;
     if (!shouldPersistRow(row)) return;
     const dup = findReceiptConflictForRow(row, rowsRef.current);
     if (dup) {
@@ -3857,9 +3892,12 @@ export default function ShipmentQuickLedger() {
                       autoComplete="off"
                       value={row.receiptNo}
                       disabled={locked}
-                      onFocus={() => setActiveRowId(row.id)}
-                      onKeyDown={focusNext}
-                      onBlur={() => flushRowSave(row.id)}
+                      onFocus={() => {
+                        setActiveRowId(row.id);
+                        setReceiptEditingRowId(row.id);
+                      }}
+                      onKeyDown={(e) => handleReceiptKeyDown(e, row.id)}
+                      onBlur={() => commitReceiptNoCell(row.id)}
                       onChange={(e) => updateRow(row.id, 'receiptNo', e.target.value)}
                       title={rowIssue ?? (duplicateReceiptRowIds.has(row.id) ? 'رقم الإيصال مكرر' : undefined)}
                     />
