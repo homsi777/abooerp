@@ -111,13 +111,36 @@ function buildNavDataEntry(): NavModule[] {
 
 const NAV_DATA_ENTRY: NavModule[] = buildNavDataEntry();
 
+/** مالية محاسب: الذمم والأرصدة أولاً — تُبنى تلقائياً من حفظ دفتر الشحن، لا من السندات */
+const NAV_FINANCE_ACCOUNTANT: NavModule = {
+  id: 'finance',
+  label: 'الذمم والمالية',
+  icon: '💰',
+  children: [
+    { label: 'دفتر الأستاذ — ذمم وأرصدة', path: '/finance/general-ledger', icon: '📒', permission: 'finance.read' },
+    { label: 'دفتر اليومية — تفاصيل الحركات', path: '/finance/daily-journal', icon: '📓', permission: 'finance.read' },
+    { label: 'مطابقة الوكيل ↔ الفرع', path: '/finance/agent-branch-reconciliation', icon: '🤝', permission: 'finance.read' },
+    { label: 'كشف مبالغ التسليم', path: '/finance/agent-cod-statement', icon: '◈', permission: 'finance.read' },
+    { label: 'ميزان المراجعة', path: '/finance/trial-balance', icon: '⚖️', permission: 'finance.read' },
+    { label: 'قائمة المركز المالي', path: '/finance/balance-sheet', icon: '📋', permission: 'finance.read' },
+    { label: 'التقارير المالية', path: '/finance/reports', icon: '📈', permission: 'finance.read' },
+    { label: 'أرباح وخسائر', path: '/finance/reports/profit-loss', icon: '📊', permission: 'finance.read' },
+    { label: 'تعريف الأسعار', path: '/finance/tariffs', icon: '💲', permission: 'finance.read', divider: true },
+    { label: 'السندات (قبض/دفع)', path: '/finance/vouchers', icon: '📜', permission: 'finance.vouchers.view' },
+    { label: 'الصناديق', path: '/finance/cashboxes', icon: '💵', permission: 'finance.cashboxes.view' },
+    { label: 'المصاريف', path: '/finance/expenses', icon: '💳', permission: 'finance.read' },
+    { label: 'الرواتب والسلف', path: '/finance/salaries', icon: '👨‍💼', permission: 'finance.read' },
+    { label: 'إقفال الفترات', path: '/finance/period-closing', icon: '🔒', permission: 'finance.read' },
+  ],
+};
+
 /** محاسب: مالية + حوالات + وكلاء + تقارير + العملاء */
 const NAV_ACCOUNTANT: NavModule[] = [
   { id: 'home', label: 'الرئيسية', icon: '🏠', path: '/dashboard' },
   ...(NAV_MODULES.filter((m) => m.id === 'transfers')),
   ...(NAV_MODULES.filter((m) => m.id === 'customers')),
   ...(NAV_MODULES.filter((m) => m.id === 'agents')),
-  ...(NAV_MODULES.filter((m) => m.id === 'finance')),
+  NAV_FINANCE_ACCOUNTANT,
   ...(NAV_MODULES.filter((m) => m.id === 'reports')),
 ];
 
