@@ -498,8 +498,12 @@ export function createDailyLedgerRouter(
         const result = await transferService.confirmTransfer(scope, input);
         res.json({ success: true, data: result });
       } catch (error) {
-        const status = (error as { status?: number }).status ?? 500;
-        res.status(status).json({
+        if (error instanceof HttpError) {
+          res.status(error.statusCode).json({ success: false, error: error.message });
+          return;
+        }
+        console.error('[daily-ledger] transfer/confirm failed', error);
+        res.status(500).json({
           success: false,
           error: error instanceof Error ? error.message : 'تعذر نقل الإرسالية.',
         });
@@ -540,8 +544,11 @@ export function createDailyLedgerRouter(
         }
         res.json({ success: true, data: { recorded: input.sessions.length } });
       } catch (error) {
-        const status = (error as { status?: number }).status ?? 500;
-        res.status(status).json({
+        if (error instanceof HttpError) {
+          res.status(error.statusCode).json({ success: false, error: error.message });
+          return;
+        }
+        res.status(500).json({
           success: false,
           error: error instanceof Error ? error.message : 'تعذر تسجيل حدث الطباعة.',
         });

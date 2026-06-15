@@ -168,13 +168,19 @@ export class DailyLedgerTransferService {
       )
       values($1,$2,$3::date,$4,$5,$6,$7,$8,$9,$10,$11,$11)
       on conflict (
-        company_id, branch_id, ledger_date, line_label,
-        coalesce(driver_id, '00000000-0000-0000-0000-000000000000'::uuid)
+        company_id,
+        branch_id,
+        ledger_date,
+        line_label,
+        (coalesce(driver_id, '00000000-0000-0000-0000-000000000000'::uuid))
       ) where deleted_at is null
       do update set
+        origin_label = coalesce(excluded.origin_label, daily_ledger_sessions.origin_label),
+        trip_no = coalesce(excluded.trip_no, daily_ledger_sessions.trip_no),
         vehicle_label = coalesce(excluded.vehicle_label, daily_ledger_sessions.vehicle_label),
         vehicle_id = coalesce(excluded.vehicle_id, daily_ledger_sessions.vehicle_id),
         driver_label = coalesce(excluded.driver_label, daily_ledger_sessions.driver_label),
+        driver_id = coalesce(excluded.driver_id, daily_ledger_sessions.driver_id),
         updated_by = excluded.updated_by,
         updated_at = now()
       returning id
@@ -191,7 +197,11 @@ export class DailyLedgerTransferService {
             params.vehicleId,
             params.userId,
         ]);
-        return result.rows[0].id;
+        const sessionId = result.rows[0]?.id;
+        if (!sessionId) {
+            throw new HttpError(500, 'تعذر إنشاء أو إيجاد الإرسالية الهدف.');
+        }
+        return sessionId;
     }
     async sessionSummary(client, sessionId) {
         const result = await client.query(`
