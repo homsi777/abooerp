@@ -32,6 +32,7 @@ alter table party_financial_movements
       'loading_dues',
       'general_collection',
       'shipment_hawala_trust',
+      'shipment_transfer_service_fee',
       'transfer_principal_collected',
       'transfer_service_fee_collected',
       'transfer_principal_paid',
