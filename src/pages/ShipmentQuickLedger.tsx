@@ -236,6 +236,11 @@ function findReceiptConflictForRow(row: LedgerRow, allRows: LedgerRow[]): Ledger
   return findLocalDuplicateReceipt(allRows, row.receiptNo, row.id) ?? null;
 }
 
+/** هل رقم الإيصال «مثبّت» للتحقق من التكرar (Enter أو محفوظ سابقاً) */
+function isReceiptNoConfirmed(row: LedgerRow, confirmedRowIds: Set<number>): boolean {
+  return Boolean(row.dbId || row.postedShipmentId || confirmedRowIds.has(row.id));
+}
+
 function describeReceiptConflict(
   rows: LedgerRow[],
   row: LedgerRow,
@@ -694,6 +699,8 @@ export default function ShipmentQuickLedger() {
   const [activeRowId, setActiveRowId] = useState(1);
   /** السطر الذي يُحرَّر فيه رقم الإيصال — لا نتحقق من التكرار أثناء الكتابة */
   const [receiptEditingRowId, setReceiptEditingRowId] = useState<number | null>(null);
+  /** أسطر أكّد فيها المستخدم رقم الإيصال بـ Enter — قبلها لا تظهر تحذيرات التكرار */
+  const [confirmedReceiptRowIds, setConfirmedReceiptRowIds] = useState<Set<number>>(() => new Set());
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [destinationPdfDialogOpen, setDestinationPdfDialogOpen] = useState(false);
@@ -1025,6 +1032,7 @@ export default function ShipmentQuickLedger() {
     const byKey = new Map<string, LedgerRow[]>();
     for (const row of rows) {
       if (row.id === receiptEditingRowId) continue;
+      if (!isReceiptNoConfirmed(row, confirmedReceiptRowIds)) continue;
       const key = normalizeReceiptNo(row.receiptNo);
       if (!key) continue;
       const list = byKey.get(key) ?? [];
