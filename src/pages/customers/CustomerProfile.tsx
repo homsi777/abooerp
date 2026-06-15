@@ -127,6 +127,14 @@ export default function CustomerProfile() {
             </h2>
             <InfoRow label="حد الائتمان" value={customer.credit_limit > 0 ? String(customer.credit_limit) : 'غير محدد'} />
             <InfoRow label="العملة الافتراضية" value={customer.default_currency_code} />
+            {(Number(customer.opening_balance_amount ?? 0) > 0) && (
+              <InfoRow
+                label="الرصيد الافتتاحي"
+                value={`${Number(customer.opening_balance_amount).toLocaleString()} ${customer.default_currency_code} — ${
+                  customer.opening_balance_side === 'credit' ? 'له (دائن)' : 'عليه (مدين)'
+                }`}
+              />
+            )}
             {financial && (
               <>
                 <InfoRow
@@ -161,7 +169,7 @@ export default function CustomerProfile() {
             </div>
             {financial && financial.movementCount === 0 && financial.shipmentCount > 0 && (
               <p className="text-xs text-amber-700 mt-3">
-                توجد شحنات مرتبطة بالاسم لكن بدون حركات مالية على هذا العميل — غالباً لأن الشحنة رُحّلت على الوكيل وليس على العميل الحسابي. الشحنات الجديدة (بعد التحديث) تُرحّل تلقائياً على العميل إذا كان المرسل عميلاً حسابياً بنفس الاسم.
+                توجد شحنات مرتبطة باسم العميل (مرسل أو مستلم) لكن بدون حركات مالية على هذا العميل — غالباً لأن الشحنة رُحّلت على الوكيل. الشحنات الجديدة من دفتر الشحن تُربط تلقائياً بالعميل الحسابي إذا تطابق اسم المرسل أو المستلم.
               </p>
             )}
           </div>

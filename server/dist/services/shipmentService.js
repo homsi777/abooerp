@@ -17,8 +17,8 @@ export class ShipmentService {
         this.transfersService = transfersService;
         this.agentRepository = agentRepository;
     }
-    list(scope) {
-        return this.repository.list(scope);
+    list(scope, filters) {
+        return this.repository.list(scope, filters);
     }
     async getById(id, scope) {
         const shipment = await this.repository.getById(id, scope);
@@ -90,6 +90,7 @@ export class ShipmentService {
                             payerPartyKind: payload.payerPartyKind ?? 'RECEIVER',
                         },
                     shipmentRow: created,
+                    effectiveDate: options?.effectiveDate ?? input.effectiveDate,
                 });
                 await client.query('commit');
             }

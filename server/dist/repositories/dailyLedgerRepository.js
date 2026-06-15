@@ -1,7 +1,18 @@
 import { pool } from '../db/pool.js';
+import { resolveDriverIdByLabel } from '../utils/dailyLedgerDriverMatch.js';
 import { HttpError } from '../utils/errors.js';
 function normalizeLedgerReceiptNo(value) {
     return String(value ?? '').trim().replace(/\s+/g, ' ');
+}
+/** يعلّم الجلسة بأنها تحتاج إعادة طباعة إذا كانت قد طُبعت مسبقاً (تعديل/إضافة بعد الطباعة) */
+async function markSessionReprintIfPrinted(client, sessionId, reason) {
+    if (!sessionId)
+        return;
+    await client.query(`
+    update daily_ledger_sessions
+    set reprint_required = true, reprint_reason = $2, updated_at = now()
+    where id = $1::uuid and printed_at is not null and reprint_required = false and deleted_at is null
+    `, [sessionId, reason]);
 }
 async function assertUniqueLedgerReceiptNo(client, companyId, receiptNo, scope, excludeRowId) {
     const normalized = normalizeLedgerReceiptNo(receiptNo);
@@ -52,6 +63,89 @@ async function resolveExistingLedgerRowIdByReceipt(client, companyId, scope, rec
     `, [companyId, scope.branchId, scope.ledgerDate, scope.lineLabel, normalized]);
     return existing.rows[0]?.id ?? null;
 }
+async function resolveDriverLabel(client, resolvedDriverId, driverLabel) {
+    const trimmed = String(driverLabel ?? '').trim().replace(/\s+/g, ' ');
+    if (trimmed)
+        return trimmed;
+    if (!resolvedDriverId)
+        return null;
+    const result = await client.query(`select full_name from drivers where id = $1::uuid limit 1`, [resolvedDriverId]);
+    const name = String(result.rows[0]?.full_name ?? '').trim().replace(/\s+/g, ' ');
+    return name || null;
+}
+async function ensureDriverSession(client, scope, input, resolvedDriverId, resolvedDriverLabel) {
+    const session = await client.query(`
+    insert into daily_ledger_sessions(
+      company_id, branch_id, ledger_date, line_label, origin_label,
+      trip_no, vehicle_label, driver_label, driver_id, vehicle_id,
+      created_by, updated_by
+    )
+    values($1,$2,$3::date,$4,$5,$6,$7,$8,$9,$10,$11,$11)
+    on conflict (
+      company_id,
+      branch_id,
+      ledger_date,
+      line_label,
+      (coalesce(driver_id, '00000000-0000-0000-0000-000000000000'::uuid))
+    ) where deleted_at is null
+    do update set
+      origin_label = excluded.origin_label,
+      trip_no = coalesce(excluded.trip_no, daily_ledger_sessions.trip_no),
+      vehicle_label = coalesce(excluded.vehicle_label, daily_ledger_sessions.vehicle_label),
+      driver_label = coalesce(excluded.driver_label, daily_ledger_sessions.driver_label),
+      driver_id = coalesce(excluded.driver_id, daily_ledger_sessions.driver_id),
+      vehicle_id = coalesce(excluded.vehicle_id, daily_ledger_sessions.vehicle_id),
+      updated_by = excluded.updated_by,
+      updated_at = now()
+    returning *
+    `, [
+        scope.companyId,
+        input.branchId,
+        input.ledgerDate,
+        input.lineLabel,
+        input.originLabel ?? '',
+        input.tripNo ?? null,
+        input.vehicleLabel ?? null,
+        resolvedDriverLabel,
+        resolvedDriverId,
+        input.vehicleId ?? null,
+        input.userId ?? scope.userId ?? null,
+    ]);
+    return session.rows[0];
+}
+async function nextRowNoForSession(client, sessionId) {
+    const result = await client.query(`select max(row_no) as max_no from daily_ledger_rows where session_id = $1::uuid and deleted_at is null`, [sessionId]);
+    return (Number(result.rows[0]?.max_no) || 0) + 1;
+}
+/** ينقل السطر إلى جلسة السائق إذا كان محفوظاً في جلسة «بدون سائق» أو سائق مختلف */
+async function migrateRowToDriverSessionIfNeeded(client, scope, rowId, input, resolvedDriverId, resolvedDriverLabel) {
+    if (!resolvedDriverId)
+        return;
+    const current = await client.query(`
+    select r.session_id, s.driver_id
+    from daily_ledger_rows r
+    join daily_ledger_sessions s on s.id = r.session_id
+    join branches b on b.id = s.branch_id
+    where r.id = $1::uuid
+      and r.deleted_at is null
+      and s.deleted_at is null
+      and b.company_id = $2::uuid
+    `, [rowId, scope.companyId]);
+    if (!current.rows.length)
+        return;
+    const { session_id: currentSessionId, driver_id: currentDriverId } = current.rows[0];
+    if (currentDriverId === resolvedDriverId)
+        return;
+    const targetSession = await ensureDriverSession(client, scope, input, resolvedDriverId, resolvedDriverLabel);
+    if (targetSession.id === currentSessionId)
+        return;
+    const nextRowNo = await nextRowNoForSession(client, targetSession.id);
+    await client.query(`
+    update daily_ledger_rows
+    set session_id = $2::uuid, row_no = $3, updated_at = now()
+    where id = $1::uuid
+    `, [rowId, targetSession.id, nextRowNo]);
+}
 export class DailyLedgerRepository {
     async listRows(scope, filters) {
         const conditions = ['r.deleted_at is null', 's.deleted_at is null'];
@@ -87,6 +181,10 @@ export class DailyLedgerRepository {
         if (filters.vehicleId) {
             values.push(filters.vehicleId);
             conditions.push(`s.vehicle_id = $${values.length}::uuid`);
+        }
+        if (filters.createdByUserId) {
+            values.push(filters.createdByUserId);
+            conditions.push(`r.created_by = $${values.length}::uuid`);
         }
         if (!filters.includeLoaded) {
             conditions.push('r.loaded_at is null');
@@ -139,7 +237,10 @@ export class DailyLedgerRepository {
         s.vehicle_label,
         s.driver_label,
         s.driver_id,
-        s.vehicle_id
+        s.vehicle_id,
+        s.printed_at as session_printed_at,
+        s.reprint_required as session_reprint_required,
+        s.reprint_reason as session_reprint_reason
       from daily_ledger_rows r
       join daily_ledger_sessions s on s.id = r.session_id
       where ${conditions.join(' and ')}
@@ -148,6 +249,68 @@ export class DailyLedgerRepository {
       offset ${offsetParam}
       `, values);
         return result.rows;
+    }
+    /** الجلسات المخصّصة لأسطر معيّنة (تُستخدم لتعليم إعادة الطباعة عند النقل) */
+    async getSessionIdsForRows(companyId, rowIds) {
+        if (!rowIds.length)
+            return [];
+        const result = await pool.query(`
+      select distinct r.session_id
+      from daily_ledger_rows r
+      join daily_ledger_sessions s on s.id = r.session_id
+      where r.id = any($1::uuid[]) and s.company_id = $2::uuid and s.deleted_at is null
+      `, [rowIds, companyId]);
+        return result.rows.map((row) => row.session_id);
+    }
+    /** يسجّل حدث طباعة لجلسة ويحدّث حقول الطباعة ويمسح علامة "أعد الطباعة" */
+    async recordSessionPrint(scope, input) {
+        if (!scope.companyId)
+            throw new HttpError(400, 'Company scope is required.');
+        const client = await pool.connect();
+        try {
+            await client.query('begin');
+            const session = await client.query(`select id from daily_ledger_sessions where id = $1::uuid and company_id = $2::uuid and deleted_at is null for update`, [input.sessionId, scope.companyId]);
+            if (!session.rowCount) {
+                await client.query('rollback');
+                return;
+            }
+            await client.query(`
+        update daily_ledger_sessions
+        set
+          printed_at = coalesce(printed_at, now()),
+          last_printed_at = now(),
+          printed_by = coalesce($2::uuid, printed_by),
+          print_count = print_count + 1,
+          reprint_required = false,
+          reprint_reason = null,
+          updated_at = now()
+        where id = $1::uuid
+        `, [input.sessionId, scope.userId ?? null]);
+            await client.query(`
+        insert into daily_ledger_print_events(
+          company_id, session_id, print_type, print_scope,
+          row_count, pieces_count, weight_kg, printed_by
+        )
+        values($1,$2,$3,$4,$5,$6,$7,$8)
+        `, [
+                scope.companyId,
+                input.sessionId,
+                input.printType ?? 'session',
+                input.printScope ?? null,
+                input.rowCount ?? 0,
+                input.piecesCount ?? 0,
+                input.weightKg ?? 0,
+                scope.userId ?? null,
+            ]);
+            await client.query('commit');
+        }
+        catch (error) {
+            await client.query('rollback');
+            throw error;
+        }
+        finally {
+            client.release();
+        }
     }
     async upsertRow(scope, input) {
         if (!scope.companyId) {
@@ -167,6 +330,9 @@ export class DailyLedgerRepository {
             }
             await assertUniqueLedgerReceiptNo(client, scope.companyId, input.receiptNo, ledgerScope, effectiveRowId);
             if (effectiveRowId) {
+                const resolvedDriverId = input.driverId ?? (await resolveDriverIdByLabel(client, input.driverLabel));
+                const resolvedDriverLabel = await resolveDriverLabel(client, resolvedDriverId, input.driverLabel);
+                await migrateRowToDriverSessionIfNeeded(client, scope, effectiveRowId, input, resolvedDriverId, resolvedDriverLabel);
                 const updated = await client.query(`
           update daily_ledger_rows r
           set
@@ -194,6 +360,7 @@ export class DailyLedgerRepository {
             and b.company_id = $2
             and s.branch_id = $17
             and r.loaded_at is null
+            and ($18::uuid is null or r.created_by = $18::uuid)
           returning
             r.*,
             s.branch_id,
@@ -223,51 +390,21 @@ export class DailyLedgerRepository {
                     input.notes ?? null,
                     input.userId ?? scope.userId ?? null,
                     input.branchId,
+                    input.restrictToCreatedByUserId ?? null,
                 ]);
                 if (!updated.rows.length) {
-                    throw new HttpError(409, 'تعذر تحديث السطر — ربما تم تحميله على بيان أو لا ينتمي للفرع المحدد.');
+                    throw new HttpError(409, input.restrictToCreatedByUserId
+                        ? 'تعذر تحديث السطر — لا يمكنك تعديل إدخال موظف آخر.'
+                        : 'تعذر تحديث السطر — ربما تم تحميله على بيان أو لا ينتمي للفرع المحدد.');
                 }
+                await markSessionReprintIfPrinted(client, updated.rows[0].session_id, 'تعديل سطر بعد الطباعة');
                 await client.query('commit');
                 return updated.rows[0];
             }
-            const session = await client.query(`
-        insert into daily_ledger_sessions(
-          company_id, branch_id, ledger_date, line_label, origin_label,
-          trip_no, vehicle_label, driver_label, driver_id, vehicle_id,
-          created_by, updated_by
-        )
-        values($1,$2,$3::date,$4,$5,$6,$7,$8,$9,$10,$11,$11)
-        on conflict (
-          company_id,
-          branch_id,
-          ledger_date,
-          line_label,
-          (coalesce(driver_id, '00000000-0000-0000-0000-000000000000'::uuid))
-        ) where deleted_at is null
-        do update set
-          origin_label = excluded.origin_label,
-          trip_no = coalesce(excluded.trip_no, daily_ledger_sessions.trip_no),
-          vehicle_label = coalesce(excluded.vehicle_label, daily_ledger_sessions.vehicle_label),
-          driver_label = coalesce(excluded.driver_label, daily_ledger_sessions.driver_label),
-          driver_id = coalesce(excluded.driver_id, daily_ledger_sessions.driver_id),
-          vehicle_id = coalesce(excluded.vehicle_id, daily_ledger_sessions.vehicle_id),
-          updated_by = excluded.updated_by,
-          updated_at = now()
-        returning *
-        `, [
-                scope.companyId,
-                input.branchId,
-                input.ledgerDate,
-                input.lineLabel,
-                input.originLabel ?? '',
-                input.tripNo ?? null,
-                input.vehicleLabel ?? null,
-                input.driverLabel ?? null,
-                input.driverId ?? null,
-                input.vehicleId ?? null,
-                input.userId ?? scope.userId ?? null,
-            ]);
-            const sessionId = session.rows[0].id;
+            const resolvedDriverId = input.driverId ?? (await resolveDriverIdByLabel(client, input.driverLabel));
+            const resolvedDriverLabel = await resolveDriverLabel(client, resolvedDriverId, input.driverLabel);
+            const session = await ensureDriverSession(client, scope, input, resolvedDriverId, resolvedDriverLabel);
+            const sessionId = session.id;
             const row = await client.query(`
         insert into daily_ledger_rows(
           session_id,
@@ -306,6 +443,7 @@ export class DailyLedgerRepository {
           notes = excluded.notes,
           updated_by = excluded.updated_by,
           updated_at = now()
+        where $26::uuid is null or daily_ledger_rows.created_by = $26::uuid
         returning
           daily_ledger_rows.*,
           $17::uuid as branch_id,
@@ -334,16 +472,21 @@ export class DailyLedgerRepository {
                 input.transferServiceFeeUsd ?? 0,
                 input.notes ?? null,
                 input.userId ?? scope.userId ?? null,
-                session.rows[0].branch_id,
-                session.rows[0].ledger_date,
-                session.rows[0].line_label,
-                session.rows[0].origin_label,
-                session.rows[0].trip_no,
-                session.rows[0].vehicle_label,
-                session.rows[0].driver_label,
-                session.rows[0].driver_id,
-                session.rows[0].vehicle_id,
+                session.branch_id,
+                session.ledger_date,
+                session.line_label,
+                session.origin_label,
+                session.trip_no,
+                session.vehicle_label,
+                session.driver_label,
+                session.driver_id,
+                session.vehicle_id,
+                input.restrictToCreatedByUserId ?? null,
             ]);
+            if (!row.rows.length && input.restrictToCreatedByUserId) {
+                throw new HttpError(409, 'تعذر حفظ السطر — رقم السطر محجوز بإدخال موظف آخر.');
+            }
+            await markSessionReprintIfPrinted(client, sessionId, 'إضافة/تعديل سطر بعد الطباعة');
             await client.query('commit');
             return row.rows[0];
         }
@@ -407,6 +550,113 @@ export class DailyLedgerRepository {
       `, [input.manifestId, input.shipmentIds]);
         return result.rowCount ?? 0;
     }
+    /**
+     * يحلّ إرسالية (جلسة سائق/مركبة): ينقل الأسطر إلى جلسة «بدون سائق» ويُخفِي الجلسة من القائمة.
+     * لا يحذف بيانات الأسطر (إيصال، مبالغ، …).
+     */
+    async cancelSession(scope, input, allowedBranchIds) {
+        if (!scope.companyId) {
+            throw new Error('Company scope is required.');
+        }
+        const client = await pool.connect();
+        try {
+            await client.query('begin');
+            const sessionResult = await client.query(`
+        select s.*
+        from daily_ledger_sessions s
+        where s.id = $1::uuid
+          and s.company_id = $2::uuid
+          and s.deleted_at is null
+        for update
+        `, [input.sessionId, scope.companyId]);
+            const session = sessionResult.rows[0];
+            if (!session) {
+                throw new HttpError(404, 'الإرسالية غير موجودة أو محذوفة مسبقاً.');
+            }
+            if (allowedBranchIds.length &&
+                !allowedBranchIds.includes(session.branch_id)) {
+                throw new HttpError(403, 'لا يمكن إلغاء إرسالية خارج نطاق الفروع المسموح.');
+            }
+            if (!session.driver_id && !session.vehicle_id) {
+                throw new HttpError(409, 'لا يمكن إلغاء جلسة «الكل» — اختر إرسالية محددة (سائق/مركبة).');
+            }
+            const rowsResult = await client.query(`
+        select r.id, r.row_no, r.receipt_no, r.loaded_at, r.created_by
+        from daily_ledger_rows r
+        where r.session_id = $1::uuid
+          and r.deleted_at is null
+        order by r.row_no asc
+        for update
+        `, [input.sessionId]);
+            const rows = rowsResult.rows;
+            if (rows.some((row) => row.loaded_at)) {
+                throw new HttpError(409, 'لا يمكن إلغاء إرسالية تحتوي أسطراً محمّلة على بيان — أزل التحميل أولاً أو انقل الأسطر غير المحمّلة.');
+            }
+            if (input.createdByUserId && rows.some((row) => row.created_by !== input.createdByUserId)) {
+                throw new HttpError(409, 'لا يمكنك إلغاء إرسالية تحتوي إدخالات موظفين آخرين.');
+            }
+            const poolSession = await ensureDriverSession(client, scope, {
+                branchId: session.branch_id,
+                ledgerDate: session.ledger_date,
+                lineLabel: session.line_label,
+                originLabel: session.origin_label,
+                tripNo: null,
+                vehicleLabel: null,
+                driverLabel: null,
+                driverId: null,
+                vehicleId: null,
+                rowNo: 1,
+                userId: input.userId ?? scope.userId,
+            }, null, null);
+            if (poolSession.id === session.id) {
+                throw new HttpError(409, 'لا يمكن إلغاء هذه الإرسالية.');
+            }
+            let movedRowsCount = 0;
+            if (rows.length) {
+                const movingReceipts = rows
+                    .map((row) => normalizeLedgerReceiptNo(row.receipt_no))
+                    .filter((value) => value.length > 0);
+                if (movingReceipts.length) {
+                    const dup = await client.query(`
+            select r.receipt_no, r.row_no
+            from daily_ledger_rows r
+            where r.session_id = $1::uuid
+              and r.deleted_at is null
+              and r.id <> all($2::uuid[])
+              and lower(trim(r.receipt_no)) = any($3::text[])
+            limit 1
+            `, [poolSession.id, rows.map((row) => row.id), movingReceipts.map((r) => r.toLowerCase())]);
+                    if (dup.rows[0]) {
+                        throw new HttpError(409, `تعارض أرقام إيصالات: «${dup.rows[0].receipt_no}» موجود في الدفتر الرئيسي (سطر ${dup.rows[0].row_no}) — عدّل أو احذف المكرر أولاً.`);
+                    }
+                }
+                let nextRowNo = await nextRowNoForSession(client, poolSession.id);
+                for (const row of rows) {
+                    await client.query(`
+            update daily_ledger_rows
+            set session_id = $2::uuid, row_no = $3, updated_by = $4, updated_at = now()
+            where id = $1::uuid
+            `, [row.id, poolSession.id, nextRowNo, input.userId ?? scope.userId ?? null]);
+                    nextRowNo += 1;
+                    movedRowsCount += 1;
+                }
+            }
+            await client.query(`
+        update daily_ledger_sessions
+        set deleted_at = now(), updated_by = $2, updated_at = now()
+        where id = $1::uuid
+        `, [input.sessionId, input.userId ?? scope.userId ?? null]);
+            await client.query('commit');
+            return { movedRowsCount, poolSessionId: poolSession.id };
+        }
+        catch (error) {
+            await client.query('rollback');
+            throw error;
+        }
+        finally {
+            client.release();
+        }
+    }
     async deleteRows(scope, input, allowedBranchIds) {
         if (!scope.companyId) {
             throw new Error('Company scope is required.');
@@ -432,8 +682,15 @@ export class DailyLedgerRepository {
           coalesce(array_length($4::uuid[], 1), 0) = 0
           or s.branch_id = any($4::uuid[])
         )
+        and ($5::uuid is null or r.created_by = $5::uuid)
       returning r.id
-      `, [input.rowIds, input.userId ?? scope.userId ?? null, scope.companyId, allowedBranchIds ?? []]);
+      `, [
+            input.rowIds,
+            input.userId ?? scope.userId ?? null,
+            scope.companyId,
+            allowedBranchIds ?? [],
+            input.createdByUserId ?? null,
+        ]);
         const deletedIds = result.rows.map((row) => row.id);
         const blockedIds = input.rowIds.filter((id) => !deletedIds.includes(id));
         return { deletedIds, blockedIds };

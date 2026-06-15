@@ -10,6 +10,44 @@ import { requireIdempotencyKey } from '../middleware/idempotency.js';
 import { licenseGuard } from '../middleware/licenseGuard.js';
 import { calculateShipmentFinancialBreakdown } from '../utils/shipmentFinancialBreakdown.js';
 import { computeAgentRemittanceDue } from '../utils/agentShipmentSettlement.js';
+import { HttpError } from '../utils/errors.js';
+function todayIsoDate() {
+    return new Date().toISOString().slice(0, 10);
+}
+function getRequestPermissions(req) {
+    const userContext = req.requestUserContext;
+    return Array.isArray(userContext?.permissions) ? userContext.permissions : [];
+}
+function canBackdateVouchers(req) {
+    const userContext = req.requestUserContext;
+    const roleCode = String(userContext?.roleCode ?? '').toLowerCase();
+    const userType = String(userContext?.userType ?? '').toLowerCase();
+    const isAdmin = roleCode === 'admin' || userType === 'admin';
+    const isManager = isAdmin || roleCode === 'general_manager' || roleCode === 'branch_manager';
+    return isManager || getRequestPermissions(req).includes('finance.vouchers.backdate');
+}
+function resolveVoucherTargetDate(createdAt) {
+    if (createdAt)
+        return createdAt.slice(0, 10);
+    return todayIsoDate();
+}
+function assertVoucherDateAllowed(req, targetDate) {
+    const today = todayIsoDate();
+    if (targetDate > today) {
+        throw new HttpError(400, 'لا يمكن إنشاء سند بتاريخ مستقبلي.');
+    }
+    if (targetDate !== today && !canBackdateVouchers(req)) {
+        throw new HttpError(403, 'لا يمكن إنشاء أو تعديل سند بتاريخ سابق — يلزم صلاحية السندات بتاريخ سابق.');
+    }
+}
+function voucherFxContext(req, createdAt) {
+    const userContext = req.requestUserContext;
+    return {
+        companyId: userContext?.companyId,
+        baseCurrency: userContext?.baseCurrency,
+        effectiveDate: createdAt ? createdAt.slice(0, 10) : undefined,
+    };
+}
 const voucherBaseSchema = z.object({
     voucherNo: z.string().min(1),
     branchId: z.string().uuid().optional(),
@@ -161,6 +199,29 @@ const dashboardCacheResetSchema = z.object({
     resetMetrics: z.boolean().optional().default(true),
     confirm: z.boolean().optional().default(false),
 });
+const accountingReportQuerySchema = z.object({
+    fromAt: z.string().datetime({ offset: true }).optional(),
+    toAt: z.string().datetime({ offset: true }).optional(),
+    asOf: z.string().datetime({ offset: true }).optional(),
+    branchId: z.string().uuid().optional(),
+    currencyCode: z.string().min(3).max(3).optional(),
+});
+const agentReconciliationQuerySchema = accountingReportQuerySchema.extend({
+    agentId: z.string().uuid(),
+});
+const closePeriodSchema = z.object({
+    periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    branchId: z.string().uuid().optional().nullable(),
+    currencyCode: z.string().min(3).max(3).optional(),
+    notes: z.string().optional(),
+});
+function requireCompanyId(req) {
+    const companyId = req.requestUserContext?.companyId;
+    if (!companyId)
+        throw new HttpError(400, 'Company context is required.');
+    return companyId;
+}
 export function createFinanceRouter(service) {
     const router = Router();
     const auditService = new AuditService();
@@ -180,11 +241,8 @@ export function createFinanceRouter(service) {
     router.post('/receipt-vouchers', requireAnyPermissions(['finance.read', 'finance.write', 'finance.view']), requireAnyPermissions(['finance.vouchers.create', 'finance.vouchers.write']), licenseGuard('receipt'), requireIdempotencyKey('finance.receipt.create'), asyncHandler(async (req, res) => {
         try {
             const payload = receiptCreateSchema.parse(req.body);
-            const userContext = req.requestUserContext;
-            const row = await service.createReceiptVoucher(payload, parseDataScope(req), {
-                companyId: userContext?.companyId,
-                baseCurrency: userContext?.baseCurrency,
-            });
+            assertVoucherDateAllowed(req, resolveVoucherTargetDate(payload.createdAt));
+            const row = await service.createReceiptVoucher(payload, parseDataScope(req), voucherFxContext(req, payload.createdAt));
             auditService.logAsync({
                 req,
                 action: 'VOUCHER_CREATED',
@@ -213,12 +271,11 @@ export function createFinanceRouter(service) {
     router.put('/receipt-vouchers/:id', forbidUserTypes(['agent'], 'لا تملك صلاحية تعديل هذا السند.'), requireAnyPermissions(['finance.read', 'finance.write', 'finance.view']), requireAnyPermissions(['finance.vouchers.update', 'finance.vouchers.write']), requireIdempotencyKey('finance.receipt.update'), asyncHandler(async (req, res) => {
         try {
             const payload = receiptUpdateSchema.parse(req.body);
-            const userContext = req.requestUserContext;
+            if (payload.createdAt !== undefined) {
+                assertVoucherDateAllowed(req, resolveVoucherTargetDate(payload.createdAt));
+            }
             const before = await service.getReceiptVoucherById(String(req.params.id), parseDataScope(req));
-            const row = await service.updateReceiptVoucher(String(req.params.id), payload, parseDataScope(req), {
-                companyId: userContext?.companyId,
-                baseCurrency: userContext?.baseCurrency,
-            });
+            const row = await service.updateReceiptVoucher(String(req.params.id), payload, parseDataScope(req), voucherFxContext(req, payload.createdAt));
             if (!row) {
                 res.status(404).json({ success: false, error: 'Receipt voucher not found' });
                 return;
@@ -312,11 +369,8 @@ export function createFinanceRouter(service) {
     router.post('/payment-vouchers', requireAnyPermissions(['finance.read', 'finance.write', 'finance.view']), requireAnyPermissions(['finance.vouchers.create', 'finance.vouchers.write']), requireIdempotencyKey('finance.payment.create'), asyncHandler(async (req, res) => {
         try {
             const payload = paymentCreateSchema.parse(req.body);
-            const userContext = req.requestUserContext;
-            const row = await service.createPaymentVoucher(payload, parseDataScope(req), {
-                companyId: userContext?.companyId,
-                baseCurrency: userContext?.baseCurrency,
-            });
+            assertVoucherDateAllowed(req, resolveVoucherTargetDate(payload.createdAt));
+            const row = await service.createPaymentVoucher(payload, parseDataScope(req), voucherFxContext(req, payload.createdAt));
             auditService.logAsync({
                 req,
                 action: 'VOUCHER_CREATED',
@@ -344,12 +398,11 @@ export function createFinanceRouter(service) {
     router.put('/payment-vouchers/:id', forbidUserTypes(['agent'], 'لا تملك صلاحية تعديل هذا السند.'), requireAnyPermissions(['finance.read', 'finance.write', 'finance.view']), requireAnyPermissions(['finance.vouchers.update', 'finance.vouchers.write']), requireIdempotencyKey('finance.payment.update'), asyncHandler(async (req, res) => {
         try {
             const payload = paymentUpdateSchema.parse(req.body);
-            const userContext = req.requestUserContext;
+            if (payload.createdAt !== undefined) {
+                assertVoucherDateAllowed(req, resolveVoucherTargetDate(payload.createdAt));
+            }
             const before = await service.getPaymentVoucherById(String(req.params.id), parseDataScope(req));
-            const row = await service.updatePaymentVoucher(String(req.params.id), payload, parseDataScope(req), {
-                companyId: userContext?.companyId,
-                baseCurrency: userContext?.baseCurrency,
-            });
+            const row = await service.updatePaymentVoucher(String(req.params.id), payload, parseDataScope(req), voucherFxContext(req, payload.createdAt));
             if (!row) {
                 res.status(404).json({ success: false, error: 'Payment voucher not found' });
                 return;
@@ -408,6 +461,21 @@ export function createFinanceRouter(service) {
             isActive,
         });
         res.json({ success: true, data: rows });
+    }));
+    router.post('/cashboxes/sync', requireAnyPermissions(['finance.read', 'finance.write', 'finance.view']), requirePermissions(['finance.cashboxes.manage']), asyncHandler(async (req, res) => {
+        const scope = parseDataScope(req);
+        if (!scope.companyId) {
+            res.status(400).json({ success: false, error: 'لا يمكن المزامنة بدون نطاق شركة.' });
+            return;
+        }
+        const stats = await service.syncCompanyCashboxes(scope.companyId);
+        auditService.logAsync({
+            req,
+            action: 'CASHBOXES_SYNCED',
+            entityType: 'cashbox',
+            metadata: stats,
+        });
+        res.json({ success: true, data: stats });
     }));
     router.get('/cashboxes/:id', requireAnyPermissions(['finance.read', 'finance.write', 'finance.view']), requireAnyPermissions(['finance.cashboxes.view', 'finance.cashbox.read']), asyncHandler(async (req, res) => {
         const row = await service.getCashboxById(String(req.params.id), parseDataScope(req));
@@ -484,6 +552,92 @@ export function createFinanceRouter(service) {
         const query = debitCreditSummaryQuerySchema.parse(req.query);
         const rows = await service.getDebitCreditSummary(parseDataScope(req), query);
         res.json({ success: true, data: rows });
+    }));
+    router.get('/reports/trial-balance', requireAnyPermissions(['finance.read', 'finance.view']), forbidUserTypes(['agent'], 'ميزان المراجعة غير متاح لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
+        const query = accountingReportQuerySchema.parse(req.query);
+        const data = await service.getTrialBalanceReport(parseDataScope(req), query);
+        res.json({ success: true, data });
+    }));
+    router.get('/reports/balance-sheet', requireAnyPermissions(['finance.read', 'finance.view']), forbidUserTypes(['agent'], 'قائمة المركز المالي غير متاحة لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
+        const query = accountingReportQuerySchema.parse(req.query);
+        const data = await service.getBalanceSheetReport(parseDataScope(req), query);
+        res.json({ success: true, data });
+    }));
+    router.get('/accounting-periods', requireAnyPermissions(['finance.read', 'finance.view']), forbidUserTypes(['agent'], 'إقفال الفترات غير متاح لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
+        const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 50)));
+        const data = await service.listAccountingPeriodClosures(parseDataScope(req), limit);
+        res.json({ success: true, data });
+    }));
+    router.post('/accounting-periods/close', requireAnyPermissions(['finance.write', 'finance.read']), forbidUserTypes(['agent'], 'إقفال الفترات غير متاح لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
+        const payload = closePeriodSchema.parse(req.body);
+        const userId = req.requestUserContext?.userId;
+        const data = await service.closeAccountingPeriod(parseDataScope(req), {
+            periodStart: payload.periodStart,
+            periodEnd: payload.periodEnd,
+            branchId: payload.branchId ?? undefined,
+            currencyCode: payload.currencyCode,
+            notes: payload.notes,
+            closedByUserId: userId ?? null,
+        });
+        auditService.logAsync({
+            req,
+            action: 'ACCOUNTING_PERIOD_CLOSED',
+            entityType: 'accounting_period',
+            entityId: data.id,
+            metadata: { periodStart: payload.periodStart, periodEnd: payload.periodEnd },
+        });
+        res.json({ success: true, data });
+    }));
+    router.get('/agent-settlement', requireAnyPermissions(['finance.read', 'finance.view']), forbidUserTypes(['agent'], 'كشف تسوية الوكيل غير متاح لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
+        const query = agentReconciliationQuerySchema.parse(req.query);
+        const companyId = requireCompanyId(req);
+        const data = await service.getAgentSettlementPackage(companyId, query.agentId, query);
+        if (!data) {
+            res.status(404).json({ success: false, error: 'Agent not found.' });
+            return;
+        }
+        auditService.logAsync({
+            req,
+            action: 'AGENT_SETTLEMENT_GENERATED',
+            entityType: 'agent_settlement',
+            entityId: query.agentId,
+            metadata: { fromAt: query.fromAt, toAt: query.toAt, currencyCode: query.currencyCode },
+        });
+        res.json({ success: true, data });
+    }));
+    router.get('/hawala-reconciliation', requireAnyPermissions(['finance.read', 'finance.view']), forbidUserTypes(['agent'], 'مطابقة الحوالات غير متاحة لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
+        const query = agentReconciliationQuerySchema.parse(req.query);
+        const companyId = requireCompanyId(req);
+        const data = await service.getHawalaReconciliationPackage(companyId, query.agentId, query);
+        if (!data) {
+            res.status(404).json({ success: false, error: 'Agent not found.' });
+            return;
+        }
+        auditService.logAsync({
+            req,
+            action: 'HAWALA_RECONCILIATION_GENERATED',
+            entityType: 'hawala_reconciliation',
+            entityId: query.agentId,
+            metadata: { fromAt: query.fromAt, toAt: query.toAt, currencyCode: query.currencyCode },
+        });
+        res.json({ success: true, data });
+    }));
+    router.get('/agent-branch-reconciliation', requireAnyPermissions(['finance.read', 'finance.view']), forbidUserTypes(['agent'], 'مطابقة الوكيل والفرع الرئيسي غير متاحة لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
+        const query = agentReconciliationQuerySchema.parse(req.query);
+        const companyId = requireCompanyId(req);
+        const data = await service.getAgentBranchReconciliationPackage(companyId, query.agentId, query);
+        if (!data) {
+            res.status(404).json({ success: false, error: 'Agent not found.' });
+            return;
+        }
+        auditService.logAsync({
+            req,
+            action: 'AGENT_BRANCH_RECONCILIATION_GENERATED',
+            entityType: 'agent_branch_reconciliation',
+            entityId: query.agentId,
+            metadata: { fromAt: query.fromAt, toAt: query.toAt, currencyCode: query.currencyCode },
+        });
+        res.json({ success: true, data });
     }));
     router.get('/financial-reports/profit-loss', requireAnyPermissions(['finance.read', 'finance.view']), forbidUserTypes(['agent'], 'تقرير الأرباح والخسائر غير متاح لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
         const query = profitLossQuerySchema.parse(req.query);
@@ -1244,14 +1398,14 @@ export function createFinanceRouter(service) {
                 pfm.party_id as posted_to_receiver_id,
                 s.agent_id,
                 s.financial_status,
-                pfm.created_at
+                coalesce(pfm.posted_at, pfm.created_at) as created_at
          from party_financial_movements pfm
          join shipments s on s.id = pfm.shipment_id
          where pfm.party_type = 'sender_receiver'
            and pfm.movement_type = 'shipment_charge'
            and pfm.is_reversal = false
            ${scope?.companyId ? `and s.company_id = '${scope.companyId}'` : ''}
-         order by pfm.created_at desc
+         order by coalesce(pfm.posted_at, pfm.created_at) desc
          limit 100`);
         res.json({
             success: true,
@@ -1305,7 +1459,7 @@ export function createFinanceRouter(service) {
         from party_financial_movements pfm
         join shipments s on s.id = pfm.shipment_id
         where ${conditions.join(' and ')}
-        order by pfm.created_at desc
+        order by coalesce(pfm.posted_at, pfm.created_at) desc
         limit 200
         `, values);
         const affectedShipments = result.rows.map((row) => {

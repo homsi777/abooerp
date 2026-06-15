@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { pool } from '../db/pool.js';
 import { asyncHandler } from '../utils/http.js';
 import { requirePermissions } from '../middleware/authorization.js';
-import { parseDataScope } from '../utils/scope.js';
+import { syncCustomerOpeningBalance } from '../services/customerOpeningBalanceService.js';
 import { HttpError } from '../utils/errors.js';
+import { parseDataScope } from '../utils/scope.js';
 
 const router = Router();
 
@@ -40,6 +41,8 @@ const customerBaseSchema = z.object({
   branch_id: optionalUuid,
   agent_id: optionalUuid,
   status: z.enum(['active', 'inactive']).default('active'),
+  opening_balance_amount: z.coerce.number().nonnegative().default(0),
+  opening_balance_side: z.enum(['debit', 'credit']).default('debit'),
 });
 
 const customerCreateSchema = customerBaseSchema.superRefine((data, ctx) => {
@@ -48,6 +51,13 @@ const customerCreateSchema = customerBaseSchema.superRefine((data, ctx) => {
       code: z.ZodIssueCode.custom,
       path: ['phone'],
       message: 'الهاتف مطلوب للعميل الحسابي لربطه بالذمم والكشوفات.',
+    });
+  }
+  if (!data.is_account_customer && Number(data.opening_balance_amount ?? 0) > 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['opening_balance_amount'],
+      message: 'الرصيد الافتتاحي متاح للعملاء الحسابيين فقط.',
     });
   }
 });
@@ -283,7 +293,7 @@ router.get(
     if (!uuidRegex.test(id)) throw new HttpError(400, 'معرّف العميل غير صالح');
 
     const customerResult = await pool.query(
-      `select id, name, is_account_customer, default_currency_code from customers where id = $1`,
+      `select id, name, is_account_customer, default_currency_code, opening_balance_amount, opening_balance_side from customers where id = $1`,
       [id],
     );
     if (!customerResult.rows[0]) throw new HttpError(404, 'العميل غير موجود');
@@ -292,6 +302,8 @@ router.get(
       name: string;
       is_account_customer: boolean;
       default_currency_code: string;
+      opening_balance_amount: string | number;
+      opening_balance_side: 'debit' | 'credit';
     };
 
     if (!customer.is_account_customer) {
@@ -300,6 +312,8 @@ router.get(
         data: {
           isAccountCustomer: false,
           currencyCode: customer.default_currency_code,
+          openingBalanceAmount: 0,
+          openingBalanceSide: 'debit' as const,
           totalDebit: 0,
           totalCredit: 0,
           balance: 0,
@@ -338,6 +352,7 @@ router.get(
           s.customer_id = $1::uuid
           or (s.financial_responsibility_type = 'ACCOUNT_CUSTOMER' and s.financial_responsibility_id = $1::uuid)
           or lower(trim(coalesce(sr_s.full_name, ''))) = lower(trim((select name from customers where id = $1::uuid)))
+          or lower(trim(coalesce(sr_r.full_name, ''))) = lower(trim((select name from customers where id = $1::uuid)))
         )
       `,
       [id],
@@ -358,6 +373,8 @@ router.get(
       data: {
         isAccountCustomer: true,
         currencyCode: row?.currency_code ?? customer.default_currency_code,
+        openingBalanceAmount: Number(customer.opening_balance_amount ?? 0),
+        openingBalanceSide: customer.opening_balance_side ?? 'debit',
         totalDebit,
         totalCredit,
         balance: totalDebit - totalCredit,
@@ -400,6 +417,7 @@ router.get(
           s.customer_id = $1::uuid
           or (s.financial_responsibility_type = 'ACCOUNT_CUSTOMER' and s.financial_responsibility_id = $1::uuid)
           or lower(trim(coalesce(sr_s.full_name, ''))) = lower(trim((select name from customers where id = $1::uuid)))
+          or lower(trim(coalesce(sr_r.full_name, ''))) = lower(trim((select name from customers where id = $1::uuid)))
         )
       order by s.created_at desc
       limit $2 offset $3
@@ -431,42 +449,83 @@ router.post(
     // Auto-generate code if not provided
     const code = body.code ?? (await generateCustomerCode(companyId));
 
-    const result = await pool.query(
-      `
-      insert into customers (
-        code, name, phone, second_phone, company_name, customer_type,
-        is_account_customer, credit_limit, default_currency_code,
-        city, area, address, tax_number, notes,
-        branch_id, agent_id, company_id, created_by_user_id, status
-      ) values (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
-      )
-      returning *
-      `,
-      [
-        code,
-        body.name,
-        body.phone ?? null,
-        body.second_phone ?? null,
-        body.company_name ?? null,
-        body.customer_type,
-        body.is_account_customer,
-        body.credit_limit,
-        body.default_currency_code,
-        body.city ?? null,
-        body.area ?? null,
-        body.address ?? null,
-        body.tax_number ?? null,
-        body.notes ?? null,
-        body.branch_id ?? null,
-        effectiveAgentId,
-        companyId ?? null,
-        userId ?? null,
-        body.status,
-      ],
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
 
-    res.status(201).json({ success: true, data: result.rows[0] });
+      const result = await client.query(
+        `
+        insert into customers (
+          code, name, phone, second_phone, company_name, customer_type,
+          is_account_customer, credit_limit, default_currency_code,
+          opening_balance_amount, opening_balance_side,
+          city, area, address, tax_number, notes,
+          branch_id, agent_id, company_id, created_by_user_id, status
+        ) values (
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
+        )
+        returning *
+        `,
+        [
+          code,
+          body.name,
+          body.phone ?? null,
+          body.second_phone ?? null,
+          body.company_name ?? null,
+          body.customer_type,
+          body.is_account_customer,
+          body.credit_limit,
+          body.default_currency_code,
+          body.is_account_customer ? body.opening_balance_amount : 0,
+          body.is_account_customer ? body.opening_balance_side : 'debit',
+          body.city ?? null,
+          body.area ?? null,
+          body.address ?? null,
+          body.tax_number ?? null,
+          body.notes ?? null,
+          body.branch_id ?? null,
+          effectiveAgentId,
+          companyId ?? null,
+          userId ?? null,
+          body.status,
+        ],
+      );
+
+      const created = result.rows[0] as {
+        id: string;
+        code: string;
+        is_account_customer: boolean;
+        opening_balance_amount: number;
+        opening_balance_side: 'debit' | 'credit';
+        default_currency_code: string;
+        branch_id: string | null;
+        agent_id: string | null;
+      };
+
+      await syncCustomerOpeningBalance(
+        {
+          customerId: created.id,
+          companyId,
+          isAccountCustomer: Boolean(created.is_account_customer),
+          amount: Number(created.opening_balance_amount ?? 0),
+          side: created.opening_balance_side ?? 'debit',
+          currencyCode: created.default_currency_code,
+          branchId: created.branch_id,
+          agentId: created.agent_id,
+          userId: userId ?? null,
+          referenceNo: created.code,
+        },
+        client,
+      );
+
+      await client.query('commit');
+      res.status(201).json({ success: true, data: result.rows[0] });
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
   }),
 );
 
@@ -480,6 +539,8 @@ router.put(
     const body = parseCustomerBody(req.body, 'update');
     const scope = parseDataScope(req);
     const userType = getUserType(req);
+
+    const userId = getUserId(req);
 
     // Check customer exists
     const existing = await pool.query(`select * from customers where id = $1`, [id]);
@@ -502,6 +563,7 @@ router.put(
     const updatableFields: (keyof typeof body)[] = [
       'name', 'phone', 'second_phone', 'company_name', 'customer_type',
       'is_account_customer', 'credit_limit', 'default_currency_code',
+      'opening_balance_amount', 'opening_balance_side',
       'city', 'area', 'address', 'tax_number', 'notes',
       'branch_id', 'agent_id', 'status',
     ];
@@ -518,16 +580,61 @@ router.put(
       return;
     }
 
-    values.push(new Date());
-    setClauses.push(`updated_at = $${values.length}`);
-    values.push(id);
+    if (!nextIsAccountCustomer) {
+      values.push(0);
+      setClauses.push(`opening_balance_amount = $${values.length}`);
+      values.push('debit');
+      setClauses.push(`opening_balance_side = $${values.length}`);
+    }
 
-    const result = await pool.query(
-      `update customers set ${setClauses.join(', ')} where id = $${values.length} returning *`,
-      values,
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
 
-    res.json({ success: true, data: result.rows[0] });
+      values.push(new Date());
+      setClauses.push(`updated_at = $${values.length}`);
+      values.push(id);
+
+      const result = await client.query(
+        `update customers set ${setClauses.join(', ')} where id = $${values.length} returning *`,
+        values,
+      );
+
+      const updated = result.rows[0] as {
+        id: string;
+        code: string;
+        is_account_customer: boolean;
+        opening_balance_amount: number;
+        opening_balance_side: 'debit' | 'credit';
+        default_currency_code: string;
+        branch_id: string | null;
+        agent_id: string | null;
+      };
+
+      await syncCustomerOpeningBalance(
+        {
+          customerId: updated.id,
+          companyId: customer.company_id ?? getCompanyId(req),
+          isAccountCustomer: Boolean(updated.is_account_customer),
+          amount: Number(updated.opening_balance_amount ?? 0),
+          side: updated.opening_balance_side ?? 'debit',
+          currencyCode: updated.default_currency_code,
+          branchId: updated.branch_id,
+          agentId: updated.agent_id,
+          userId: userId ?? null,
+          referenceNo: updated.code,
+        },
+        client,
+      );
+
+      await client.query('commit');
+      res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
   }),
 );
 

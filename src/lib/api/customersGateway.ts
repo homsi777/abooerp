@@ -27,6 +27,8 @@ export type CustomerRecord = {
   status: 'active' | 'inactive';
   created_at: string;
   updated_at: string;
+  opening_balance_amount?: number;
+  opening_balance_side?: 'debit' | 'credit';
 };
 
 export type CustomerCreateInput = {
@@ -38,6 +40,8 @@ export type CustomerCreateInput = {
   is_account_customer?: boolean;
   credit_limit?: number;
   default_currency_code?: string;
+  opening_balance_amount?: number;
+  opening_balance_side?: 'debit' | 'credit';
   city?: string;
   area?: string;
   address?: string;
@@ -69,6 +73,8 @@ export type CustomerListResponse = {
 export type CustomerFinancialSummary = {
   isAccountCustomer: boolean;
   currencyCode: string;
+  openingBalanceAmount?: number;
+  openingBalanceSide?: 'debit' | 'credit';
   totalDebit: number;
   totalCredit: number;
   balance: number;

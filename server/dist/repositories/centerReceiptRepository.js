@@ -1,4 +1,5 @@
 import { pool } from '../db/pool.js';
+import { buildSessionDriverMatchCondition } from '../utils/dailyLedgerDriverMatch.js';
 import { computeAgentCommissionSnapshot, resolveShipmentShippingPrice, } from '../utils/shipmentAgentCommission.js';
 function resolveProvincialRowCommission(row) {
     const hasAgent = Boolean(row.agent_id);
@@ -247,22 +248,14 @@ export class CenterReceiptRepository {
             conditions.push(`dls.branch_id = $${values.length}::uuid`);
         }
         values.push(filters.date);
-        conditions.push(`dls.ledger_date = $${values.length}::date`);
+        const dateParam = `$${values.length}`;
+        conditions.push(`dls.ledger_date = ${dateParam}::date`);
         values.push(filters.driverId);
         const driverParam = `$${values.length}`;
-        conditions.push(`(
-      dls.driver_id = ${driverParam}::uuid
-      or (
-        dls.driver_id is null
-        and nullif(trim(dls.driver_label), '') is not null
-        and trim(dls.driver_label) ilike (
-          select trim(coalesce(dr.name, ''))
-          from drivers dr
-          where dr.id = ${driverParam}::uuid
-          limit 1
-        )
-      )
-    )`);
+        conditions.push(buildSessionDriverMatchCondition('dls', driverParam, {
+            rowAlias: 'r',
+            dateParam,
+        }));
         const result = await pool.query(`
       select
         coalesce(s.id::text, r.id::text) as shipment_id,

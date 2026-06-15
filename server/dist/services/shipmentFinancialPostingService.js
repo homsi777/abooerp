@@ -213,6 +213,7 @@ export class ShipmentFinancialPostingService {
                 shipmentNo,
                 senderName,
                 breakdown,
+                effectiveDate: params.effectiveDate,
             });
         }
         let receiptVoucher;
@@ -261,7 +262,7 @@ export class ShipmentFinancialPostingService {
       update shipments
       set
         financial_status = $2::text,
-        financial_posted_at = now(),
+        financial_posted_at = coalesce($13::timestamptz, now()),
         financial_posted_by_user_id = $3::uuid,
         payer_party_kind = $4::text,
         payer_name_snapshot = $5::text,
@@ -287,6 +288,7 @@ export class ShipmentFinancialPostingService {
             financial.allowZeroAmountNote ?? null,
             effectiveResponsibilityType ?? null,
             effectiveResponsibilityId ?? null,
+            params.effectiveDate ?? null,
         ]);
         const updated = await client.query(`select * from shipments where id = $1`, [shipmentId]);
         return { shipment: updated.rows[0], receiptVoucher };

@@ -68,6 +68,7 @@ export const FINANCE_MOVEMENT_TYPE_AR: Record<string, string> = {
   transfer_service_fee_collected: 'قبض أجرة حوالة',
   transfer_principal_paid: 'دفع أصل حوالة للمستلم',
   transfer_agent_commission: 'عمولة حوالة',
+  customer_opening_balance: 'رصيد/دين افتتاحي',
   POSTED: 'مرحّل',
 };
 

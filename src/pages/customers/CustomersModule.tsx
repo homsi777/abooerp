@@ -50,12 +50,15 @@ type FormState = {
   branch_id: string;
   agent_id: string;
   status: 'active' | 'inactive';
+  opening_balance_amount: string;
+  opening_balance_side: 'debit' | 'credit';
 };
 
 const emptyForm = (): FormState => ({
   name: '', phone: '', second_phone: '', company_name: '',
   customer_type: 'INDIVIDUAL', is_account_customer: false,
   credit_limit: '0', default_currency_code: 'SYP',
+  opening_balance_amount: '0', opening_balance_side: 'debit',
   city: '', area: '', address: '', tax_number: '', notes: '',
   branch_id: '', agent_id: '', status: 'active',
 });
@@ -92,6 +95,8 @@ function CustomerForm({
       branch_id: initial.branch_id ?? '',
       agent_id: initial.agent_id ?? '',
       status: initial.status,
+      opening_balance_amount: String(initial.opening_balance_amount ?? 0),
+      opening_balance_side: initial.opening_balance_side ?? 'debit',
     };
   });
 
@@ -109,6 +114,8 @@ function CustomerForm({
       is_account_customer: f.is_account_customer,
       credit_limit: parseFloat(f.credit_limit) || 0,
       default_currency_code: f.default_currency_code || 'SYP',
+      opening_balance_amount: f.is_account_customer ? (parseFloat(f.opening_balance_amount) || 0) : 0,
+      opening_balance_side: f.opening_balance_side,
       city: f.city.trim() || undefined,
       area: f.area.trim() || undefined,
       address: f.address.trim() || undefined,
@@ -227,6 +234,30 @@ function CustomerForm({
                 <option value="SYP">ليرة سورية (SYP)</option>
                 <option value="USD">دولار أمريكي (USD)</option>
                 <option value="TRY">ليرة تركية (TRY)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">رصيد/دين سابق (افتتاحي)</label>
+              <input
+                className="form-input w-full"
+                type="number"
+                min="0"
+                step="0.01"
+                value={f.opening_balance_amount}
+                onChange={(e) => upd('opening_balance_amount', e.target.value)}
+                dir="ltr"
+              />
+              <p className="text-xs text-gray-500 mt-1">المبلغ الذي كان على العميل قبل بدء النظام (إن وُجد).</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">نوع الرصيد الافتتاحي</label>
+              <select
+                className="form-input w-full"
+                value={f.opening_balance_side}
+                onChange={(e) => upd('opening_balance_side', e.target.value as 'debit' | 'credit')}
+              >
+                <option value="debit">عليه (ذمة على العميل — مدين)</option>
+                <option value="credit">له (ذمة للعميل — دائن)</option>
               </select>
             </div>
           </>

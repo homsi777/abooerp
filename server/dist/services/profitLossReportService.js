@@ -370,7 +370,7 @@ export class ProfitLossReportService {
         const customerConditions = [
             `pfm.party_type = 'customer'`,
             `pfm.is_reversal = false`,
-            `pfm.created_at <= $1::timestamptz`,
+            `coalesce(pfm.posted_at, pfm.created_at) <= $1::timestamptz`,
         ];
         if (scope?.companyId) {
             customerValues.push(scope.companyId);

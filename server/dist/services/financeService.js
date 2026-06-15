@@ -1,8 +1,10 @@
 import { HttpError } from '../utils/errors.js';
+import { AgentPortalVoucherService } from './agentPortalVoucherService.js';
 import { computeBaseAmountUsd } from '../utils/money.js';
 import { env } from '../config/env.js';
 import { ExchangeRateRepository } from '../repositories/exchangeRateRepository.js';
 import { ProfitLossReportService } from './profitLossReportService.js';
+import { AccountingReportsService, buildAgentMainBranchReconciliationPackage, buildHawalaReconciliationPackage, enrichAgentSettlementSummary, } from './accountingReportsService.js';
 const allowedVoucherTransitions = {
     draft: ['confirmed', 'cancelled'],
     confirmed: ['cancelled'],
@@ -11,8 +13,10 @@ const allowedVoucherTransitions = {
 const DASHBOARD_CACHE_TTL_MS = env.DASHBOARD_CACHE_TTL_MS;
 export class FinanceService {
     repository;
+    agentRepository;
     dashboardPackageCache = new Map();
     profitLossReportService = new ProfitLossReportService();
+    accountingReportsService = new AccountingReportsService();
     dashboardPackageInFlight = new Map();
     dashboardCacheMetrics = {
         hits: 0,
@@ -32,8 +36,14 @@ export class FinanceService {
         this.dashboardCacheMetrics.evictions = 0;
     }
     exchangeRateRepository = new ExchangeRateRepository();
-    constructor(repository) {
+    agentPortalVoucherService;
+    constructor(repository, agentRepository) {
         this.repository = repository;
+        this.agentRepository = agentRepository;
+        this.agentPortalVoucherService = new AgentPortalVoucherService(this.repository, this);
+    }
+    agentPortalVouchers() {
+        return this.agentPortalVoucherService;
     }
     async validateConfirmedCashbox(cashboxId, originalCurrency, companyId, scope) {
         if (!cashboxId) {
@@ -268,7 +278,13 @@ export class FinanceService {
     listCashboxTransactions(scope) {
         return this.repository.listCashboxTransactions(scope);
     }
-    listCashboxes(scope, filters) {
+    async syncCompanyCashboxes(companyId) {
+        return this.repository.syncCompanyCashboxes(companyId);
+    }
+    async listCashboxes(scope, filters) {
+        if (scope?.companyId) {
+            await this.repository.syncCompanyCashboxes(scope.companyId);
+        }
         return this.repository.listCashboxes(scope, filters);
     }
     getCashboxById(id, scope) {
@@ -529,7 +545,7 @@ export class FinanceService {
             agentId: input.agentId ?? scope?.agentId,
         };
         if (payload.status === 'confirmed') {
-            const internalPayment = ['expense', 'salary_record', 'cashbox_transfer', 'manual_party'].includes(String(payload.relatedEntityType ?? ''));
+            const internalPayment = ['expense', 'salary_record', 'cashbox_transfer', 'manual_party', 'agent_remittance', 'agent_receipt_from_branch'].includes(String(payload.relatedEntityType ?? ''));
             if (!internalPayment && !payload.customerId && !payload.senderReceiverId && !payload.agentId) {
                 throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
             }
@@ -544,6 +560,9 @@ export class FinanceService {
         const existing = await this.repository.getReceiptVoucherById(id, scope);
         if (!existing)
             return null;
+        if (payload.createdAt && existing.status !== 'draft') {
+            throw new HttpError(400, 'لا يمكن تغيير تاريخ سند مؤكد أو ملغى.');
+        }
         const nextStatus = (payload.status ?? existing.status);
         const nextCashboxId = existing.status === 'draft' && payload.cashboxId !== undefined ? payload.cashboxId : existing.cashbox_id;
         const nextCurrency = payload.originalCurrency ?? existing.original_currency;
@@ -551,7 +570,7 @@ export class FinanceService {
             const nextCustomerId = payload.customerId ?? existing.customer_id;
             const nextSenderReceiverId = payload.senderReceiverId ?? existing.sender_receiver_id;
             const nextAgentId = payload.agentId ?? existing.agent_id;
-            const internalPayment = ['expense', 'salary_record', 'cashbox_transfer', 'manual_party'].includes(String(payload.relatedEntityType ?? existing.related_entity_type ?? ''));
+            const internalPayment = ['expense', 'salary_record', 'cashbox_transfer', 'manual_party', 'agent_remittance', 'agent_receipt_from_branch'].includes(String(payload.relatedEntityType ?? existing.related_entity_type ?? ''));
             if (!internalPayment && !nextCustomerId && !nextSenderReceiverId && !nextAgentId) {
                 throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
             }
@@ -620,7 +639,9 @@ export class FinanceService {
             const isInternalPayment = payload.relatedEntityType === 'expense' ||
                 payload.relatedEntityType === 'salary_record' ||
                 payload.relatedEntityType === 'cashbox_transfer' ||
-                payload.relatedEntityType === 'manual_party';
+                payload.relatedEntityType === 'manual_party' ||
+                payload.relatedEntityType === 'agent_remittance' ||
+                payload.relatedEntityType === 'agent_receipt_from_branch';
             if (!isInternalPayment && !payload.customerId && !payload.senderReceiverId && !payload.agentId) {
                 throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
             }
@@ -635,6 +656,9 @@ export class FinanceService {
         const existing = await this.repository.getPaymentVoucherById(id, scope);
         if (!existing)
             return null;
+        if (payload.createdAt && existing.status !== 'draft') {
+            throw new HttpError(400, 'لا يمكن تغيير تاريخ سند مؤكد أو ملغى.');
+        }
         const nextStatus = (payload.status ?? existing.status);
         const nextCashboxId = existing.status === 'draft' && payload.cashboxId !== undefined ? payload.cashboxId : existing.cashbox_id;
         const nextCurrency = payload.originalCurrency ?? existing.original_currency;
@@ -646,7 +670,9 @@ export class FinanceService {
             const isInternalPayment = nextRelatedEntityType === 'expense' ||
                 nextRelatedEntityType === 'salary_record' ||
                 nextRelatedEntityType === 'cashbox_transfer' ||
-                nextRelatedEntityType === 'manual_party';
+                nextRelatedEntityType === 'manual_party' ||
+                nextRelatedEntityType === 'agent_remittance' ||
+                nextRelatedEntityType === 'agent_receipt_from_branch';
             if (!isInternalPayment && !nextCustomerId && !nextSenderReceiverId && !nextAgentId) {
                 throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
             }
@@ -658,6 +684,20 @@ export class FinanceService {
             if (current !== next && !allowedVoucherTransitions[current]?.includes(next)) {
                 throw new HttpError(400, `Invalid payment voucher status transition: ${current} -> ${next}`);
             }
+        }
+        const movingToConfirmed = existing.status === 'draft' && (payload.status ?? existing.status) === 'confirmed';
+        if (movingToConfirmed &&
+            this.agentPortalVoucherService.isAgentPortalSettlementType(existing.related_entity_type)) {
+            const updated = await this.agentPortalVoucherService.confirmDraftPaymentVoucher(id, scope, {
+                companyId: fxContext?.companyId,
+                baseCurrency: fxContext?.baseCurrency,
+                actorUserId: undefined,
+            });
+            if (updated) {
+                this.invalidateDashboardCache();
+                await this.persistDashboardCacheMetrics();
+            }
+            return updated;
         }
         const updatePayload = { ...payload };
         if (typeof payload.originalAmount === 'number' ||
@@ -693,5 +733,56 @@ export class FinanceService {
         this.invalidateDashboardCache();
         await this.persistDashboardCacheMetrics();
         return result;
+    }
+    getTrialBalanceReport(scope, filters) {
+        return this.accountingReportsService.getTrialBalance(scope, filters ?? {});
+    }
+    getBalanceSheetReport(scope, filters) {
+        return this.accountingReportsService.getBalanceSheet(scope, filters ?? {});
+    }
+    listAccountingPeriodClosures(scope, limit) {
+        return this.accountingReportsService.listPeriodClosures(scope, limit);
+    }
+    closeAccountingPeriod(scope, input) {
+        return this.accountingReportsService.closePeriod(scope, input);
+    }
+    async isAccountingDateClosed(companyId, dateIso, branchId) {
+        return this.accountingReportsService.isDateInClosedPeriod(companyId, dateIso, branchId);
+    }
+    async getAgentSettlementPackage(companyId, agentId, options) {
+        if (!this.agentRepository)
+            throw new HttpError(500, 'Agent settlement is not configured.');
+        const raw = await this.agentRepository.getAgentFinancialStatement(companyId, agentId, {
+            currencyCode: options?.currencyCode,
+            fromAt: options?.fromAt,
+            toAt: options?.toAt,
+        });
+        if (!raw)
+            return null;
+        return enrichAgentSettlementSummary(raw);
+    }
+    async getHawalaReconciliationPackage(companyId, agentId, options) {
+        if (!this.agentRepository)
+            throw new HttpError(500, 'Hawala reconciliation is not configured.');
+        const raw = await this.agentRepository.getAgentFinancialStatement(companyId, agentId, {
+            currencyCode: options?.currencyCode,
+            fromAt: options?.fromAt,
+            toAt: options?.toAt,
+        });
+        if (!raw)
+            return null;
+        return buildHawalaReconciliationPackage(raw);
+    }
+    async getAgentBranchReconciliationPackage(companyId, agentId, options) {
+        if (!this.agentRepository)
+            throw new HttpError(500, 'Agent branch reconciliation is not configured.');
+        const raw = await this.agentRepository.getAgentFinancialStatement(companyId, agentId, {
+            currencyCode: options?.currencyCode,
+            fromAt: options?.fromAt,
+            toAt: options?.toAt,
+        });
+        if (!raw)
+            return null;
+        return buildAgentMainBranchReconciliationPackage(raw);
     }
 }

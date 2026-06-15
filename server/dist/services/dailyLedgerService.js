@@ -34,7 +34,13 @@ export class DailyLedgerService {
         }
         return this.shipmentPosting.postPendingShipments(scope, filters, allowedBranchIds);
     }
-    deleteRows(scope, rowIds, allowedBranchIds) {
-        return this.repo.deleteRows(scope, { rowIds, userId: scope.userId }, allowedBranchIds);
+    deleteRows(scope, rowIds, allowedBranchIds, createdByUserId) {
+        return this.repo.deleteRows(scope, { rowIds, userId: scope.userId, createdByUserId }, allowedBranchIds);
+    }
+    cancelSession(scope, sessionId, allowedBranchIds, createdByUserId) {
+        return this.repo.cancelSession(scope, { sessionId, userId: scope.userId, createdByUserId }, allowedBranchIds);
+    }
+    recordSessionPrint(scope, input) {
+        return this.repo.recordSessionPrint(scope, input);
     }
 }

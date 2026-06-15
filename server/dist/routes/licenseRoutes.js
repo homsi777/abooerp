@@ -29,8 +29,13 @@ function resolveKeyDef(code) {
         return { type: 'LOCAL_1', cloudEnabled: false, shipmentLimit: null, deliveryLimit: null, receiptLimit: null };
     }
     if (cloudKeys.has(code)) {
-        // CLOUD keys are stored but currently blocked — frontend should not send them
-        return null;
+        return {
+            type: 'CLOUD_1',
+            cloudEnabled: true,
+            shipmentLimit: null,
+            deliveryLimit: null,
+            receiptLimit: null,
+        };
     }
     return null;
 }
@@ -58,8 +63,9 @@ export function createLicenseRouter(repo) {
     router.post('/activate', asyncHandler(async (req, res) => {
         const { licenseCode, machineId } = activateSchema.parse(req.body);
         const def = resolveKeyDef(licenseCode);
-        if (!def)
-            throw new HttpError(400, 'INVALID_LICENSE_CODE');
+        if (!def) {
+            throw new HttpError(400, 'INVALID_LICENSE_CODE: المفتاح غير معرّف على هذا الخادم — أضفه إلى LICENSE_LOCAL_KEYS أو LICENSE_CLOUD_KEYS في server/.env ثم أعد تشغيل الخادم.');
+        }
         let companyId = req.requestUserContext?.companyId;
         if (!companyId)
             companyId = (await repo.resolveDefaultCompanyId()) ?? undefined;

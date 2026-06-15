@@ -67,8 +67,8 @@ function isRowPostable(row) {
         normalizeName(row.receiver_name) &&
         !row.posted_shipment_id);
 }
-async function resolveAccountCustomerBySenderName(companyId, senderName) {
-    const normalized = normalizeName(senderName);
+async function resolveAccountCustomerByName(companyId, partyName) {
+    const normalized = normalizeName(partyName);
     if (!normalized)
         return null;
     const result = await pool.query(`
@@ -92,10 +92,12 @@ export class DailyLedgerShipmentPostingService {
     ledgerRepo;
     shipmentService;
     agentRepository;
-    constructor(ledgerRepo, shipmentService, agentRepository) {
+    financialPosting;
+    constructor(ledgerRepo, shipmentService, agentRepository, financialPosting) {
         this.ledgerRepo = ledgerRepo;
         this.shipmentService = shipmentService;
         this.agentRepository = agentRepository;
+        this.financialPosting = financialPosting;
     }
     async loadRow(scope, rowId) {
         if (!scope.companyId)
@@ -121,14 +123,98 @@ export class DailyLedgerShipmentPostingService {
       `, [rowId, scope.companyId]);
         return result.rows[0] ?? null;
     }
+    async countActiveSessionsForLedger(scope, filters) {
+        if (!scope.companyId)
+            throw new HttpError(400, 'Company scope is required.');
+        const result = await pool.query(`
+      select count(distinct s.id)::text as count
+      from daily_ledger_sessions s
+      where s.company_id = $1::uuid
+        and s.branch_id = $2::uuid
+        and s.ledger_date = $3::date
+        and s.line_label = $4
+        and s.deleted_at is null
+        and exists (
+          select 1
+          from daily_ledger_rows r
+          where r.session_id = s.id
+            and r.deleted_at is null
+        )
+      `, [scope.companyId, filters.branchId, filters.ledgerDate, filters.lineLabel]);
+        return Number(result.rows[0]?.count ?? 0);
+    }
+    async assertOperationalSessionScope(scope, filters) {
+        if (filters.sessionId) {
+            const sessionOk = await pool.query(`
+        select s.id, s.branch_id, s.ledger_date::text as ledger_date, s.line_label
+        from daily_ledger_sessions s
+        where s.id = $1::uuid
+          and s.company_id = $2::uuid
+          and s.deleted_at is null
+        limit 1
+        `, [filters.sessionId, scope.companyId]);
+            const session = sessionOk.rows[0];
+            if (!session) {
+                throw new HttpError(400, 'الإرسالية المحددة غير موجودة.');
+            }
+            if (filters.rowIds?.length) {
+                const rowSessions = await pool.query(`
+          select r.session_id, count(*)::text as count
+          from daily_ledger_rows r
+          join daily_ledger_sessions s on s.id = r.session_id
+          where r.id = any($1::uuid[])
+            and r.deleted_at is null
+            and s.deleted_at is null
+            and s.company_id = $2::uuid
+          group by r.session_id
+          `, [filters.rowIds, scope.companyId]);
+                if (rowSessions.rows.some((entry) => entry.session_id !== filters.sessionId)) {
+                    throw new HttpError(400, 'DAILY_LEDGER_SESSION_REQUIRED: بعض الأسطر المطلوب ترحيلها لا تنتمي للإرسالية المحددة.');
+                }
+            }
+            return {
+                sessionId: session.id,
+                branchId: session.branch_id,
+                ledgerDate: session.ledger_date,
+                lineLabel: session.line_label,
+            };
+        }
+        const sessionCount = await this.countActiveSessionsForLedger(scope, filters);
+        if (sessionCount > 1) {
+            throw new HttpError(400, 'DAILY_LEDGER_SESSION_REQUIRED');
+        }
+        return {
+            sessionId: undefined,
+            branchId: filters.branchId,
+            ledgerDate: filters.ledgerDate,
+            lineLabel: filters.lineLabel,
+        };
+    }
     async loadPendingRows(scope, filters) {
         if (!scope.companyId)
             throw new HttpError(400, 'Company scope is required.');
-        const values = [scope.companyId, filters.branchId, filters.ledgerDate, filters.lineLabel];
+        const values = [scope.companyId];
+        let scopeFilter = '';
+        if (filters.sessionId) {
+            values.push(filters.sessionId);
+            scopeFilter = ` and s.id = $${values.length}::uuid`;
+        }
+        else {
+            values.push(filters.branchId, filters.ledgerDate, filters.lineLabel);
+            scopeFilter = `
+        and s.branch_id = $2
+        and s.ledger_date = $3::date
+        and s.line_label = $4
+      `;
+        }
         let rowFilter = '';
         if (filters.rowIds?.length) {
             values.push(filters.rowIds);
-            rowFilter = `and r.id = any($${values.length}::uuid[])`;
+            rowFilter += ` and r.id = any($${values.length}::uuid[])`;
+        }
+        if (filters.createdByUserId) {
+            values.push(filters.createdByUserId);
+            rowFilter += ` and r.created_by = $${values.length}::uuid`;
         }
         const result = await pool.query(`
       select
@@ -144,12 +230,10 @@ export class DailyLedgerShipmentPostingService {
       from daily_ledger_rows r
       join daily_ledger_sessions s on s.id = r.session_id
       where s.company_id = $1
-        and s.branch_id = $2
-        and s.ledger_date = $3::date
-        and s.line_label = $4
         and r.deleted_at is null
         and s.deleted_at is null
         and r.posted_shipment_id is null
+        ${scopeFilter}
         ${rowFilter}
       order by r.row_no asc
       `, values);
@@ -190,7 +274,8 @@ export class DailyLedgerShipmentPostingService {
         const agentId = agent.id;
         const destinationCity = resolveAgentDestinationLabel(agent) || normalizeName(row.destination);
         const amounts = amountsFromLedgerRow(row);
-        const accountCustomer = await resolveAccountCustomerBySenderName(row.company_id, row.sender_name ?? '');
+        const accountCustomer = (await resolveAccountCustomerByName(row.company_id, row.sender_name ?? '')) ??
+            (await resolveAccountCustomerByName(row.company_id, row.receiver_name ?? ''));
         const notes = [
             row.notes,
             row.trip_no ? `رقم الرحلة: ${row.trip_no}` : '',
@@ -269,7 +354,8 @@ export class DailyLedgerShipmentPostingService {
         const agentId = agent.id;
         const destinationCity = resolveAgentDestinationLabel(agent) || normalizeName(row.destination);
         const amounts = amountsFromLedgerRow(row);
-        const accountCustomer = await resolveAccountCustomerBySenderName(row.company_id, row.sender_name ?? '');
+        const accountCustomer = (await resolveAccountCustomerByName(row.company_id, row.sender_name ?? '')) ??
+            (await resolveAccountCustomerByName(row.company_id, row.receiver_name ?? ''));
         const notes = [
             row.notes,
             row.trip_no ? `رقم الرحلة: ${row.trip_no}` : '',
@@ -312,6 +398,32 @@ export class DailyLedgerShipmentPostingService {
             if (otherLink) {
                 throw new HttpError(409, `رقم الإيصال ${receiptNo} مربوط بسطر دفتر آخر (سطر ${otherLink.row_no}).`);
             }
+            // If existing shipment has no financial posting, trigger it now
+            const shipmentFull = await pool.query(`select financial_status from shipments where id = $1`, [shipmentId]);
+            const fs = shipmentFull.rows[0]?.financial_status;
+            if (this.financialPosting && (!fs || fs === 'UNPOSTED')) {
+                const client = await pool.connect();
+                try {
+                    await client.query('BEGIN');
+                    await this.financialPosting.postShipmentConfirmationFinancials({
+                        client,
+                        shipmentId,
+                        scope: { ...scope, branchId: row.branch_id, companyId: row.company_id },
+                        financial,
+                        effectiveDate: row.ledger_date,
+                    });
+                    // Also set effective_date on the existing shipment
+                    await client.query(`UPDATE shipments SET effective_date = coalesce($2::date, effective_date) WHERE id = $1`, [shipmentId, row.ledger_date ?? null]);
+                    await client.query('COMMIT');
+                }
+                catch (e) {
+                    await client.query('ROLLBACK');
+                    throw e;
+                }
+                finally {
+                    client.release();
+                }
+            }
             const posted = await this.ledgerRepo.markPosted(scope, { rowId: row.id, shipmentId, userId: scope.userId }, allowedBranchIds);
             if (!posted) {
                 throw new HttpError(409, `تعذر ربط الشحنة الموجودة بالسطر ${row.row_no}.`);
@@ -349,7 +461,8 @@ export class DailyLedgerShipmentPostingService {
             transferServiceFee: amounts.transferServiceFee,
             discountAmount: 0,
             createdBy: scope.userId,
-        }, { ...scope, branchId: row.branch_id, companyId: row.company_id }, { financial, actorUserId: scope.userId });
+            effectiveDate: row.ledger_date,
+        }, { ...scope, branchId: row.branch_id, companyId: row.company_id }, { financial, actorUserId: scope.userId, effectiveDate: row.ledger_date });
         const posted = await this.ledgerRepo.markPosted(scope, { rowId: row.id, shipmentId: created.id, userId: scope.userId }, allowedBranchIds);
         if (!posted) {
             throw new HttpError(409, `تعذر ربط الشحنة بالسطر ${row.row_no}.`);
@@ -362,7 +475,14 @@ export class DailyLedgerShipmentPostingService {
         };
     }
     async postPendingShipments(scope, filters, allowedBranchIds) {
-        const rows = await this.loadPendingRows(scope, filters);
+        const resolvedScope = await this.assertOperationalSessionScope(scope, filters);
+        const rows = await this.loadPendingRows(scope, {
+            ...filters,
+            branchId: resolvedScope.branchId,
+            ledgerDate: resolvedScope.ledgerDate,
+            lineLabel: resolvedScope.lineLabel,
+            sessionId: resolvedScope.sessionId ?? filters.sessionId,
+        });
         const postable = rows.filter(isRowPostable);
         const skipped = rows
             .filter((row) => !isRowPostable(row))

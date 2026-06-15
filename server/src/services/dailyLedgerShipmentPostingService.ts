@@ -124,11 +124,11 @@ function isRowPostable(row: LedgerRowRecord): boolean {
   );
 }
 
-async function resolveAccountCustomerBySenderName(
+async function resolveAccountCustomerByName(
   companyId: string,
-  senderName: string,
+  partyName: string,
 ): Promise<{ id: string; name: string } | null> {
-  const normalized = normalizeName(senderName);
+  const normalized = normalizeName(partyName);
   if (!normalized) return null;
 
   const result = await pool.query<{ id: string; name: string }>(
@@ -220,26 +220,27 @@ export class DailyLedgerShipmentPostingService {
   private async assertOperationalSessionScope(
     scope: DataScope,
     filters: { branchId: string; ledgerDate: string; lineLabel: string; sessionId?: string; rowIds?: string[] },
-  ): Promise<string | undefined> {
-    const sessionCount = await this.countActiveSessionsForLedger(scope, filters);
-
+  ): Promise<{ sessionId?: string; branchId: string; ledgerDate: string; lineLabel: string }> {
     if (filters.sessionId) {
-      const sessionOk = await pool.query<{ id: string }>(
+      const sessionOk = await pool.query<{
+        id: string;
+        branch_id: string;
+        ledger_date: string;
+        line_label: string;
+      }>(
         `
-        select s.id
+        select s.id, s.branch_id, s.ledger_date::text as ledger_date, s.line_label
         from daily_ledger_sessions s
         where s.id = $1::uuid
           and s.company_id = $2::uuid
-          and s.branch_id = $3::uuid
-          and s.ledger_date = $4::date
-          and s.line_label = $5
           and s.deleted_at is null
         limit 1
         `,
-        [filters.sessionId, scope.companyId, filters.branchId, filters.ledgerDate, filters.lineLabel],
+        [filters.sessionId, scope.companyId],
       );
-      if (!sessionOk.rows[0]) {
-        throw new HttpError(400, 'الإرسالية المحددة غير موجودة لهذا التاريخ والخط.');
+      const session = sessionOk.rows[0];
+      if (!session) {
+        throw new HttpError(400, 'الإرسالية المحددة غير موجودة.');
       }
 
       if (filters.rowIds?.length) {
@@ -263,16 +264,25 @@ export class DailyLedgerShipmentPostingService {
           );
         }
       }
-      return filters.sessionId;
+
+      return {
+        sessionId: session.id,
+        branchId: session.branch_id,
+        ledgerDate: session.ledger_date,
+        lineLabel: session.line_label,
+      };
     }
 
+    const sessionCount = await this.countActiveSessionsForLedger(scope, filters);
     if (sessionCount > 1) {
-      throw new HttpError(
-        400,
-        'DAILY_LEDGER_SESSION_REQUIRED',
-      );
+      throw new HttpError(400, 'DAILY_LEDGER_SESSION_REQUIRED');
     }
-    return undefined;
+    return {
+      sessionId: undefined,
+      branchId: filters.branchId,
+      ledgerDate: filters.ledgerDate,
+      lineLabel: filters.lineLabel,
+    };
   }
 
   private async loadPendingRows(
@@ -287,12 +297,22 @@ export class DailyLedgerShipmentPostingService {
     },
   ): Promise<LedgerRowRecord[]> {
     if (!scope.companyId) throw new HttpError(400, 'Company scope is required.');
-    const values: unknown[] = [scope.companyId, filters.branchId, filters.ledgerDate, filters.lineLabel];
-    let rowFilter = '';
+
+    const values: unknown[] = [scope.companyId];
+    let scopeFilter = '';
     if (filters.sessionId) {
       values.push(filters.sessionId);
-      rowFilter += ` and s.id = $${values.length}::uuid`;
+      scopeFilter = ` and s.id = $${values.length}::uuid`;
+    } else {
+      values.push(filters.branchId, filters.ledgerDate, filters.lineLabel);
+      scopeFilter = `
+        and s.branch_id = $2
+        and s.ledger_date = $3::date
+        and s.line_label = $4
+      `;
     }
+
+    let rowFilter = '';
     if (filters.rowIds?.length) {
       values.push(filters.rowIds);
       rowFilter += ` and r.id = any($${values.length}::uuid[])`;
@@ -301,6 +321,7 @@ export class DailyLedgerShipmentPostingService {
       values.push(filters.createdByUserId);
       rowFilter += ` and r.created_by = $${values.length}::uuid`;
     }
+
     const result = await pool.query<LedgerRowRecord>(
       `
       select
@@ -316,12 +337,10 @@ export class DailyLedgerShipmentPostingService {
       from daily_ledger_rows r
       join daily_ledger_sessions s on s.id = r.session_id
       where s.company_id = $1
-        and s.branch_id = $2
-        and s.ledger_date = $3::date
-        and s.line_label = $4
         and r.deleted_at is null
         and s.deleted_at is null
         and r.posted_shipment_id is null
+        ${scopeFilter}
         ${rowFilter}
       order by r.row_no asc
       `,
@@ -370,7 +389,9 @@ export class DailyLedgerShipmentPostingService {
     const agentId = agent.id;
     const destinationCity = resolveAgentDestinationLabel(agent) || normalizeName(row.destination);
     const amounts = amountsFromLedgerRow(row);
-    const accountCustomer = await resolveAccountCustomerBySenderName(row.company_id, row.sender_name ?? '');
+    const accountCustomer =
+      (await resolveAccountCustomerByName(row.company_id, row.sender_name ?? '')) ??
+      (await resolveAccountCustomerByName(row.company_id, row.receiver_name ?? ''));
 
     const notes = [
       row.notes,
@@ -465,7 +486,9 @@ export class DailyLedgerShipmentPostingService {
     const destinationCity = resolveAgentDestinationLabel(agent) || normalizeName(row.destination);
 
     const amounts = amountsFromLedgerRow(row);
-    const accountCustomer = await resolveAccountCustomerBySenderName(row.company_id, row.sender_name ?? '');
+    const accountCustomer =
+      (await resolveAccountCustomerByName(row.company_id, row.sender_name ?? '')) ??
+      (await resolveAccountCustomerByName(row.company_id, row.receiver_name ?? ''));
 
     const notes = [
       row.notes,
@@ -630,8 +653,14 @@ export class DailyLedgerShipmentPostingService {
     },
     allowedBranchIds: string[],
   ) {
-    const sessionId = await this.assertOperationalSessionScope(scope, filters);
-    const rows = await this.loadPendingRows(scope, { ...filters, sessionId: sessionId ?? filters.sessionId });
+    const resolvedScope = await this.assertOperationalSessionScope(scope, filters);
+    const rows = await this.loadPendingRows(scope, {
+      ...filters,
+      branchId: resolvedScope.branchId,
+      ledgerDate: resolvedScope.ledgerDate,
+      lineLabel: resolvedScope.lineLabel,
+      sessionId: resolvedScope.sessionId ?? filters.sessionId,
+    });
     const postable = rows.filter(isRowPostable);
     const skipped = rows
       .filter((row) => !isRowPostable(row))

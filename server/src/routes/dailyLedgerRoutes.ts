@@ -18,6 +18,7 @@ import { DailyLedgerService } from '../services/dailyLedgerService.js';
 import type { DailyLedgerTransferService } from '../services/dailyLedgerTransferService.js';
 import { appendQuickLedgerClientLogs } from '../services/quickLedgerLogService.js';
 import { HttpError } from '../utils/errors.js';
+import { emit } from '../events/eventBus.js';
 
 const uuid = z.string().uuid();
 
@@ -303,6 +304,26 @@ export function createDailyLedgerRouter(
       const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, permissions);
       try {
         const result = await service.postPendingShipments(scope, { ...input, createdByUserId }, allowedBranchIds);
+        const correlationId = (req as any).correlationId as string | undefined;
+        const timestamp = new Date().toISOString();
+        for (const posted of result.posted) {
+          emit({
+            type: 'shipment.created',
+            companyId: scope.companyId ?? '',
+            branchId: input.branchId,
+            entityId: posted.shipmentId,
+            timestamp,
+            correlationId: correlationId ?? null,
+          });
+          emit({
+            type: 'shipment.updated',
+            companyId: scope.companyId ?? '',
+            branchId: input.branchId,
+            entityId: posted.shipmentId,
+            timestamp,
+            correlationId: correlationId ?? null,
+          });
+        }
         res.json({ success: true, data: result });
       } catch (error) {
         if (error instanceof HttpError) {

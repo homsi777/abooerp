@@ -126,6 +126,21 @@ function rowInActiveSessionScope(row: LedgerRow, sessionId: string): boolean {
   return false;
 }
 
+/** نطاق الحفظ/الترحيل من بيانات الإرسالية الفعلية — يتجاوز اختلاف التاريخ/الخط في الواجهة */
+function resolveSessionLedgerScope(
+  sessionId: string,
+  remoteRows: RemoteDailyLedgerRow[],
+  fallback: { branchId: string; ledgerDate: string; lineLabel: string },
+): { branchId: string; ledgerDate: string; lineLabel: string } {
+  const sample = remoteRows.find((row) => row.session_id === sessionId);
+  if (!sample?.branch_id) return fallback;
+  return {
+    branchId: sample.branch_id,
+    ledgerDate: sample.ledger_date ?? fallback.ledgerDate,
+    lineLabel: sample.line_label ?? fallback.lineLabel,
+  };
+}
+
 type SuggestedAgent = { id: number; code: string; name: string; governorate?: string; city?: string; area?: string };
 
 type DestinationExportSummary = {
@@ -1295,7 +1310,7 @@ export default function ShipmentQuickLedger() {
     return [...consolidated, ...buildEntrySlotRows(nextEntryId, origin)];
   };
 
-  const loadRemoteRows = async () => {
+  const loadRemoteRows = async (options?: { preserveSessionId?: string | null }) => {
     const branchId = activeBranchIdRef.current;
     const currentTrip = tripRef.current;
     const viewAllEntries = canViewAllLedgerEntriesRef.current;
@@ -1312,7 +1327,11 @@ export default function ShipmentQuickLedger() {
       }
       if (generation !== loadGenerationRef.current) return;
 
-      setActiveSessionId(null);
+      if (options?.preserveSessionId) {
+        setActiveSessionId(options.preserveSessionId);
+      } else {
+        setActiveSessionId(null);
+      }
       setDestinationSort('none');
       setRemoteRowsRaw([]);
       setRemoteSyncedCount(0);
@@ -2393,6 +2412,7 @@ export default function ShipmentQuickLedger() {
         rowIds: dbIds,
         target: {
           ledgerDate: transferDate,
+          lineLabel: trip.line || null,
           driverId: driverBackendId,
           vehicleId: vehicleBackendId,
           notes: trip.tripNo || null,
@@ -2406,6 +2426,7 @@ export default function ShipmentQuickLedger() {
       exitTransferMode();
       // الانتقال إلى الإرسالية الجديدة: نفس التاريخ/الخط مع السائق الجديد
       const targetDriver = drivers.find((d) => d.id === transferDriverId);
+      const targetSessionId = result.targetSessionId ?? null;
       setTrip((prev) => ({
         ...prev,
         date: transferDate,
@@ -2413,9 +2434,7 @@ export default function ShipmentQuickLedger() {
         driver: targetDriver?.name ?? prev.driver,
         vehicleId: transferVehicleId || prev.vehicleId,
       }));
-      // فتح الإرسالية الهدف تلقائياً بعد النقل (المصدر يبقى متاحاً كصندوق آخر)
-      setActiveSessionId(result.targetSessionId ?? null);
-      await loadRemoteRows();
+      await loadRemoteRows({ preserveSessionId: targetSessionId });
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'تعذر نقل الإرسالية', 'error');
     } finally {
@@ -2839,16 +2858,22 @@ export default function ShipmentQuickLedger() {
       showToast(SESSION_SCOPE_REQUIRED_MSG, 'error');
       return;
     }
-    const origin = resolveTripOrigin(trip.line);
+    const sessionScope = resolveSessionLedgerScope(activeSessionId, remoteRowsRaw, {
+      branchId: activeBranchId,
+      ledgerDate: trip.date,
+      lineLabel: trip.line,
+    });
+    const sessionBranchId = resolveLedgerBranchId(sessionScope.branchId);
+    const origin = resolveTripOrigin(sessionScope.lineLabel);
     if (!origin) {
       showToast('يرجى اختيار الخط / المصدر أولاً', 'error');
       return;
     }
 
     const batchId = quickLedgerLog.startBatch({
-      ledgerDate: trip.date,
-      lineLabel: trip.line,
-      branchId: activeBranchId,
+      ledgerDate: sessionScope.ledgerDate,
+      lineLabel: sessionScope.lineLabel,
+      branchId: sessionBranchId,
       rowsToPost: 0,
     });
 
@@ -3044,9 +3069,9 @@ export default function ShipmentQuickLedger() {
           row.serverRowNo ?? nextServerRowNoForDriver(workingRows, effectiveDriverId) ?? row.id;
         try {
           const saved = await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
-            branchId: activeBranchId,
-            ledgerDate: trip.date,
-            lineLabel: trip.line,
+            branchId: sessionBranchId,
+            ledgerDate: sessionScope.ledgerDate,
+            lineLabel: sessionScope.lineLabel,
             originLabel: origin,
             tripNo: trip.tripNo || null,
             ...(row.dbId ? { rowId: row.dbId } : {}),
@@ -3116,9 +3141,9 @@ export default function ShipmentQuickLedger() {
         skipped: Array<{ rowId: string; rowNo: number; reason: string }>;
         errors: Array<{ rowId: string; rowNo: number; message: string }>;
       }>('/daily-ledger/rows/post-shipments', {
-        branchId: activeBranchId,
-        ledgerDate: trip.date,
-        lineLabel: trip.line,
+        branchId: sessionBranchId,
+        ledgerDate: sessionScope.ledgerDate,
+        lineLabel: sessionScope.lineLabel,
         sessionId: activeSessionId,
         rowIds: upsertedRowIds,
       });
@@ -3177,7 +3202,7 @@ export default function ShipmentQuickLedger() {
             next[row.id] = errorsByRowId.get(dbId)!.message;
           }
         }
-        persistFailedSaveRows(trip.date, trip.line, next);
+        persistFailedSaveRows(sessionScope.ledgerDate, sessionScope.lineLabel, next);
         return next;
       });
 
@@ -3223,8 +3248,8 @@ export default function ShipmentQuickLedger() {
       if (result.posted.length) {
         showToast(
           resumeMode
-            ? `تم استكمال ترحيل ${result.posted.length} شحنة — لم يُعاد حفظ المُرحَّل سابقاً`
-            : `تم حفظ ${result.posted.length} شحنة وربطها بالوكيل بنجاح`,
+            ? `تم استكمال ترحيل ${result.posted.length} شحنة بتاريخ ${sessionScope.ledgerDate} — ستظهر في قائمة الشحنات (تحميل/تسليم) والذمم في قسم المالية (وكلاء/عملاء).`
+            : `تم ترحيل ${result.posted.length} شحنة بتاريخ ${sessionScope.ledgerDate} — متاحة الآن في قائمة الشحنات والذمم المالية.`,
           'success',
         );
       }
@@ -3246,7 +3271,7 @@ export default function ShipmentQuickLedger() {
         );
       }
 
-      await loadRemoteRows();
+      await loadRemoteRows({ preserveSessionId: activeSessionId });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'تعذر حفظ الشحنات';
       quickLedgerLog.log('error', 'batch', message);

@@ -263,9 +263,35 @@ export class FinanceRepository {
         c.*,
         b.name as branch_name,
         a.name as agent_name,
+        a.governorate as agent_governorate,
         u.username as created_by_username,
         pc.name as parent_cashbox_name,
-        pc.code as parent_cashbox_code
+        pc.code as parent_cashbox_code,
+        coalesce((
+          select count(*)::int
+          from cashbox_transactions ct
+          where ct.cashbox_id = c.id
+        ), 0) as transaction_count,
+        case
+          when c.type = 'AGENT' and c.agent_id is not null then (
+            select count(*)::int
+            from shipments s
+            where s.agent_id = c.agent_id and s.deleted_at is null
+          )
+          else null
+        end as agent_shipment_count,
+        case
+          when c.type = 'AGENT' and c.agent_id is not null then (
+            select
+              coalesce(sum(case when pfm.direction in ('inflow', 'debit') then pfm.base_amount_usd else 0 end), 0)
+              - coalesce(sum(case when pfm.direction in ('outflow', 'credit') then pfm.base_amount_usd else 0 end), 0)
+            from party_financial_movements pfm
+            where pfm.party_type = 'agent'
+              and pfm.party_id::uuid = c.agent_id
+              and pfm.is_reversal = false
+          )
+          else null
+        end as agent_operational_net_usd
       from cashboxes c
       left join branches b on b.id = c.branch_id
       left join agents a on a.id = c.agent_id
@@ -345,6 +371,210 @@ export class FinanceRepository {
       limit 1
       `, [companyId, agentId]);
         return r.rows[0] ?? null;
+    }
+    /** إنشاء صناديق USD لكل وكيل نشط بلا صندوق AGENT */
+    async backfillMissingAgentCashboxes(companyId) {
+        const r = await pool.query(`
+      with general as (
+        select distinct on (company_id)
+          company_id,
+          id as general_id
+        from cashboxes
+        where company_id = $1::uuid
+          and type = 'COMPANY'
+          and currency_code = 'USD'
+          and is_active = true
+        order by
+          company_id,
+          case when code = 'CASH-GENERAL-USD' then 0 else 1 end,
+          created_at
+      ),
+      ranked as (
+        select
+          a.id,
+          row_number() over (
+            partition by coalesce(a.governorate, a.name)
+            order by
+              (select count(*) from shipments s where s.agent_id = a.id and s.deleted_at is null) desc,
+              case when a.code like 'AGT-%' then 1 else 0 end,
+              a.created_at asc
+          ) as rn
+        from agents a
+        join branches b on b.id = a.branch_id
+        where b.company_id = $1::uuid and a.is_active = true
+      ),
+      ins as (
+        insert into cashboxes (
+          company_id, branch_id, agent_id,
+          code, name, type,
+          currency_code, opening_balance, current_balance,
+          is_active, notes, parent_cashbox_id, created_at, updated_at
+        )
+        select
+          b.company_id,
+          a.branch_id,
+          a.id,
+          'CASH-AG-' || upper(replace(replace(a.code, '-', ''), ' ', '')) || '-USD',
+          'صندوق ' || a.name,
+          'AGENT',
+          'USD',
+          0,
+          0,
+          true,
+          'أُنشئ تلقائياً — مزامنة صناديق الوكلاء',
+          g.general_id,
+          now(),
+          now()
+        from agents a
+        join branches b on b.id = a.branch_id
+        join general g on g.company_id = b.company_id
+        join ranked r on r.id = a.id and r.rn = 1
+        where b.company_id = $1::uuid
+          and a.is_active = true
+          and a.branch_id is not null
+          and not exists (
+            select 1 from cashboxes x
+            where x.agent_id = a.id and x.type = 'AGENT'
+          )
+        on conflict (company_id, code) do nothing
+        returning 1
+      )
+      select count(*)::int as count from ins
+      `, [companyId]);
+        return r.rows[0]?.count ?? 0;
+    }
+    /**
+     * عند وجود وكيل مكرر لنفس المحافظة: نقل الصندوق إلى الوكيل التشغيلي
+     * (أكثر شحنات، وتفضيل الكود غير AGT-*).
+     */
+    async reassignAgentCashboxesToCanonical(companyId) {
+        const r = await pool.query(`
+      with ranked as (
+        select
+          a.id,
+          coalesce(a.governorate, a.name) as gov_key,
+          row_number() over (
+            partition by coalesce(a.governorate, a.name)
+            order by
+              (select count(*) from shipments s where s.agent_id = a.id and s.deleted_at is null) desc,
+              case when a.code like 'AGT-%' then 1 else 0 end,
+              a.created_at asc
+          ) as rn
+        from agents a
+        join branches b on b.id = a.branch_id
+        where b.company_id = $1::uuid and a.is_active = true
+      ),
+      canonical as (
+        select id, gov_key from ranked where rn = 1
+      ),
+      moved as (
+        update cashboxes cb
+        set
+          agent_id = c.id,
+          updated_at = now()
+        from agents a
+        join branches b on b.id = a.branch_id
+        join canonical c on c.gov_key = coalesce(a.governorate, a.name)
+        where b.company_id = $1::uuid
+          and cb.type = 'AGENT'
+          and cb.agent_id = a.id
+          and a.id <> c.id
+          and not exists (
+            select 1 from cashboxes x
+            where x.agent_id = c.id and x.type = 'AGENT' and x.id <> cb.id
+          )
+        returning 1
+      )
+      select count(*)::int as count from moved
+      `, [companyId]);
+        return r.rows[0]?.count ?? 0;
+    }
+    /** ربط صناديق الوكلاء وفرع حلب بالصندوق العام إن لم يكن الربط موجوداً */
+    async linkChildCashboxesToGeneral(companyId) {
+        const r = await pool.query(`
+      with general as (
+        select id
+        from cashboxes
+        where company_id = $1::uuid
+          and type = 'COMPANY'
+          and currency_code = 'USD'
+          and is_active = true
+        order by case when code = 'CASH-GENERAL-USD' then 0 else 1 end, created_at
+        limit 1
+      ),
+      linked as (
+        update cashboxes cb
+        set parent_cashbox_id = g.id, updated_at = now()
+        from general g
+        where cb.company_id = $1::uuid
+          and cb.parent_cashbox_id is null
+          and (
+            cb.type = 'AGENT'
+            or (
+              cb.type = 'BRANCH'
+              and exists (
+                select 1 from branches br
+                where br.id = cb.branch_id and br.code = 'BR-ALEPPO'
+              )
+            )
+          )
+        returning 1
+      )
+      select count(*)::int as count from linked
+      `, [companyId]);
+        return r.rows[0]?.count ?? 0;
+    }
+    /** إعادة حساب current_balance من الحركات النقدية الفعلية */
+    async reconcileCashboxBalances(companyId) {
+        const client = await pool.connect();
+        try {
+            await client.query('begin');
+            await client.query(`
+        update cashboxes cb
+        set current_balance = cb.opening_balance, updated_at = now()
+        where cb.company_id = $1::uuid
+          and not exists (select 1 from cashbox_transactions ct where ct.cashbox_id = cb.id)
+        `, [companyId]);
+            const r = await client.query(`
+        with nets as (
+          select
+            ct.cashbox_id,
+            sum(
+              case when ct.transaction_type = 'inflow' then ct.original_amount else -ct.original_amount end
+            )::numeric as net
+          from cashbox_transactions ct
+          join cashboxes cb on cb.id = ct.cashbox_id
+          where cb.company_id = $1::uuid
+          group by ct.cashbox_id
+        ),
+        updated as (
+          update cashboxes cb
+          set
+            current_balance = cb.opening_balance + coalesce(n.net, 0),
+            updated_at = now()
+          from nets n
+          where cb.id = n.cashbox_id
+          returning 1
+        )
+        select count(*)::int as count from updated
+        `, [companyId]);
+            await client.query('commit');
+            return r.rows[0]?.count ?? 0;
+        }
+        catch (error) {
+            await client.query('rollback');
+            throw error;
+        }
+        finally {
+            client.release();
+        }
+    }
+    async syncCompanyCashboxes(companyId) {
+        const created = await this.backfillMissingAgentCashboxes(companyId);
+        const reassigned = await this.reassignAgentCashboxesToCanonical(companyId);
+        const linked = await this.linkChildCashboxesToGeneral(companyId);
+        const balancesReconciled = await this.reconcileCashboxBalances(companyId);
+        return { created, reassigned, linked, balancesReconciled };
     }
     async createCashbox(input) {
         const opening = input.openingBalance ?? 0;
@@ -551,11 +781,11 @@ export class FinanceRepository {
         }
         if (filters?.dateFrom) {
             values.push(filters.dateFrom);
-            conditions.push(`pfm.created_at >= $${values.length}::timestamptz`);
+            conditions.push(`coalesce(pfm.posted_at, pfm.created_at) >= $${values.length}::timestamptz`);
         }
         if (filters?.dateTo) {
             values.push(filters.dateTo);
-            conditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+            conditions.push(`coalesce(pfm.posted_at, pfm.created_at) <= $${values.length}::timestamptz`);
         }
         if (filters?.search?.trim()) {
             values.push(`%${filters.search.trim()}%`);
@@ -595,7 +825,7 @@ export class FinanceRepository {
           coalesce(sum(${debitExpr}), 0)
           - coalesce(sum(${creditExpr}), 0)
         )::numeric as balance,
-        max(pfm.created_at) as last_movement_at,
+        max(coalesce(pfm.posted_at, pfm.created_at)) as last_movement_at,
         count(*)::int as movement_count,
         count(*) over()::int as total_count
       from party_financial_movements pfm
@@ -606,7 +836,7 @@ export class FinanceRepository {
       ${whereClause}
       group by pfm.party_type, pfm.party_id, party_code, party_name, b.name, pfm.original_currency
       ${directionHaving}
-      order by max(pfm.created_at) desc, party_name asc
+      order by max(coalesce(pfm.posted_at, pfm.created_at)) desc, party_name asc
       limit ${limitRef}
       offset ${offsetRef}
       `, values);
@@ -644,11 +874,11 @@ export class FinanceRepository {
         }
         if (filters?.dateFrom) {
             values.push(filters.dateFrom);
-            conditions.push(`pfm.created_at >= $${values.length}::timestamptz`);
+            conditions.push(`coalesce(pfm.posted_at, pfm.created_at) >= $${values.length}::timestamptz`);
         }
         if (filters?.dateTo) {
             values.push(filters.dateTo);
-            conditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+            conditions.push(`coalesce(pfm.posted_at, pfm.created_at) <= $${values.length}::timestamptz`);
         }
         if (filters?.referenceType) {
             if (filters.referenceType === 'shipment') {
@@ -683,7 +913,7 @@ export class FinanceRepository {
         const result = await pool.query(`
       select
         pfm.id,
-        pfm.created_at as date,
+        coalesce(pfm.posted_at, pfm.created_at) as date,
         pfm.party_type,
         pfm.party_id,
         coalesce(c.name, sr.full_name, ag.name, '-') as party_name,
@@ -724,7 +954,7 @@ export class FinanceRepository {
       left join senders_receivers sr on pfm.party_type = 'sender_receiver' and sr.id = pfm.party_id
       left join agents ag on pfm.party_type = 'agent' and ag.id = pfm.party_id
       ${whereClause}
-      order by pfm.created_at asc, pfm.id asc
+      order by coalesce(pfm.posted_at, pfm.created_at) asc, pfm.id asc
       limit ${limitRef}
       offset ${offsetRef}
       `, values);
@@ -749,11 +979,11 @@ export class FinanceRepository {
         }
         if (filters?.fromAt) {
             values.push(filters.fromAt);
-            conditions.push(`pfm.created_at >= $${values.length}::timestamptz`);
+            conditions.push(`coalesce(pfm.posted_at, pfm.created_at) >= $${values.length}::timestamptz`);
         }
         if (filters?.toAt) {
             values.push(filters.toAt);
-            conditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+            conditions.push(`coalesce(pfm.posted_at, pfm.created_at) <= $${values.length}::timestamptz`);
         }
         if (filters?.includeReversals === false) {
             conditions.push('pfm.is_reversal = false');
@@ -762,6 +992,7 @@ export class FinanceRepository {
         const result = await pool.query(`
       select
         pfm.*,
+        coalesce(pfm.posted_at, pfm.created_at) as effective_at,
         case
           when pfm.direction in ('inflow', 'debit') then pfm.base_amount_usd
           when pfm.direction in ('outflow', 'credit') then -pfm.base_amount_usd
@@ -769,7 +1000,7 @@ export class FinanceRepository {
         end as signed_base_amount_usd
       from party_financial_movements pfm
       ${whereClause}
-      order by pfm.created_at asc, pfm.id asc
+      order by coalesce(pfm.posted_at, pfm.created_at) asc, pfm.id asc
       `, values);
         return result.rows;
     }
@@ -793,12 +1024,12 @@ export class FinanceRepository {
         if (filters?.fromAt) {
             values.push(filters.fromAt);
             const fromRef = `$${values.length}::timestamptz`;
-            openingConditions.push(`pfm.created_at < ${fromRef}`);
-            periodConditions.push(`pfm.created_at >= ${fromRef}`);
+            openingConditions.push(`coalesce(pfm.posted_at, pfm.created_at) < ${fromRef}`);
+            periodConditions.push(`coalesce(pfm.posted_at, pfm.created_at) >= ${fromRef}`);
         }
         if (filters?.toAt) {
             values.push(filters.toAt);
-            periodConditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+            periodConditions.push(`coalesce(pfm.posted_at, pfm.created_at) <= $${values.length}::timestamptz`);
         }
         const openingWhere = openingConditions.length ? `where ${openingConditions.join(' and ')}` : '';
         const periodWhere = periodConditions.length ? `where ${periodConditions.join(' and ')}` : '';
@@ -844,11 +1075,11 @@ export class FinanceRepository {
         }
         if (filters?.fromAt) {
             values.push(filters.fromAt);
-            conditions.push(`pfm.created_at >= $${values.length}::timestamptz`);
+            conditions.push(`coalesce(pfm.posted_at, pfm.created_at) >= $${values.length}::timestamptz`);
         }
         if (filters?.toAt) {
             values.push(filters.toAt);
-            conditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+            conditions.push(`coalesce(pfm.posted_at, pfm.created_at) <= $${values.length}::timestamptz`);
         }
         if (filters?.includeReversals === false) {
             conditions.push('pfm.is_reversal = false');
@@ -864,6 +1095,7 @@ export class FinanceRepository {
         const rowsResult = await pool.query(`
       select
         pfm.*,
+        coalesce(pfm.posted_at, pfm.created_at) as effective_at,
         case
           when pfm.direction in ('inflow', 'debit') then pfm.base_amount_usd
           when pfm.direction in ('outflow', 'credit') then -pfm.base_amount_usd
@@ -872,7 +1104,7 @@ export class FinanceRepository {
         count(*) over()::int as total_count
       from party_financial_movements pfm
       ${whereClause}
-      order by pfm.created_at desc, pfm.id desc
+      order by coalesce(pfm.posted_at, pfm.created_at) desc, pfm.id desc
       limit ${limitRef}
       offset ${offsetRef}
       `, values);
@@ -902,11 +1134,11 @@ export class FinanceRepository {
         }
         if (filters?.fromAt) {
             values.push(filters.fromAt);
-            conditions.push(`pfm.created_at >= $${values.length}::timestamptz`);
+            conditions.push(`coalesce(pfm.posted_at, pfm.created_at) >= $${values.length}::timestamptz`);
         }
         if (filters?.toAt) {
             values.push(filters.toAt);
-            conditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+            conditions.push(`coalesce(pfm.posted_at, pfm.created_at) <= $${values.length}::timestamptz`);
         }
         if (filters?.includeReversals === false) {
             conditions.push('pfm.is_reversal = false');
@@ -949,11 +1181,11 @@ export class FinanceRepository {
         }
         if (filters?.fromAt) {
             values.push(filters.fromAt);
-            conditions.push(`pfm.created_at >= $${values.length}::timestamptz`);
+            conditions.push(`coalesce(pfm.posted_at, pfm.created_at) >= $${values.length}::timestamptz`);
         }
         if (filters?.toAt) {
             values.push(filters.toAt);
-            conditions.push(`pfm.created_at <= $${values.length}::timestamptz`);
+            conditions.push(`coalesce(pfm.posted_at, pfm.created_at) <= $${values.length}::timestamptz`);
         }
         if (filters?.includeReversals === false) {
             conditions.push('pfm.is_reversal = false');
@@ -1017,7 +1249,7 @@ export class FinanceRepository {
         `, values),
             pool.query(`
         select
-          date_trunc('day', pfm.created_at) as day,
+          date_trunc('day', coalesce(pfm.posted_at, pfm.created_at)) as day,
           coalesce(sum(case when pfm.direction in ('inflow', 'debit') then pfm.base_amount_usd else 0 end), 0)::numeric as inflow_base_usd,
           coalesce(sum(case when pfm.direction in ('outflow', 'credit') then pfm.base_amount_usd else 0 end), 0)::numeric as outflow_base_usd,
           (
@@ -1026,7 +1258,7 @@ export class FinanceRepository {
           )::numeric as net_base_usd
         from party_financial_movements pfm
         ${whereClause}
-        group by date_trunc('day', pfm.created_at)
+        group by date_trunc('day', coalesce(pfm.posted_at, pfm.created_at))
         order by day asc
         `, values.slice(0, -1)),
         ]);
@@ -1453,7 +1685,7 @@ export class FinanceRepository {
           $5, $6, 'debit', $7, $8, $9,
           $10, $11, $12,
           'SHIPMENT', $4, $13,
-          $8, 0, $9, $10, now(), $14::jsonb
+          $8, 0, $9, $10, coalesce($15::timestamptz, now()), $14::jsonb
         )
         on conflict do nothing
         `, [
@@ -1471,6 +1703,7 @@ export class FinanceRepository {
                 input.createdByUserId,
                 input.shipmentNo,
                 JSON.stringify({ ...metadata, component: component.movementType }),
+                input.effectiveDate ?? null,
             ]);
         }
     }
@@ -1480,9 +1713,9 @@ export class FinanceRepository {
         const conditions = ['pfm.shipment_id = $1', ...scoped.conditions];
         const whereClause = conditions.length ? `where ${conditions.join(' and ')}` : '';
         const result = await pool.query(`
-      select pfm.* from party_financial_movements pfm
+      select pfm.*, coalesce(pfm.posted_at, pfm.created_at) as effective_at from party_financial_movements pfm
       ${whereClause}
-      order by pfm.created_at asc, pfm.id asc
+      order by coalesce(pfm.posted_at, pfm.created_at) asc, pfm.id asc
       `, values);
         return result.rows;
     }
@@ -1508,6 +1741,7 @@ export class FinanceRepository {
           exchange_rate_to_usd = coalesce($6, exchange_rate_to_usd),
           base_amount_usd = coalesce($7, base_amount_usd),
           cashbox_id = $10,
+          created_at = coalesce($11::timestamptz, created_at),
           updated_at = now()
         where id = $1
           and (
@@ -1526,6 +1760,7 @@ export class FinanceRepository {
                 expectsUpdatedAt,
                 payload.expectedUpdatedAt ?? null,
                 nextCashboxId ?? null,
+                payload.createdAt ?? null,
             ]);
             const voucher = updated.rows[0];
             const movedToConfirmed = existing.status !== 'confirmed' && voucher.status === 'confirmed';
@@ -1571,6 +1806,7 @@ export class FinanceRepository {
         exchange_rate_to_usd = coalesce($6, exchange_rate_to_usd),
         base_amount_usd = coalesce($7, base_amount_usd),
         cashbox_id = $10,
+        created_at = coalesce($11::timestamptz, created_at),
         updated_at = now()
       where id = $1
         and (
@@ -1589,6 +1825,7 @@ export class FinanceRepository {
             expectsUpdatedAt,
             payload.expectedUpdatedAt ?? null,
             nextCashboxId ?? null,
+            payload.createdAt ?? null,
         ]);
         const voucher = updated.rows[0];
         const movedToConfirmed = existing.status !== 'confirmed' && voucher.status === 'confirmed';
@@ -1680,6 +1917,7 @@ export class FinanceRepository {
           exchange_rate_to_usd = coalesce($6, exchange_rate_to_usd),
           base_amount_usd = coalesce($7, base_amount_usd),
           cashbox_id = $10,
+          created_at = coalesce($11::timestamptz, created_at),
           updated_at = now()
         where id = $1
           and (
@@ -1698,6 +1936,7 @@ export class FinanceRepository {
                 expectsUpdatedAt,
                 payload.expectedUpdatedAt ?? null,
                 nextCashboxId ?? null,
+                payload.createdAt ?? null,
             ]);
             const voucher = updated.rows[0];
             const movedToConfirmed = existing.status !== 'confirmed' && voucher.status === 'confirmed';
@@ -1733,6 +1972,7 @@ export class FinanceRepository {
           exchange_rate_to_usd = coalesce($6, exchange_rate_to_usd),
           base_amount_usd = coalesce($7, base_amount_usd),
           cashbox_id = $8,
+          created_at = coalesce($9::timestamptz, created_at),
           updated_at = now()
       where id = $1
       returning *
@@ -1745,6 +1985,7 @@ export class FinanceRepository {
             payload.exchangeRateToUsd ?? null,
             payload.baseAmountUsd ?? null,
             nextCashboxId ?? null,
+            payload.createdAt ?? null,
         ]);
         const voucher = updated.rows[0];
         if (existing.status !== 'confirmed' && voucher.status === 'confirmed') {
