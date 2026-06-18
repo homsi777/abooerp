@@ -8,6 +8,16 @@ function normalizeLedgerReceiptNo(value: string | null | undefined): string {
   return String(value ?? '').trim().replace(/\s+/g, ' ');
 }
 
+/** التحصيل (COD) والدفع المسبق حصريان — لا يجوز إدخالهما معاً في نفس السطر. */
+function exclusiveCollectPrepaidAmounts(collect?: number, prepaid?: number) {
+  const collectAmountUsd = Math.round(Number(collect ?? 0) * 100) / 100;
+  const prepaidAmountUsd = Math.round(Number(prepaid ?? 0) * 100) / 100;
+  if (collectAmountUsd > 0 && prepaidAmountUsd > 0) {
+    return { collectAmountUsd, prepaidAmountUsd: 0 };
+  }
+  return { collectAmountUsd, prepaidAmountUsd };
+}
+
 /** يعلّم الجلسة بأنها تحتاج إعادة طباعة إذا كانت قد طُبعت مسبقاً (تعديل/إضافة بعد الطباعة) */
 async function markSessionReprintIfPrinted(
   client: PoolClient,
@@ -534,6 +544,12 @@ export class DailyLedgerRepository {
     if (!scope.companyId) {
       throw new Error('Company scope is required.');
     }
+    const amounts = exclusiveCollectPrepaidAmounts(input.collectAmountUsd, input.prepaidAmountUsd);
+    input = {
+      ...input,
+      collectAmountUsd: amounts.collectAmountUsd,
+      prepaidAmountUsd: amounts.prepaidAmountUsd,
+    };
     const client = await pool.connect();
     try {
       await client.query('begin');

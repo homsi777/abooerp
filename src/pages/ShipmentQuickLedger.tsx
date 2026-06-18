@@ -1551,13 +1551,21 @@ export default function ShipmentQuickLedger() {
           return skipTariff ? next : mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
         }
         if (field === 'collectAmount') {
-          return { ...row, collectAmount: value, collectManual: value.trim() !== '' };
+          const collect = parseUsd(value);
+          let next: LedgerRow = { ...row, collectAmount: value, collectManual: value.trim() !== '' };
+          if (collect > 0) {
+            next = { ...next, prepaidAmount: '0', collectManual: true };
+          } else if (!value.trim()) {
+            next = { ...next, collectManual: false };
+            next = skipTariff ? next : mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
+          }
+          return next;
         }
         if (field === 'prepaidAmount') {
           const prepaid = parseUsd(value);
           let next: LedgerRow = { ...row, prepaidAmount: value };
           if (prepaid > 0) {
-            next = { ...next, collectAmount: '', collectManual: true };
+            next = { ...next, collectAmount: '0', collectManual: true };
           } else {
             next = { ...next, collectManual: false };
             next = skipTariff ? next : mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
