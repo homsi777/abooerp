@@ -2,6 +2,8 @@ type Props = {
   data: any;
   money: (value: unknown, currency?: string) => string;
   rowReconciliationClass: (row: any) => string;
+  reportCurrency?: string;
+  showLedgerMovements?: boolean;
 };
 
 const transferRoleLabel: Record<string, string> = {
@@ -33,9 +35,25 @@ export function agentStatementSourceLabel(value: string): string {
   );
 }
 
-export default function AgentFinancialStatementContent({ data, money, rowReconciliationClass }: Props) {
+export default function AgentFinancialStatementContent({
+  data,
+  money,
+  rowReconciliationClass,
+  reportCurrency = 'USD',
+  showLedgerMovements = false,
+}: Props) {
   const summary = data.summary ?? {};
   const since = summary.sinceLastReconciliation ?? {};
+  const fmt = (value: unknown) => money(value, reportCurrency);
+  const ledgerRows = (data.accountStatement?.rows ?? []) as Array<{
+    at: string;
+    source_type: string;
+    reference_no?: string;
+    description?: string;
+    debit?: number;
+    credit?: number;
+    status?: string;
+  }>;
 
   return (
     <>
@@ -49,49 +67,49 @@ export default function AgentFinancialStatementContent({ data, money, rowReconci
           <div className="stat-label">حوالات</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{money(summary.totalAgentRemittanceDue ?? 0)}</div>
+          <div className="stat-value">{fmt(summary.totalAgentRemittanceDue ?? 0)}</div>
           <div className="stat-label">إجمالي مطلوب من الوكيل</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{money(summary.totalReceipts ?? 0)}</div>
+          <div className="stat-value">{fmt(summary.totalReceipts ?? 0)}</div>
           <div className="stat-label">سندات قبض (مسدّد)</div>
         </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="stat-card">
-          <div className="stat-value">{money(summary.totalAgentRemittanceDueFromShipments ?? 0)}</div>
+          <div className="stat-value">{fmt(summary.totalAgentRemittanceDueFromShipments ?? 0)}</div>
           <div className="stat-label">مطلوب — شحنات</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{money(summary.totalTransferRemittanceDue ?? 0)}</div>
+          <div className="stat-value">{fmt(summary.totalTransferRemittanceDue ?? 0)}</div>
           <div className="stat-label">مطلوب — حوالات مستقلة</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{money(summary.totalTransferPrincipalCollected ?? 0)}</div>
+          <div className="stat-value">{fmt(summary.totalTransferPrincipalCollected ?? 0)}</div>
           <div className="stat-label">أصل حوالات مقبوض (مصدر)</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{money(summary.totalTransferPrincipalPaid ?? 0)}</div>
+          <div className="stat-value">{fmt(summary.totalTransferPrincipalPaid ?? 0)}</div>
           <div className="stat-label">أصل حوالات مُسلَّم (وجهة)</div>
         </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="stat-card">
-          <div className="stat-value">{money(summary.totalShipmentCommission ?? 0)}</div>
+          <div className="stat-value">{fmt(summary.totalShipmentCommission ?? 0)}</div>
           <div className="stat-label">عمولة الشحن</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{money(summary.totalTransferCommission ?? 0)}</div>
+          <div className="stat-value">{fmt(summary.totalTransferCommission ?? 0)}</div>
           <div className="stat-label">عمولة الحوالات</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{money(summary.totalTransferServiceFeeCollected ?? 0)}</div>
+          <div className="stat-value">{fmt(summary.totalTransferServiceFeeCollected ?? 0)}</div>
           <div className="stat-label">أجور خدمة حوالات (مصدر)</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value font-bold text-red-700">{money(summary.agentBalanceDue ?? 0)}</div>
+          <div className="stat-value font-bold text-red-700">{fmt(summary.agentBalanceDue ?? 0)}</div>
           <div className="stat-label">ذمة على الوكيل (متبقي)</div>
         </div>
       </div>
@@ -102,16 +120,16 @@ export default function AgentFinancialStatementContent({ data, money, rowReconci
           <div className="stat-label">نسبة عمولة الشحن</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{money(since.totalAgentRemittanceDue ?? summary.totalAgentRemittanceDue ?? 0)}</div>
+          <div className="stat-value">{fmt(since.totalAgentRemittanceDue ?? summary.totalAgentRemittanceDue ?? 0)}</div>
           <div className="stat-label">مطلوب بعد آخر مطابقة</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{money(since.totalTransferRemittanceDue ?? summary.totalTransferRemittanceDue ?? 0)}</div>
+          <div className="stat-value">{fmt(since.totalTransferRemittanceDue ?? summary.totalTransferRemittanceDue ?? 0)}</div>
           <div className="stat-label">حوالات — بعد المطابقة</div>
         </div>
         <div className="stat-card">
           <div className="stat-value font-bold text-red-700">
-            {money(since.agentBalanceDue ?? summary.agentBalanceDue ?? 0)}
+            {fmt(since.agentBalanceDue ?? summary.agentBalanceDue ?? 0)}
           </div>
           <div className="stat-label">ذمة بعد آخر مطابقة</div>
         </div>
@@ -149,11 +167,11 @@ export default function AgentFinancialStatementContent({ data, money, rowReconci
                   {s.sender_name ?? '-'} / {s.receiver_name ?? '-'}
                   {s.destination_city ? ` — ${s.destination_city}` : ''}
                 </td>
-                <td>{money(s.transfer_fee, s.original_currency)}</td>
-                <td>{money(s.hawala_amount, s.original_currency)}</td>
-                <td>{money(s.agent_commission_base_amount ?? s.freight_charge, s.original_currency)}</td>
-                <td>{money(s.agent_remittance_due ?? 0, s.original_currency)}</td>
-                <td>{money(s.agent_commission_amount_snapshot, s.original_currency)}</td>
+                <td>{fmt(s.transfer_fee)}</td>
+                <td>{fmt(s.hawala_amount)}</td>
+                <td>{fmt(s.agent_commission_base_amount ?? s.freight_charge)}</td>
+                <td>{fmt(s.agent_remittance_due ?? 0)}</td>
+                <td>{fmt(s.agent_commission_amount_snapshot)}</td>
                 <td>{s.status}</td>
               </tr>
             ))}
@@ -206,10 +224,10 @@ export default function AgentFinancialStatementContent({ data, money, rowReconci
                 </td>
                 <td>{t.destination_city ?? '-'}</td>
                 <td>{transferRoleLabel[String(t.agent_role)] ?? t.agent_role ?? '-'}</td>
-                <td>{money(t.amount, t.currency)}</td>
-                <td>{money(t.transfer_service_fee, t.transfer_service_fee_currency ?? t.currency)}</td>
-                <td>{money(t.agent_commission, t.agent_commission_currency ?? t.currency)}</td>
-                <td>{money(t.agent_remittance_due ?? 0, t.currency)}</td>
+                <td>{fmt(t.amount)}</td>
+                <td>{fmt(t.transfer_service_fee)}</td>
+                <td>{fmt(t.agent_commission)}</td>
+                <td>{fmt(t.agent_remittance_due ?? 0)}</td>
                 <td>{t.shipment_no ?? (t.shipment_id ? 'مرتبطة' : '-')}</td>
                 <td>{t.status}</td>
               </tr>
@@ -252,7 +270,7 @@ export default function AgentFinancialStatementContent({ data, money, rowReconci
                 <td>{String(v.created_at).split('T')[0]}</td>
                 <td>{v.voucher_no}</td>
                 <td>{v.voucher_kind === 'receipt' ? 'سند قبض من الوكيل' : 'سند دفع للوكيل'}</td>
-                <td>{money(v.original_amount, v.original_currency)}</td>
+                <td>{fmt(v.original_amount)}</td>
                 <td>{v.status}</td>
               </tr>
             ))}
@@ -266,6 +284,57 @@ export default function AgentFinancialStatementContent({ data, money, rowReconci
           </tbody>
         </table>
       </section>
+
+      {showLedgerMovements ? (
+        <section>
+          <h4 className="font-bold mb-2">دفتر حركات الذمة (من قاعدة البيانات)</h4>
+          <p className="text-xs text-gray-600 mb-2">
+            كل حركة مُرحَّلة على عهدة الوكيل: تحصيل، حوالة، أجور شحن، عمولة، سندات — بالدولار الأمريكي.
+          </p>
+          <table className="data-grid text-sm">
+            <thead>
+              <tr>
+                <th>التاريخ</th>
+                <th>النوع</th>
+                <th>المرجع</th>
+                <th>البيان</th>
+                <th>مدين</th>
+                <th>دائن</th>
+                <th>الحالة</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ledgerRows.map((row, index) => (
+                <tr
+                  key={`${row.source_type}-${row.reference_no ?? index}`}
+                  className={rowReconciliationClass({
+                    at: row.at,
+                    source_type: row.source_type,
+                    status: row.status,
+                    debit: Number(row.debit ?? 0),
+                    credit: Number(row.credit ?? 0),
+                  })}
+                >
+                  <td>{String(row.at).split('T')[0]}</td>
+                  <td>{agentStatementSourceLabel(row.source_type)}</td>
+                  <td>{row.reference_no ?? '—'}</td>
+                  <td>{row.description ?? '—'}</td>
+                  <td>{fmt(row.debit ?? 0)}</td>
+                  <td>{fmt(row.credit ?? 0)}</td>
+                  <td>{row.status ?? '—'}</td>
+                </tr>
+              ))}
+              {ledgerRows.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="text-center p-4 text-gray-500">
+                    لا توجد حركات ذمة — تأكد من ترحيل دفتر الشحن للفترة المحددة
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
     </>
   );
 }

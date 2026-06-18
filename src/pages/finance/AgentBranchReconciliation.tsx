@@ -10,7 +10,6 @@ import {
   resolveStatementRowReconciliationClass,
 } from '../../lib/agents/agentStatementReconciliation';
 import FinanceExportToolbar from '../../components/finance/FinanceExportToolbar';
-import FinanceCurrencySelect from '../../components/finance/FinanceCurrencySelect';
 import {
   financeAgentRoleLabel,
   formatFinanceAmount,
@@ -24,14 +23,16 @@ const hawalaRoleLabel: Record<string, string> = {
   both: 'مصدر ووجهة',
 };
 
+const REPORT_CURRENCY = 'USD';
+const DEFAULT_DATE_FROM = '2026-06-01';
+
 export default function AgentBranchReconciliation() {
   const [searchParams] = useSearchParams();
   const { showToast } = useToast();
   const [agents, setAgents] = useState<Array<{ id: string; name: string; governorate?: string }>>([]);
   const [agentId, setAgentId] = useState(searchParams.get('agentId') || '');
-  const [dateFrom, setDateFrom] = useState('');
+  const [dateFrom, setDateFrom] = useState(DEFAULT_DATE_FROM);
   const [dateTo, setDateTo] = useState('');
-  const [currencyCode, setCurrencyCode] = useState(searchParams.get('currencyCode') || 'USD');
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any>(null);
 
@@ -53,7 +54,7 @@ export default function AgentBranchReconciliation() {
         agentId,
         fromAt: dateFrom ? `${dateFrom}T00:00:00.000Z` : undefined,
         toAt: dateTo ? `${dateTo}T23:59:59.999Z` : undefined,
-        currencyCode: currencyCode || undefined,
+        currencyCode: REPORT_CURRENCY,
       });
       setData(report);
     } catch (e) {
@@ -64,10 +65,10 @@ export default function AgentBranchReconciliation() {
     }
   };
 
-  const money = (value: unknown, currency = currencyCode || 'USD') =>
-    formatFinanceAmount(value, currency);
+  const money = (value: unknown) => formatFinanceAmount(value, REPORT_CURRENCY);
 
   const mainBranch = data?.mainBranch ?? {};
+  const ledgerSummary = data?.accountStatement?.summary ?? {};
   const hawala = data?.hawalaSection ?? {};
   const hawalaSummary = hawala.summary ?? {};
   const metrics = data ? getAgentReconciliationMetrics(data) : null;
@@ -120,24 +121,26 @@ export default function AgentBranchReconciliation() {
       <div>
         <h2 className="text-xl font-bold">مطابقة الوكيل ↔ الفرع الرئيسي</h2>
         <p className="text-sm text-gray-600">
-          شحن (مسبق في الفرع + تحصيل مع الوكيل) + حوالات − عمولة الشحن فقط + سندات — في واجهة واحدة.
+          شحن (مسبق في الفرع + تحصيل مع الوكيل) + حوالات − عمولة الشحن فقط + سندات + حركات الذمة من قاعدة البيانات — بالدولار الأمريكي.
         </p>
         <p className="text-xs text-gray-500 mt-1">{mainBranch.voucherNote}</p>
       </div>
 
-      <div className="card p-2 grid grid-cols-2 md:grid-cols-6 gap-2 items-center">
-        <select className="form-select" value={agentId} onChange={(e) => setAgentId(e.target.value)}>
-          <option value="">اختر الوكيل / الوجهة</option>
-          {agents.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}{a.governorate ? ` — ${a.governorate}` : ''}
-            </option>
-          ))}
-        </select>
-        <input type="date" className="form-input" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-        <input type="date" className="form-input" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-        <FinanceCurrencySelect value={currencyCode} onChange={setCurrencyCode} />
-        <button type="button" className="toolbar-btn primary" onClick={() => void load()}>تطبيق</button>
+      <div className="card p-2 flex flex-col gap-2">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 items-center">
+          <select className="form-select" value={agentId} onChange={(e) => setAgentId(e.target.value)}>
+            <option value="">اختر الوكيل / الوجهة</option>
+            {agents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}{a.governorate ? ` — ${a.governorate}` : ''}
+              </option>
+            ))}
+          </select>
+          <input type="date" className="form-input" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} title="من تاريخ" />
+          <input type="date" className="form-input" value={dateTo} onChange={(e) => setDateTo(e.target.value)} title="إلى تاريخ" />
+          <div className="text-sm text-gray-600 px-2">العملة: {REPORT_CURRENCY} (دولار)</div>
+          <button type="button" className="toolbar-btn primary" onClick={() => void load()}>تطبيق</button>
+        </div>
         <FinanceExportToolbar
           disabled={loading || !data}
           csvFileName={`agent-branch-reconciliation-${agentId}-${new Date().toISOString().split('T')[0]}.csv`}
@@ -152,6 +155,25 @@ export default function AgentBranchReconciliation() {
 
       {data && (
         <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="stat-card">
+              <div className="stat-value">{money(ledgerSummary.totalDebit ?? data?.summary?.accountDebit ?? 0)}</div>
+              <div className="stat-label">إجمالي مدين (على الوكيل)</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{money(ledgerSummary.totalCredit ?? 0)}</div>
+              <div className="stat-label">إجمالي دائن (لصالح الوكيل / مسدّد)</div>
+            </div>
+            <div className="stat-card ring-2 ring-primary-500/30">
+              <div className="stat-value">{money(ledgerSummary.agentBalanceDue ?? data?.summary?.agentBalanceDue ?? 0)}</div>
+              <div className="stat-label">رصيد الذمة من دفتر الحركات</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{(data?.accountStatement?.rows ?? []).length}</div>
+              <div className="stat-label">عدد حركات الذمة</div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
             {reconciliationCards.map((card) => (
               <div
@@ -197,9 +219,9 @@ export default function AgentBranchReconciliation() {
                           <td>{t.sender_name} / {t.receiver_name}</td>
                           <td>{t.destination_city ?? '—'}</td>
                           <td>{hawalaRoleLabel[String(t.agent_role)] ?? t.agent_role}</td>
-                          <td>{money(t.amount, t.currency)}</td>
-                          <td>{money(t.transfer_service_fee, t.transfer_service_fee_currency ?? t.currency)}</td>
-                          <td>{money(t.agent_remittance_due ?? 0, t.currency)}</td>
+                          <td>{money(t.amount)}</td>
+                          <td>{money(t.transfer_service_fee)}</td>
+                          <td>{money(t.agent_remittance_due ?? 0)}</td>
                         </tr>
                       ))}
                   </tbody>
@@ -208,15 +230,21 @@ export default function AgentBranchReconciliation() {
             )}
           </div>
 
-          <AgentFinancialStatementContent data={data} money={money} rowReconciliationClass={rowClass} />
+          <AgentFinancialStatementContent
+            data={data}
+            money={money}
+            rowReconciliationClass={rowClass}
+            reportCurrency={REPORT_CURRENCY}
+            showLedgerMovements
+          />
           <AgentStatementReconciliationPanel
             statementData={data}
             reconciliationSaving={false}
             onSaveReconciliation={async () =>
               showToast('لحفظ مطابقة موقّعة استخدم سند قبض/دفع أو مطابقة الوكيل في ملف الوكيل', 'info')
             }
-            returnPath="/finance/agent-branch-reconciliation"
-            currencyCode={currencyCode}
+            returnPath="/finance/statements/reconciliation/agent-branch"
+            currencyCode={REPORT_CURRENCY}
           />
         </>
       )}
