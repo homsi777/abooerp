@@ -21,6 +21,8 @@ type Props = {
   returnPath?: string;
   /** Active currency filter from the parent page */
   currencyCode?: string;
+  /** Hide the duplicate save-reconciliation button (e.g. on bilateral page) */
+  hideSaveReconciliation?: boolean;
 };
 
 function makeMoney(defaultCurrency: string) {
@@ -34,6 +36,7 @@ export default function AgentStatementReconciliationPanel({
   onRefresh,
   returnPath,
   currencyCode: parentCurrency,
+  hideSaveReconciliation = false,
 }: Props) {
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -144,20 +147,28 @@ export default function AgentStatementReconciliationPanel({
         <button type="button" className="toolbar-btn" onClick={() => openQuickVoucher('payment')}>
           سند دفع
         </button>
-        <button
-          type="button"
-          className="toolbar-btn primary"
-          disabled={reconciliationSaving || !metrics.isMatched}
-          title={metrics.isMatched ? 'حفظ تاريخ المطابقة' : 'يجب تصفير الذمة أولاً عبر سند قبض'}
-          onClick={() => void onSaveReconciliation()}
-        >
-          {reconciliationSaving ? 'جاري الحفظ...' : 'حفظ مطابقة الفترة'}
-        </button>
-        <span className="text-xs text-gray-500 mr-auto">
-          {metrics.isMatched
-            ? 'الحساب متوازن — يمكن حفظ المطابقة.'
-            : 'سجّل سند قبض بقيمة الذمة المتبقية ثم احفظ المطابقة.'}
-        </span>
+        {!hideSaveReconciliation ? (
+          <button
+            type="button"
+            className="toolbar-btn primary"
+            disabled={reconciliationSaving || !metrics.isMatched}
+            title={metrics.isMatched ? 'حفظ تاريخ المطابقة' : 'يجب تصفير الذمة أولاً عبر سند قبض'}
+            onClick={() => void onSaveReconciliation()}
+          >
+            {reconciliationSaving ? 'جاري الحفظ...' : 'حفظ مطابقة الفترة'}
+          </button>
+        ) : null}
+        {!hideSaveReconciliation ? (
+          <span className="text-xs text-gray-500 mr-auto">
+            {metrics.isMatched
+              ? 'الحساب متوازن — يمكن حفظ المطابقة.'
+              : 'سجّل سند قبض بقيمة الذمة المتبقية ثم احفظ المطابقة.'}
+          </span>
+        ) : (
+          <span className="text-xs text-gray-500 mr-auto">
+            استخدم سندات القبض/الدفع للتسوية ثم اعتمد المطابقة من الأعلى.
+          </span>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-2 text-sm">

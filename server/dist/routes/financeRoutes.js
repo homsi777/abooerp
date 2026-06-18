@@ -215,7 +215,7 @@ const bilateralItemSchema = z.object({
     itemType: z.string().min(1),
     description: z.string().min(1),
     companyAmount: z.coerce.number(),
-    agentAmount: z.coerce.number(),
+    agentAmount: z.union([z.coerce.number(), z.null()]).optional(),
     notes: z.string().optional(),
     sortOrder: z.coerce.number().int().optional(),
 });
@@ -226,10 +226,17 @@ const bilateralSaveSchema = z.object({
     periodTo: z.string().datetime({ offset: true }),
     currencyCode: z.string().min(3).max(3).optional(),
     previousBalance: z.coerce.number().optional(),
+    periodMovement: z.coerce.number().optional(),
     currentBalance: z.coerce.number().optional(),
     notes: z.string().optional(),
     agentNotes: z.string().optional(),
+    forceApprove: z.boolean().optional(),
+    forceNote: z.string().optional(),
     items: z.array(bilateralItemSchema).min(1),
+});
+const bilateralStatusSchema = z.object({
+    agentNotes: z.string().optional(),
+    disputeNote: z.string().optional(),
 });
 const ledgerFinanceAuditQuerySchema = z.object({
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).default('2026-06-01'),
@@ -697,6 +704,20 @@ export function createFinanceRouter(service) {
         const data = await service.listBilateralReconciliations(companyId, agentId);
         res.json({ success: true, data });
     }));
+    router.get('/bilateral-reconciliations/reports/discrepancies', requireAnyPermissions(['finance.read', 'finance.view']), forbidUserTypes(['agent'], 'تقرير الفروقات غير متاح لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
+        const agentId = z.string().uuid().parse(req.query.agentId);
+        const currencyCode = z.string().min(3).max(3).optional().parse(req.query.currencyCode);
+        const companyId = requireCompanyId(req);
+        const data = await service.getBilateralDiscrepancyReport(companyId, agentId, currencyCode);
+        res.json({ success: true, data });
+    }));
+    router.get('/bilateral-reconciliations/reports/balance-history', requireAnyPermissions(['finance.read', 'finance.view']), forbidUserTypes(['agent'], 'تقرير الذمم غير متاح لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
+        const agentId = z.string().uuid().parse(req.query.agentId);
+        const currencyCode = z.string().min(3).max(3).optional().parse(req.query.currencyCode);
+        const companyId = requireCompanyId(req);
+        const data = await service.getBilateralBalanceHistoryReport(companyId, agentId, currencyCode);
+        res.json({ success: true, data });
+    }));
     router.get('/bilateral-reconciliations/:id', requireAnyPermissions(['finance.read', 'finance.view']), forbidUserTypes(['agent'], 'المطابقة الثنائية غير متاحة لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
         const companyId = requireCompanyId(req);
         const data = await service.getBilateralReconciliationById(companyId, String(req.params.id));
@@ -741,9 +762,44 @@ export function createFinanceRouter(service) {
                 agentId: payload.agentId,
                 currentBalance: data.current_balance,
                 currencyCode: data.currency_code,
+                forceApprove: Boolean(payload.forceApprove),
+                forceNote: payload.forceNote ?? null,
             },
         });
         res.status(201).json({ success: true, data });
+    }));
+    router.post('/bilateral-reconciliations/:id/send-to-agent', requireAnyPermissions(['finance.write', 'finance.vouchers.write']), forbidUserTypes(['agent'], 'المطابقة الثنائية غير متاحة لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
+        const payload = bilateralStatusSchema.parse(req.body ?? {});
+        const companyId = requireCompanyId(req);
+        const data = await service.sendBilateralReconciliationToAgent(companyId, String(req.params.id), payload.agentNotes);
+        if (!data) {
+            res.status(404).json({ success: false, error: 'المطابقة غير موجودة.' });
+            return;
+        }
+        auditService.logAsync({
+            req,
+            action: 'BILATERAL_RECONCILIATION_PENDING',
+            entityType: 'bilateral_reconciliation',
+            entityId: String(req.params.id),
+        });
+        res.json({ success: true, data });
+    }));
+    router.post('/bilateral-reconciliations/:id/dispute', requireAnyPermissions(['finance.write', 'finance.vouchers.write']), forbidUserTypes(['agent'], 'المطابقة الثنائية غير متاحة لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
+        const payload = bilateralStatusSchema.parse(req.body ?? {});
+        const companyId = requireCompanyId(req);
+        const data = await service.disputeBilateralReconciliation(companyId, String(req.params.id), String(payload.disputeNote ?? ''));
+        if (!data) {
+            res.status(404).json({ success: false, error: 'المطابقة غير موجودة.' });
+            return;
+        }
+        auditService.logAsync({
+            req,
+            action: 'BILATERAL_RECONCILIATION_DISPUTED',
+            entityType: 'bilateral_reconciliation',
+            entityId: String(req.params.id),
+            metadata: { disputeNote: payload.disputeNote },
+        });
+        res.json({ success: true, data });
     }));
     router.get('/ledger-finance-audit', requireAnyPermissions(['finance.read', 'finance.view']), forbidUserTypes(['agent'], 'تحقق الدفter المالي غير متاح لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
         const query = ledgerFinanceAuditQuerySchema.parse(req.query);

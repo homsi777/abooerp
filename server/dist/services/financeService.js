@@ -805,10 +805,22 @@ export class FinanceService {
     async getBilateralReconciliationById(companyId, id) {
         return this.bilateralService().getById(companyId, id);
     }
+    async getBilateralDiscrepancyReport(companyId, agentId, currencyCode) {
+        return this.bilateralService().getDiscrepancyReport(companyId, agentId, currencyCode);
+    }
+    async getBilateralBalanceHistoryReport(companyId, agentId, currencyCode) {
+        return this.bilateralService().getBalanceHistoryReport(companyId, agentId, currencyCode);
+    }
     async saveBilateralReconciliationDraft(companyId, input) {
         return this.bilateralService().saveDraft(companyId, input);
     }
     async approveBilateralReconciliation(companyId, input) {
         return this.bilateralService().approve(companyId, input);
+    }
+    async sendBilateralReconciliationToAgent(companyId, id, agentNotes) {
+        return this.bilateralService().sendToAgent(companyId, id, agentNotes);
+    }
+    async disputeBilateralReconciliation(companyId, id, disputeNote) {
+        return this.bilateralService().markDisputed(companyId, id, disputeNote);
     }
 }

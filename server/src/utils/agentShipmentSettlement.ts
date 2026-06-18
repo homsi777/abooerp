@@ -94,7 +94,7 @@ export function computeAgentRemittanceDue(input: AgentShipmentSettlementInput): 
   return computeAgentShippingRemittanceDue(input) + computeAgentHawalaRemittanceDue(input);
 }
 
-/** Positive = agent owes the company (outstanding liability). */
+/** Positive = agent owes the company; negative = company owes the agent. */
 export function computeAgentBalanceDue(input: {
   totalRemittanceDue: number;
   totalShippingCommission: number;
@@ -103,7 +103,7 @@ export function computeAgentBalanceDue(input: {
 }): number {
   const receipts = money(input.confirmedReceiptsFromAgent);
   const payments = money(input.confirmedPaymentsToAgent);
-  return Math.max(money(input.totalRemittanceDue) - receipts + payments, 0);
+  return money(money(input.totalRemittanceDue) - receipts + payments);
 }
 
 export type AgentTransferRole = 'origin' | 'destination' | 'both' | 'none';

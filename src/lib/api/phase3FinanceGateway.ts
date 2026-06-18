@@ -957,6 +957,14 @@ export const phase3FinanceGateway = {
       get: async (id: string) => httpClient.get(`/bilateral-reconciliations/${encodeURIComponent(id)}`),
       saveDraft: async (payload: Record<string, unknown>) => httpClient.post('/bilateral-reconciliations/draft', payload),
       approve: async (payload: Record<string, unknown>) => httpClient.post('/bilateral-reconciliations/approve', payload),
+      sendToAgent: async (id: string, payload?: { agentNotes?: string }) =>
+        httpClient.post(`/bilateral-reconciliations/${encodeURIComponent(id)}/send-to-agent`, payload ?? {}),
+      dispute: async (id: string, payload: { disputeNote: string }) =>
+        httpClient.post(`/bilateral-reconciliations/${encodeURIComponent(id)}/dispute`, payload),
+      discrepancyReport: async (agentId: string, currencyCode = 'USD') =>
+        httpClient.get(`/bilateral-reconciliations/reports/discrepancies?agentId=${encodeURIComponent(agentId)}&currencyCode=${encodeURIComponent(currencyCode)}`),
+      balanceHistoryReport: async (agentId: string, currencyCode = 'USD') =>
+        httpClient.get(`/bilateral-reconciliations/reports/balance-history?agentId=${encodeURIComponent(agentId)}&currencyCode=${encodeURIComponent(currencyCode)}`),
     },
     ledgerFinanceAudit: async (filters: { fromDate?: string }) => {
       const q = new URLSearchParams();

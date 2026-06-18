@@ -317,10 +317,12 @@ export class AgentRepository {
         balance_amount,
         currency_code,
         notes,
-        created_by_user_id
+        created_by_user_id,
+        reconciled_at,
+        bilateral_reconciliation_id
       )
-      values ($1, $2, $3, $4, $5, $6)
-      returning id, reconciled_at::text, balance_amount, currency_code, notes, created_at::text
+      values ($1, $2, $3, $4, $5, $6, coalesce($7::timestamptz, now()), $8)
+      returning id, reconciled_at::text, balance_amount, currency_code, notes, created_at::text, bilateral_reconciliation_id
       `, [
             companyId,
             agentId,
@@ -328,6 +330,8 @@ export class AgentRepository {
             input.currencyCode || 'USD',
             input.notes?.trim() || null,
             input.createdByUserId ?? null,
+            input.reconciledAt ?? null,
+            input.bilateralReconciliationId ?? null,
         ]);
         return result.rows[0];
     }

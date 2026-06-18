@@ -669,19 +669,33 @@ export function buildBilateralReconciliationPrintHtml(data: {
   periodTo?: string;
   currencyCode?: string;
   previousBalance?: number;
+  periodMovement?: number;
   currentBalance?: number;
   status?: string;
   notes?: string;
   agentNotes?: string;
+  forceApproveNote?: string;
   items?: Array<{
     description?: string;
     company_amount?: number;
-    agent_amount?: number;
-    difference?: number;
+    agent_amount?: number | null;
+    difference?: number | null;
     status?: string;
+    item_type?: string;
   }>;
 }): string {
   const agent = data.agent ?? {};
+  const statusLabel: Record<string, string> = {
+    draft: 'مسودة',
+    pending: 'قيد المراجعة',
+    approved: 'معتمد',
+    disputed: 'متنازع عليه',
+  };
+  const formatCell = (description: string, value: number | null | undefined, currency: string) => {
+    if (value == null) return '—';
+    if (description.startsWith('عدد ') || description.includes('عدد ')) return String(Math.round(Number(value)));
+    return formatLedgerMoney(value, currency);
+  };
   const meta: LedgerPrintMetaItem[] = [
     { label: 'الكشف', value: 'مطابقة ثنائية — وكيل ↔ فرع رئيسي' },
     { label: 'الوكيل', value: agent.name ? `${agent.name}${agent.code ? ` (${agent.code})` : ''}` : '—' },
@@ -689,20 +703,24 @@ export function buildBilateralReconciliationPrintHtml(data: {
     { label: 'إلى تاريخ', value: formatLedgerDate(data.periodTo) },
     { label: 'العملة', value: financeCurrencyDisplay(data.currencyCode || 'USD') },
     { label: 'الذمة السابقة', value: formatLedgerMoney(data.previousBalance ?? 0, data.currencyCode || 'USD') },
+    { label: 'حركات الفترة', value: formatLedgerMoney(data.periodMovement ?? 0, data.currencyCode || 'USD') },
     { label: 'الذمة الحالية المعتمدة', value: formatLedgerMoney(data.currentBalance ?? 0, data.currencyCode || 'USD') },
-    { label: 'الحالة', value: data.status || '—' },
+    { label: 'الحالة', value: statusLabel[String(data.status ?? '')] ?? data.status ?? '—' },
   ];
   const sections: LedgerPrintTableSection[] = [
     {
       heading: 'بنود المطابقة',
       headers: ['البند', 'مبلغ الشركة', 'مبلغ الوكيل', 'الفرق', 'الحالة'],
-      rows: (data.items ?? []).map((item) => [
-        item.description ?? '—',
-        formatLedgerMoney(item.company_amount ?? 0, data.currencyCode || 'USD'),
-        formatLedgerMoney(item.agent_amount ?? 0, data.currencyCode || 'USD'),
-        formatLedgerMoney(item.difference ?? 0, data.currencyCode || 'USD'),
-        item.status === 'matched' ? 'متطابق' : item.status === 'disputed' ? 'نزاع' : 'غير متطابق',
-      ]),
+      rows: (data.items ?? []).map((item) => {
+        const desc = item.description ?? '—';
+        return [
+          desc,
+          formatCell(desc, item.company_amount ?? 0, data.currencyCode || 'USD'),
+          formatCell(desc, item.agent_amount, data.currencyCode || 'USD'),
+          item.difference == null ? '—' : formatCell(desc, item.difference, data.currencyCode || 'USD'),
+          item.status === 'matched' ? 'متطابق' : item.status === 'disputed' ? 'نزاع' : 'غير متطابق',
+        ];
+      }),
     },
     {
       heading: 'ملاحظات',

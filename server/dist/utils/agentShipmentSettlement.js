@@ -70,11 +70,11 @@ export function computeAgentHawalaRemittanceDue(input) {
 export function computeAgentRemittanceDue(input) {
     return computeAgentShippingRemittanceDue(input) + computeAgentHawalaRemittanceDue(input);
 }
-/** Positive = agent owes the company (outstanding liability). */
+/** Positive = agent owes the company; negative = company owes the agent. */
 export function computeAgentBalanceDue(input) {
     const receipts = money(input.confirmedReceiptsFromAgent);
     const payments = money(input.confirmedPaymentsToAgent);
-    return Math.max(money(input.totalRemittanceDue) - receipts + payments, 0);
+    return money(money(input.totalRemittanceDue) - receipts + payments);
 }
 export function resolveAgentTransferRole(agentId, originAgentId, destinationAgentId, legacyAgentId) {
     const id = String(agentId);

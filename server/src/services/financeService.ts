@@ -1054,6 +1054,14 @@ export class FinanceService {
     return this.bilateralService().getById(companyId, id);
   }
 
+  async getBilateralDiscrepancyReport(companyId: string, agentId: string, currencyCode?: string) {
+    return this.bilateralService().getDiscrepancyReport(companyId, agentId, currencyCode);
+  }
+
+  async getBilateralBalanceHistoryReport(companyId: string, agentId: string, currencyCode?: string) {
+    return this.bilateralService().getBalanceHistoryReport(companyId, agentId, currencyCode);
+  }
+
   async saveBilateralReconciliationDraft(
     companyId: string,
     input: Parameters<BilateralReconciliationService['saveDraft']>[1],
@@ -1066,5 +1074,21 @@ export class FinanceService {
     input: Parameters<BilateralReconciliationService['approve']>[1],
   ) {
     return this.bilateralService().approve(companyId, input);
+  }
+
+  async sendBilateralReconciliationToAgent(
+    companyId: string,
+    id: string,
+    agentNotes?: string,
+  ) {
+    return this.bilateralService().sendToAgent(companyId, id, agentNotes);
+  }
+
+  async disputeBilateralReconciliation(
+    companyId: string,
+    id: string,
+    disputeNote: string,
+  ) {
+    return this.bilateralService().markDisputed(companyId, id, disputeNote);
   }
 }
