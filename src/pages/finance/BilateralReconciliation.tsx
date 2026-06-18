@@ -4,6 +4,7 @@ import { httpClient } from '../../lib/api/httpClient';
 import { phase3FinanceGateway } from '../../lib/api/phase3FinanceGateway';
 import { useToast } from '../../components/Toast';
 import AgentStatementReconciliationPanel from '../../components/agents/AgentStatementReconciliationPanel';
+import BilateralReconciliationDetailColumns from '../../components/finance/BilateralReconciliationDetailColumns';
 import FinanceExportToolbar from '../../components/finance/FinanceExportToolbar';
 import { formatFinanceAmount, financeCurrencyDisplay } from '../../lib/finance/financeArabicLabels';
 import { formatWesternDate, formatWesternDateTime } from '../../lib/format/westernDigits';
@@ -164,6 +165,8 @@ export default function BilateralReconciliation() {
   const [disputeNote, setDisputeNote] = useState('');
 
   const readOnly = preview?.readOnly ?? recordStatus === 'approved';
+
+  const detailPackage = preview?.companyPackage ?? null;
 
   useEffect(() => {
     void httpClient
@@ -596,16 +599,29 @@ export default function BilateralReconciliation() {
                 </div>
               )}
 
-              {preview.companyPackage && !readOnly ? (
-                <AgentStatementReconciliationPanel
-                  statementData={preview.companyPackage}
-                  reconciliationSaving={saving}
-                  onSaveReconciliation={async () => showToast('استخدم زر اعتماد المطابقة في الأعلى بعد المراجعة.', 'info')}
-                  onRefresh={() => loadPreview({ keepDraftId: true })}
-                  returnPath="/finance/bilateral-reconciliation"
-                  currencyCode={REPORT_CURRENCY}
-                  hideSaveReconciliation
-                />
+              {detailPackage ? (
+                <div className="space-y-4 border-t border-gray-200 pt-4 mt-2">
+                  {!readOnly ? (
+                    <AgentStatementReconciliationPanel
+                      statementData={detailPackage}
+                      reconciliationSaving={saving}
+                      onSaveReconciliation={async () => showToast('استخدم زر اعتماد المطابقة في الأعلى بعد المراجعة.', 'info')}
+                      onRefresh={() => loadPreview({ keepDraftId: true })}
+                      returnPath="/finance/bilateral-reconciliation"
+                      currencyCode={REPORT_CURRENCY}
+                      hideSaveReconciliation
+                    />
+                  ) : null}
+                  <BilateralReconciliationDetailColumns
+                    data={detailPackage}
+                    money={money}
+                    periodBalance={{
+                      previousBalance: derived.previousBalance,
+                      periodMovement: derived.periodMovement,
+                      currentBalance: derived.currentBalance,
+                    }}
+                  />
+                </div>
               ) : null}
 
               {history.length > 0 ? (

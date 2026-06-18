@@ -219,11 +219,27 @@ export class BilateralReconciliationService {
     const lastApproved = row.status === 'approved'
       ? null
       : await this.repository.getLastApproved(companyId, row.agent_id, row.currency_code);
+
+    let companyPackage: Record<string, unknown> | null = null;
+    try {
+      const raw = await this.agentRepository.getAgentFinancialStatement(companyId, row.agent_id, {
+        currencyCode: row.currency_code || 'USD',
+        fromAt: row.period_from,
+        toAt: row.period_to,
+      });
+      if (raw) {
+        companyPackage = buildAgentMainBranchReconciliationPackage(raw) as Record<string, unknown>;
+      }
+    } catch {
+      companyPackage = null;
+    }
+
     return {
       ...row,
       periodStartLabel: this.periodStartLabel(lastApproved),
       items: (row.items ?? []).map((item: Record<string, unknown>, index: number) => mapStoredItem(item, index)),
       readOnly: row.status === 'approved',
+      companyPackage,
     };
   }
 
