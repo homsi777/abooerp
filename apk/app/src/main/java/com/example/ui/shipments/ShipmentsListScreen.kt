@@ -157,8 +157,9 @@ private fun CreateShipmentDialog(onDismiss: () -> Unit, onConfirm: (CreateShipme
     var hawala by remember { mutableStateOf("") }
     var hawalaFee by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
+    val piecesCount = pieces.toIntOrNull()
     val valid = shipmentNo.isNotBlank() && sender.isNotBlank() && receiver.isNotBlank() &&
-        destination.isNotBlank() && (pieces.toIntOrNull() ?: 0) > 0
+        destination.isNotBlank() && (piecesCount ?: 0) > 0
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("إنشاء شحنة جديدة") },
@@ -181,10 +182,11 @@ private fun CreateShipmentDialog(onDismiss: () -> Unit, onConfirm: (CreateShipme
         },
         confirmButton = {
             TextButton(enabled = valid, onClick = {
+                val confirmedPieces = pieces.toIntOrNull() ?: return@TextButton
                 onConfirm(CreateShipmentRequest(
                     shipmentNo = shipmentNo.trim(), senderName = sender.trim(), senderPhone = senderPhone.ifBlank { null },
                     receiverName = receiver.trim(), receiverPhone = receiverPhone.ifBlank { null }, destinationCity = destination.trim(),
-                    piecesCount = pieces.toInt(), weightKg = weight.toDoubleOrNull(), freightCharge = freight.toDoubleOrNull() ?: 0.0,
+                    piecesCount = confirmedPieces, weightKg = weight.toDoubleOrNull(), freightCharge = freight.toDoubleOrNull() ?: 0.0,
                     senderCollectionAmount = collection.toDoubleOrNull() ?: 0.0, hawalaAmount = hawala.toDoubleOrNull() ?: 0.0,
                     transferServiceFee = hawalaFee.toDoubleOrNull() ?: 0.0, notes = notes.ifBlank { null },
                 ))

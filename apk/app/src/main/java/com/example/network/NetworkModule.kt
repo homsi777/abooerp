@@ -10,37 +10,41 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 
 object NetworkModule {
+    @Volatile
     private var apiService: ApiService? = null
-    
+
     // Cloud API — same origin as https://www.abooerp.org/
     private const val DEFAULT_BASE_URL = "https://www.abooerp.org/api/v1/"
-    
+
     fun provideApiService(context: Context): ApiService {
-        if (apiService == null) {
-            val authStorage = AuthStorage(context)
-            val authInterceptor = AuthInterceptor(authStorage)
-            
-            val loggingInterceptor = HttpLoggingInterceptor().apply {
-                level = HttpLoggingInterceptor.Level.NONE
-            }
-
-            val client = OkHttpClient.Builder()
-                .addInterceptor(authInterceptor)
-                .addInterceptor(loggingInterceptor)
-                .build()
-
-            val moshi = Moshi.Builder()
-                .add(KotlinJsonAdapterFactory())
-                .build()
-
-            val retrofit = Retrofit.Builder()
-                .baseUrl(DEFAULT_BASE_URL)
-                .client(client)
-                .addConverterFactory(MoshiConverterFactory.create(moshi))
-                .build()
-
-            apiService = retrofit.create(ApiService::class.java)
+        return apiService ?: synchronized(this) {
+            apiService ?: createApiService(context.applicationContext).also { apiService = it }
         }
-        return apiService!!
+    }
+
+    private fun createApiService(appContext: Context): ApiService {
+        val authStorage = AuthStorage(appContext)
+        val authInterceptor = AuthInterceptor(authStorage)
+
+        val loggingInterceptor = HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.NONE
+        }
+
+        val client = OkHttpClient.Builder()
+            .addInterceptor(authInterceptor)
+            .addInterceptor(loggingInterceptor)
+            .build()
+
+        val moshi = Moshi.Builder()
+            .add(KotlinJsonAdapterFactory())
+            .build()
+
+        val retrofit = Retrofit.Builder()
+            .baseUrl(DEFAULT_BASE_URL)
+            .client(client)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+
+        return retrofit.create(ApiService::class.java)
     }
 }

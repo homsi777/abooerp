@@ -18,12 +18,12 @@ class AuthStorage(context: Context) {
     )
 
     fun saveTokens(accessToken: String, refreshToken: String?) {
-        sharedPreferences.edit()
-            .putString("access_token", accessToken)
-            .apply {
-                if (refreshToken != null) putString("refresh_token", refreshToken)
-            }
-            .apply()
+        val editor = sharedPreferences.edit()
+        editor.putString("access_token", accessToken)
+        if (refreshToken != null) {
+            editor.putString("refresh_token", refreshToken)
+        }
+        editor.apply()
     }
 
     fun getAccessToken(): String? = sharedPreferences.getString("access_token", null)
