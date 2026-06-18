@@ -13,6 +13,7 @@ import {
   type AccountingReportFilters,
 } from './accountingReportsService.js';
 import type { AgentRepository } from '../repositories/agentRepository.js';
+import { BilateralReconciliationService } from './bilateralReconciliationService.js';
 import type {
   CashboxInput,
   CashboxListFilters,
@@ -95,6 +96,7 @@ export class FinanceService {
   private readonly exchangeRateRepository = new ExchangeRateRepository();
 
   private readonly agentPortalVoucherService: AgentPortalVoucherService;
+  private bilateralReconciliationService?: BilateralReconciliationService;
 
   constructor(
     private readonly repository: FinanceRepository,
@@ -1024,5 +1026,45 @@ export class FinanceService {
     });
     if (!raw) return null;
     return buildAgentMainBranchReconciliationPackage(raw);
+  }
+
+  private bilateralService() {
+    if (!this.agentRepository) {
+      throw new HttpError(500, 'Bilateral reconciliation is not configured.');
+    }
+    if (!this.bilateralReconciliationService) {
+      this.bilateralReconciliationService = new BilateralReconciliationService(this.agentRepository);
+    }
+    return this.bilateralReconciliationService;
+  }
+
+  async getBilateralReconciliationPreview(
+    companyId: string,
+    agentId: string,
+    options?: { fromAt?: string; toAt?: string; currencyCode?: string },
+  ) {
+    return this.bilateralService().getPreview(companyId, agentId, options);
+  }
+
+  async listBilateralReconciliations(companyId: string, agentId: string) {
+    return this.bilateralService().list(companyId, agentId);
+  }
+
+  async getBilateralReconciliationById(companyId: string, id: string) {
+    return this.bilateralService().getById(companyId, id);
+  }
+
+  async saveBilateralReconciliationDraft(
+    companyId: string,
+    input: Parameters<BilateralReconciliationService['saveDraft']>[1],
+  ) {
+    return this.bilateralService().saveDraft(companyId, input);
+  }
+
+  async approveBilateralReconciliation(
+    companyId: string,
+    input: Parameters<BilateralReconciliationService['approve']>[1],
+  ) {
+    return this.bilateralService().approve(companyId, input);
   }
 }

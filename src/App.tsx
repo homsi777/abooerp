@@ -35,6 +35,7 @@ import EmbeddedHawalaStatement from './pages/finance/statements/EmbeddedHawalaSt
 import EmbeddedAgentBranchReconciliation from './pages/finance/statements/EmbeddedAgentBranchReconciliation';
 import EmbeddedLedgerAudit from './pages/finance/statements/EmbeddedLedgerAudit';
 import EmbeddedCodStatement from './pages/finance/statements/EmbeddedCodStatement';
+import BilateralReconciliation from './pages/finance/BilateralReconciliation';
 import FinanceReports from './pages/finance/Reports';
 import FinanceReportsShell from './pages/finance/reports/FinanceReportsShell';
 import ProfitLossReport from './pages/finance/reports/ProfitLossReport';
@@ -349,6 +350,18 @@ export default function App() {
                       ) : (
                         <RequirePermission permission="finance.read">
                           <DailyJournal />
+                        </RequirePermission>
+                      )
+                    }
+                  />
+                  <Route
+                    path="/finance/bilateral-reconciliation"
+                    element={
+                      user?.userType === 'agent' ? (
+                        <Navigate to="/agent-portal" replace />
+                      ) : (
+                        <RequirePermission permission="finance.read">
+                          <BilateralReconciliation />
                         </RequirePermission>
                       )
                     }

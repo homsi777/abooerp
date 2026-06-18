@@ -940,6 +940,24 @@ export const phase3FinanceGateway = {
       if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
       return httpClient.get(`/agent-branch-reconciliation?${q.toString()}`);
     },
+    bilateralReconciliation: {
+      preview: async (filters: {
+        agentId: string;
+        fromAt?: string;
+        toAt?: string;
+        currencyCode?: string;
+      }) => {
+        const q = new URLSearchParams({ agentId: filters.agentId });
+        if (filters.fromAt) q.set('fromAt', filters.fromAt);
+        if (filters.toAt) q.set('toAt', filters.toAt);
+        if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+        return httpClient.get(`/bilateral-reconciliations/preview?${q.toString()}`);
+      },
+      list: async (agentId: string) => httpClient.get(`/bilateral-reconciliations?agentId=${encodeURIComponent(agentId)}`),
+      get: async (id: string) => httpClient.get(`/bilateral-reconciliations/${encodeURIComponent(id)}`),
+      saveDraft: async (payload: Record<string, unknown>) => httpClient.post('/bilateral-reconciliations/draft', payload),
+      approve: async (payload: Record<string, unknown>) => httpClient.post('/bilateral-reconciliations/approve', payload),
+    },
     ledgerFinanceAudit: async (filters: { fromDate?: string }) => {
       const q = new URLSearchParams();
       if (filters.fromDate) q.set('fromDate', filters.fromDate);

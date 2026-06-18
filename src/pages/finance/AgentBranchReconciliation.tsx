@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { httpClient } from '../../lib/api/httpClient';
 import { phase3FinanceGateway } from '../../lib/api/phase3FinanceGateway';
 import { useToast } from '../../components/Toast';
 import AgentFinancialStatementContent from '../../components/agents/AgentFinancialStatementContent';
-import AgentStatementReconciliationPanel from '../../components/agents/AgentStatementReconciliationPanel';
 import {
   getAgentReconciliationMetrics,
   resolveStatementRowReconciliationClass,
@@ -119,9 +118,14 @@ export default function AgentBranchReconciliation() {
   return (
     <div className="h-full flex flex-col gap-3">
       <div>
-        <h2 className="text-xl font-bold">مطابقة الوكيل ↔ الفرع الرئيسي</h2>
+        <h2 className="text-xl font-bold">كشف وكيل ↔ فرع رئيسي</h2>
         <p className="text-sm text-gray-600">
-          شحن (مسبق في الفرع + تحصيل مع الوكيل) + حوالات − عمولة الشحن فقط + سندات + حركات الذمة من قاعدة البيانات — بالدولار الأمريكي.
+          تقرير تشغيلي للمراجعة والطباعة: شحن (مسبق في الفرع + تحصيل مع الوكيل) + حوالات − عمولة الشحن + سندات + حركات الذمة.
+        </p>
+        <p className="text-xs text-gray-500 mt-1">
+          لاعتماد الذمة والمطابقة الرسمية بين الطرفين استخدم{' '}
+          <Link className="text-primary-700 underline" to="/finance/bilateral-reconciliation">مطابقة ثنائية</Link>{' '}
+          ضمن قسم المالية.
         </p>
         <p className="text-xs text-gray-500 mt-1">{mainBranch.voucherNote}</p>
       </div>
@@ -236,15 +240,6 @@ export default function AgentBranchReconciliation() {
             rowReconciliationClass={rowClass}
             reportCurrency={REPORT_CURRENCY}
             showLedgerMovements
-          />
-          <AgentStatementReconciliationPanel
-            statementData={data}
-            reconciliationSaving={false}
-            onSaveReconciliation={async () =>
-              showToast('لحفظ مطابقة موقّعة استخدم سند قبض/دفع أو مطابقة الوكيل في ملف الوكيل', 'info')
-            }
-            returnPath="/finance/statements/reconciliation/agent-branch"
-            currencyCode={REPORT_CURRENCY}
           />
         </>
       )}

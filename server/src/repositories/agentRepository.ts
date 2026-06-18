@@ -443,6 +443,10 @@ export class AgentRepository {
     return allMatches.rows[0];
   }
 
+  async getLastAgentReconciliationRecord(companyId: string, agentId: string) {
+    return this.getLastAgentReconciliation(companyId, agentId);
+  }
+
   private async getLastAgentReconciliation(companyId: string, agentId: string) {
     const result = await pool.query(
       `

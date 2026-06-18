@@ -47,7 +47,7 @@ export const STATEMENT_NAV: StatementNavGroup[] = [
     id: 'reconciliation',
     label: 'مطابقة',
     items: [
-      { id: 'agent-branch', label: 'مطابقة الوكيل ↔ الفرع', path: '/finance/statements/reconciliation/agent-branch' },
+      { id: 'agent-branch', label: 'كشف وكيل ↔ فرع', path: '/finance/statements/reconciliation/agent-branch' },
       { id: 'ledger', label: 'دفتر ↔ ذمم', path: '/finance/statements/reconciliation/ledger' },
     ],
   },

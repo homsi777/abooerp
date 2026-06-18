@@ -661,3 +661,69 @@ export function buildHawalaReconciliationPrintHtml(data: any): string {
     orientation: 'landscape',
   });
 }
+
+export function buildBilateralReconciliationPrintHtml(data: {
+  agent?: { name?: string; code?: string };
+  periodFrom?: string;
+  periodTo?: string;
+  currencyCode?: string;
+  previousBalance?: number;
+  currentBalance?: number;
+  status?: string;
+  notes?: string;
+  agentNotes?: string;
+  items?: Array<{
+    description?: string;
+    company_amount?: number;
+    agent_amount?: number;
+    difference?: number;
+    status?: string;
+  }>;
+}): string {
+  const agent = data.agent ?? {};
+  const meta: LedgerPrintMetaItem[] = [
+    { label: 'الكشف', value: 'مطابقة ثنائية — وكيل ↔ فرع رئيسي' },
+    { label: 'الوكيل', value: agent.name ? `${agent.name}${agent.code ? ` (${agent.code})` : ''}` : '—' },
+    { label: 'من تاريخ', value: formatLedgerDate(data.periodFrom) },
+    { label: 'إلى تاريخ', value: formatLedgerDate(data.periodTo) },
+    { label: 'العملة', value: data.currencyCode || 'USD' },
+    { label: 'الذمة السابقة', value: formatLedgerMoney(data.previousBalance ?? 0, data.currencyCode || 'USD') },
+    { label: 'الذمة الحالية المعتمدة', value: formatLedgerMoney(data.currentBalance ?? 0, data.currencyCode || 'USD') },
+    { label: 'الحالة', value: data.status || '—' },
+  ];
+  const sections: LedgerPrintTableSection[] = [
+    {
+      heading: 'بنود المطابقة',
+      headers: ['البند', 'مبلغ الشركة', 'مبلغ الوكيل', 'الفرق', 'الحالة'],
+      rows: (data.items ?? []).map((item) => [
+        item.description ?? '—',
+        formatLedgerMoney(item.company_amount ?? 0, data.currencyCode || 'USD'),
+        formatLedgerMoney(item.agent_amount ?? 0, data.currencyCode || 'USD'),
+        formatLedgerMoney(item.difference ?? 0, data.currencyCode || 'USD'),
+        item.status === 'matched' ? 'متطابق' : item.status === 'disputed' ? 'نزاع' : 'غير متطابق',
+      ]),
+    },
+    {
+      heading: 'ملاحظات',
+      headers: ['الطرف', 'الملاحظة'],
+      rows: [
+        ['الفرع الرئيسي', data.notes?.trim() || '—'],
+        ['الوكيل', data.agentNotes?.trim() || '—'],
+      ],
+    },
+    {
+      heading: 'التوقيع',
+      headers: ['الطرف', 'الاسم', 'التوقيع', 'التاريخ'],
+      rows: [
+        ['الفرع الرئيسي', '', '', ''],
+        ['الوكيل', '', '', ''],
+      ],
+    },
+  ];
+  return buildLedgerStylePrintHtml({
+    title: 'مطابقة ثنائية — وكيل ↔ فرع رئيسي',
+    meta,
+    sections,
+    orientation: 'portrait',
+  });
+}

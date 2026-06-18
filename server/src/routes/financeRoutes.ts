@@ -234,6 +234,28 @@ const agentReconciliationQuerySchema = accountingReportQuerySchema.extend({
   agentId: z.string().uuid(),
 });
 
+const bilateralItemSchema = z.object({
+  itemType: z.string().min(1),
+  description: z.string().min(1),
+  companyAmount: z.coerce.number(),
+  agentAmount: z.coerce.number(),
+  notes: z.string().optional(),
+  sortOrder: z.coerce.number().int().optional(),
+});
+
+const bilateralSaveSchema = z.object({
+  id: z.string().uuid().optional(),
+  agentId: z.string().uuid(),
+  periodFrom: z.string().datetime({ offset: true }),
+  periodTo: z.string().datetime({ offset: true }),
+  currencyCode: z.string().min(3).max(3).optional(),
+  previousBalance: z.coerce.number().optional(),
+  currentBalance: z.coerce.number().optional(),
+  notes: z.string().optional(),
+  agentNotes: z.string().optional(),
+  items: z.array(bilateralItemSchema).min(1),
+});
+
 const ledgerFinanceAuditQuerySchema = z.object({
   fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).default('2026-06-01'),
 });
@@ -842,6 +864,107 @@ export function createFinanceRouter(service: FinanceService) {
         metadata: { fromAt: query.fromAt, toAt: query.toAt, currencyCode: query.currencyCode },
       });
       res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/bilateral-reconciliations/preview',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'المطابقة الثنائية غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = agentReconciliationQuerySchema.parse(req.query);
+      const companyId = requireCompanyId(req);
+      const data = await service.getBilateralReconciliationPreview(companyId, query.agentId, query);
+      if (!data) {
+        res.status(404).json({ success: false, error: 'Agent not found.' });
+        return;
+      }
+      auditService.logAsync({
+        req,
+        action: 'BILATERAL_RECONCILIATION_PREVIEW',
+        entityType: 'bilateral_reconciliation',
+        entityId: query.agentId,
+        metadata: { fromAt: query.fromAt, toAt: query.toAt, currencyCode: query.currencyCode },
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/bilateral-reconciliations',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'المطابقة الثنائية غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const agentId = z.string().uuid().parse(req.query.agentId);
+      const companyId = requireCompanyId(req);
+      const data = await service.listBilateralReconciliations(companyId, agentId);
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/bilateral-reconciliations/:id',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'المطابقة الثنائية غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const companyId = requireCompanyId(req);
+      const data = await service.getBilateralReconciliationById(companyId, String(req.params.id));
+      if (!data) {
+        res.status(404).json({ success: false, error: 'المطابقة غير موجودة.' });
+        return;
+      }
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.post(
+    '/bilateral-reconciliations/draft',
+    requireAnyPermissions(['finance.write', 'finance.vouchers.write']),
+    forbidUserTypes(['agent'], 'المطابقة الثنائية غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const payload = bilateralSaveSchema.parse(req.body);
+      const companyId = requireCompanyId(req);
+      const userId = (req as any).requestUserContext?.userId as string | undefined;
+      const data = await service.saveBilateralReconciliationDraft(companyId, {
+        ...payload,
+        createdByUserId: userId ?? null,
+      });
+      auditService.logAsync({
+        req,
+        action: 'BILATERAL_RECONCILIATION_DRAFT_SAVED',
+        entityType: 'bilateral_reconciliation',
+        entityId: data.id,
+        metadata: { agentId: payload.agentId, status: 'draft' },
+      });
+      res.status(201).json({ success: true, data });
+    }),
+  );
+
+  router.post(
+    '/bilateral-reconciliations/approve',
+    requireAnyPermissions(['finance.write', 'finance.vouchers.write']),
+    forbidUserTypes(['agent'], 'المطابقة الثنائية غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const payload = bilateralSaveSchema.parse(req.body);
+      const companyId = requireCompanyId(req);
+      const userId = (req as any).requestUserContext?.userId as string | undefined;
+      const data = await service.approveBilateralReconciliation(companyId, {
+        ...payload,
+        approvedByUserId: userId ?? null,
+        createdByUserId: userId ?? null,
+      });
+      auditService.logAsync({
+        req,
+        action: 'BILATERAL_RECONCILIATION_APPROVED',
+        entityType: 'bilateral_reconciliation',
+        entityId: data.id,
+        metadata: {
+          agentId: payload.agentId,
+          currentBalance: data.current_balance,
+          currencyCode: data.currency_code,
+        },
+      });
+      res.status(201).json({ success: true, data });
     }),
   );
 
