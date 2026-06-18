@@ -82,7 +82,7 @@ export const FINANCE_ACCOUNT_CODE_AR: Record<string, string> = {
 };
 
 export const FINANCE_CURRENCY_OPTIONS: Array<{ value: string; label: string; short: string }> = [
-  { value: 'USD', label: 'دولار أمريكي', short: 'د.أ' },
+  { value: 'USD', label: 'دولار أمريكي', short: '$' },
   { value: 'SYP', label: 'ليرة سورية', short: 'ل.س' },
   { value: 'TRY', label: 'ليرة تركية', short: 'ل.ت' },
   { value: 'EUR', label: 'يورو', short: '€' },
@@ -167,6 +167,18 @@ export function financeCurrencyShort(code: unknown): string {
   return found?.short ?? raw;
 }
 
+export function financeCurrencyDisplay(code: unknown): string {
+  const raw = String(code ?? 'USD').trim().toUpperCase();
+  if (raw === 'USD') return 'دولار أمريكي — USD ($)';
+  const label = financeCurrencyLabel(raw);
+  const short = financeCurrencyShort(raw);
+  return short === raw ? `${label} — ${raw}` : `${label} — ${raw} (${short})`;
+}
+
 export function formatFinanceAmount(value: unknown, currencyCode = 'USD'): string {
+  const code = String(currencyCode ?? 'USD').trim().toUpperCase();
+  if (code === 'USD') {
+    return `${formatWesternNumber(value)} USD ($)`;
+  }
   return `${formatWesternNumber(value)} ${financeCurrencyShort(currencyCode)}`;
 }

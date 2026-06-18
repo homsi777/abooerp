@@ -11,6 +11,7 @@ import {
   type LedgerPrintTableSection,
 } from './ledgerStylePrint';
 import { buildDailyLedgerHeaderFields } from './companyPrintHeader';
+import { financeCurrencyDisplay } from '../finance/financeArabicLabels';
 
 const transferRoleLabel: Record<string, string> = {
   origin: 'وكيل مصدر (قبض)',
@@ -686,7 +687,7 @@ export function buildBilateralReconciliationPrintHtml(data: {
     { label: 'الوكيل', value: agent.name ? `${agent.name}${agent.code ? ` (${agent.code})` : ''}` : '—' },
     { label: 'من تاريخ', value: formatLedgerDate(data.periodFrom) },
     { label: 'إلى تاريخ', value: formatLedgerDate(data.periodTo) },
-    { label: 'العملة', value: data.currencyCode || 'USD' },
+    { label: 'العملة', value: financeCurrencyDisplay(data.currencyCode || 'USD') },
     { label: 'الذمة السابقة', value: formatLedgerMoney(data.previousBalance ?? 0, data.currencyCode || 'USD') },
     { label: 'الذمة الحالية المعتمدة', value: formatLedgerMoney(data.currentBalance ?? 0, data.currencyCode || 'USD') },
     { label: 'الحالة', value: data.status || '—' },

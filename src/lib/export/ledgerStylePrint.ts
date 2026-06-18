@@ -167,7 +167,10 @@ export async function exportLedgerStylePdf(payload: {
 }
 
 export function formatLedgerMoney(value: unknown, currency = 'USD'): string {
-  return `${Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${currency}`;
+  const code = String(currency ?? 'USD').trim().toUpperCase();
+  const num = Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  if (code === 'USD') return `${num} USD ($)`;
+  return `${num} ${code}`;
 }
 
 export function formatLedgerDate(value: unknown): string {

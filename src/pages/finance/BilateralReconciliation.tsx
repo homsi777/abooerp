@@ -5,7 +5,7 @@ import { phase3FinanceGateway } from '../../lib/api/phase3FinanceGateway';
 import { useToast } from '../../components/Toast';
 import AgentStatementReconciliationPanel from '../../components/agents/AgentStatementReconciliationPanel';
 import FinanceExportToolbar from '../../components/finance/FinanceExportToolbar';
-import { formatFinanceAmount } from '../../lib/finance/financeArabicLabels';
+import { formatFinanceAmount, financeCurrencyDisplay } from '../../lib/finance/financeArabicLabels';
 import { formatWesternDate, formatWesternDateTime } from '../../lib/format/westernDigits';
 import { buildBilateralReconciliationPrintHtml } from '../../lib/export/financialStatementPrint';
 import { parseDecimalAmount } from '../../lib/currency/currency';
@@ -63,6 +63,15 @@ function normalizePreviewItems(items: any[]): BilateralItem[] {
     notes: item.notes ?? null,
     sortOrder: Number(item.sortOrder ?? item.sort_order ?? index),
   }));
+}
+
+function isCountItem(item: BilateralItem) {
+  return item.description.startsWith('عدد ');
+}
+
+function formatItemValue(item: BilateralItem, value: number, money: (v: unknown) => string) {
+  if (isCountItem(item)) return String(Math.round(value));
+  return money(value);
 }
 
 export default function BilateralReconciliation() {
@@ -251,7 +260,7 @@ export default function BilateralReconciliation() {
           </select>
           <input type="date" className="form-input" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} title="من تاريخ" />
           <input type="date" className="form-input" value={dateTo} onChange={(e) => setDateTo(e.target.value)} title="إلى تاريخ" />
-          <div className="text-sm text-gray-600 px-2">العملة: {REPORT_CURRENCY}</div>
+          <div className="text-sm text-gray-600 px-2">العملة: {financeCurrencyDisplay(REPORT_CURRENCY)}</div>
           <button type="button" className="toolbar-btn primary" disabled={loading} onClick={() => void loadPreview()}>
             {loading ? 'جاري التحميل...' : 'تحميل المطابقة'}
           </button>
@@ -309,9 +318,9 @@ export default function BilateralReconciliation() {
               <thead>
                 <tr>
                   <th>البند</th>
-                  <th>مبلغ الشركة (الفرع)</th>
-                  <th>مبلغ الوكيل</th>
-                  <th>الفرق</th>
+                  <th>مبلغ الشركة (الفرع) — USD ($)</th>
+                  <th>مبلغ الوكيل — USD ($)</th>
+                  <th>الفرق — USD ($)</th>
                   <th>الحالة</th>
                 </tr>
               </thead>
@@ -319,17 +328,27 @@ export default function BilateralReconciliation() {
                 {items.map((item, index) => (
                   <tr key={`${item.itemType}-${item.description}`} className={item.status === 'matched' ? '' : 'bg-amber-50'}>
                     <td>{item.description}</td>
-                    <td>{money(item.companyAmount)}</td>
+                    <td>{formatItemValue(item, item.companyAmount, money)}</td>
                     <td>
-                      <input
-                        type="number"
-                        step="0.01"
-                        className="form-input w-32"
-                        value={item.agentAmount}
-                        onChange={(e) => updateAgentAmount(index, e.target.value)}
-                      />
+                      {isCountItem(item) ? (
+                        <input
+                          type="number"
+                          step="1"
+                          className="form-input w-32"
+                          value={item.agentAmount}
+                          onChange={(e) => updateAgentAmount(index, e.target.value)}
+                        />
+                      ) : (
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="form-input w-32"
+                          value={item.agentAmount}
+                          onChange={(e) => updateAgentAmount(index, e.target.value)}
+                        />
+                      )}
                     </td>
-                    <td>{money(item.difference)}</td>
+                    <td>{formatItemValue(item, item.difference, money)}</td>
                     <td>{itemStatusLabel(item.status)}</td>
                   </tr>
                 ))}
