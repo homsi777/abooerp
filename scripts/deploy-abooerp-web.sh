@@ -25,8 +25,11 @@ if [[ "$FRONTEND_DIR" == "/var/www" || "$FRONTEND_DIR" == "/" ]]; then
   exit 1
 fi
 
-echo "Pulling branch: $BRANCH"
-git pull origin "$BRANCH"
+echo "Syncing repo with origin/$BRANCH (discarding local dist/ build artifacts)"
+git fetch origin "$BRANCH"
+git checkout -- dist/ 2>/dev/null || true
+git clean -fd dist/ 2>/dev/null || true
+git reset --hard "origin/$BRANCH"
 
 echo "Installing dependencies"
 PUPPETEER_SKIP_DOWNLOAD=true npm install
