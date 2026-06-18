@@ -946,6 +946,49 @@ export const phase3FinanceGateway = {
       return httpClient.get(`/ledger-finance-audit?${q.toString()}`);
     },
   },
+  financeStatements: {
+    voucherReport: async (
+      type: 'receipt' | 'payment',
+      filters: {
+        dateFrom: string;
+        dateTo?: string;
+        branchId?: string;
+        agentId?: string;
+        customerId?: string;
+        cashboxId?: string;
+        status?: string;
+      },
+    ) => {
+      const q = new URLSearchParams({ dateFrom: filters.dateFrom });
+      if (filters.dateTo) q.set('dateTo', filters.dateTo);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      if (filters.agentId) q.set('agentId', filters.agentId);
+      if (filters.customerId) q.set('customerId', filters.customerId);
+      if (filters.cashboxId) q.set('cashboxId', filters.cashboxId);
+      if (filters.status) q.set('status', filters.status);
+      return httpClient.get(`/finance-statements/vouchers/${type}?${q.toString()}`);
+    },
+    dailyLedgerSummary: async (filters: { dateFrom: string; dateTo?: string; branchId?: string }) => {
+      const q = new URLSearchParams({ dateFrom: filters.dateFrom });
+      if (filters.dateTo) q.set('dateTo', filters.dateTo);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      return httpClient.get(`/finance-statements/daily-ledger-summary?${q.toString()}`);
+    },
+    shipmentsByDate: async (filters: {
+      dateFrom: string;
+      dateTo?: string;
+      branchId?: string;
+      agentId?: string;
+      currencyCode?: string;
+    }) => {
+      const q = new URLSearchParams({ dateFrom: filters.dateFrom });
+      if (filters.dateTo) q.set('dateTo', filters.dateTo);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      if (filters.agentId) q.set('agentId', filters.agentId);
+      if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+      return httpClient.get(`/finance-statements/shipments-by-date?${q.toString()}`);
+    },
+  },
 };
 
 export type AgentCodRow = {

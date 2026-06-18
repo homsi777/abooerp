@@ -12,6 +12,7 @@ import {
   groupProvincialByAgent,
 } from '../lib/shipping/provincialInboundTotals';
 import { useToast } from '../components/Toast';
+import { useAuth } from '../context/AuthProvider';
 
 const SYRIAN_GOVERNORATES = [
   'دمشق',
@@ -55,6 +56,9 @@ function defaultDateFrom() {
 
 export default function Centers() {
   const { showToast } = useToast();
+  const { hasPermission } = useAuth();
+  const canReceive = hasPermission('deliveries.write');
+  const tableColSpan = canReceive ? 15 : 14;
   const [rows, setRows] = useState<ProvincialInboundRow[]>([]);
   const [selectedCenter, setSelectedCenter] = useState(SYRIAN_GOVERNORATES[0]);
   const [dateFrom, setDateFrom] = useState(defaultDateFrom);
@@ -221,10 +225,13 @@ export default function Centers() {
       <div className="centers-header no-print">
         <div>
           <p className="centers-eyebrow">المراكز</p>
-          <h2>استلام شحنات المحافظات</h2>
+          <h2>{canReceive ? 'استلام شحنات المحافظات' : 'متابعة شحنات المحافظات'}</h2>
           <p className="text-sm text-gray-500 mt-1">
             شحنات منشأة من دفتر الإدخال السريع — مرتبطة بالوجهة/الوكيل وتظهر بنفس بيانات الدفتر
           </p>
+          {!canReceive && (
+            <p className="text-sm text-amber-700 mt-1">عرض ومتابعة فقط — بدون صلاحية تثبيت استلام المركز</p>
+          )}
         </div>
         <div className="flex gap-2 flex-wrap">
           <button className="toolbar-btn primary" type="button" onClick={() => setVehicleReportOpen(true)}>
@@ -417,18 +424,18 @@ export default function Centers() {
                   <th>حوالة</th>
                   <th>أجرة حوالة</th>
                   <th>الحالة</th>
-                  <th className="no-print">استلام</th>
+                  {canReceive && <th className="no-print">استلام</th>}
                 </tr>
               </thead>
               <tbody>
                 {loading && (
                   <tr>
-                    <td colSpan={15}>جاري تحميل البيانات...</td>
+                    <td colSpan={tableColSpan}>جاري تحميل البيانات...</td>
                   </tr>
                 )}
                 {!loading && selectedRows.length === 0 && (
                   <tr>
-                    <td colSpan={15}>لا توجد شحنات لهذه المحافظة ضمن الفترة المحددة.</td>
+                    <td colSpan={tableColSpan}>لا توجد شحنات لهذه المحافظة ضمن الفترة المحددة.</td>
                   </tr>
                 )}
                 {!loading &&
@@ -449,21 +456,30 @@ export default function Centers() {
                         <td>{row.prepaidAmount.toLocaleString()}</td>
                         <td>{row.hawalaAmount.toLocaleString()}</td>
                         <td>{row.transferServiceFee.toLocaleString()}</td>
-                        <td>{shipmentStatusLabelAr(normalizeShipmentStatus(row.shipmentStatus))}</td>
-                        <td className="no-print">
-                          {!row.centerReceived ? (
-                            <button
-                              type="button"
-                              className="toolbar-btn primary"
-                              onClick={() => setConfirmRow(row)}
-                              disabled={disabled}
-                            >
-                              استلام مركز
-                            </button>
-                          ) : (
-                            <span className="status-badge bg-green-100">مستلم</span>
+                        <td>
+                          {shipmentStatusLabelAr(normalizeShipmentStatus(row.shipmentStatus))}
+                          {!canReceive && (
+                            <span className="block text-xs text-gray-500 mt-0.5">
+                              {row.centerReceived ? 'مستلم في المركز' : 'بانتظار استلام المركز'}
+                            </span>
                           )}
                         </td>
+                        {canReceive && (
+                          <td className="no-print">
+                            {!row.centerReceived ? (
+                              <button
+                                type="button"
+                                className="toolbar-btn primary"
+                                onClick={() => setConfirmRow(row)}
+                                disabled={disabled}
+                              >
+                                استلام مركز
+                              </button>
+                            ) : (
+                              <span className="status-badge bg-green-100">مستلم</span>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -479,7 +495,7 @@ export default function Centers() {
                     <td><strong>{selectedTotals.prepaidAmount.toLocaleString()}</strong></td>
                     <td><strong>{selectedTotals.hawalaAmount.toLocaleString()}</strong></td>
                     <td><strong>{selectedTotals.transferServiceFee.toLocaleString()}</strong></td>
-                    <td colSpan={2} />
+                    <td colSpan={canReceive ? 2 : 1} />
                   </tr>
                 </tfoot>
               )}
@@ -488,7 +504,7 @@ export default function Centers() {
         </main>
       </div>
 
-      {confirmRow && (
+      {canReceive && confirmRow && (
         <div className="quick-ledger-confirm no-print">
           <div className="quick-ledger-confirm-panel">
             <h3>تأكيد استلام المركز — {selectedCenter}</h3>

@@ -25,16 +25,23 @@ import CashBoxMovements from './pages/finance/CashBoxMovements';
 import FinanceVouchers from './pages/finance/Vouchers';
 import FinanceRecords from './pages/finance/Records';
 import DailyJournal from './pages/finance/DailyJournal';
-import LedgerFinanceAudit from './pages/finance/LedgerFinanceAudit';
+import FinanceStatementsShell from './pages/finance/statements/FinanceStatementsShell';
+import PartyStatementPage from './pages/finance/statements/PartyStatementPage';
+import CashboxStatementPage from './pages/finance/statements/CashboxStatementPage';
+import VoucherStatementPage from './pages/finance/statements/VoucherStatementPage';
+import DailyLedgerSummaryPage from './pages/finance/statements/DailyLedgerSummaryPage';
+import ShipmentsDatePage from './pages/finance/statements/ShipmentsDatePage';
+import EmbeddedHawalaStatement from './pages/finance/statements/EmbeddedHawalaStatement';
+import EmbeddedAgentBranchReconciliation from './pages/finance/statements/EmbeddedAgentBranchReconciliation';
+import EmbeddedLedgerAudit from './pages/finance/statements/EmbeddedLedgerAudit';
+import EmbeddedCodStatement from './pages/finance/statements/EmbeddedCodStatement';
 import FinanceReports from './pages/finance/Reports';
 import FinanceReportsShell from './pages/finance/reports/FinanceReportsShell';
 import ProfitLossReport from './pages/finance/reports/ProfitLossReport';
 import GeneralLedger from './pages/finance/GeneralLedger';
-import AgentBranchReconciliation from './pages/finance/AgentBranchReconciliation';
 import TrialBalance from './pages/finance/TrialBalance';
 import BalanceSheet from './pages/finance/BalanceSheet';
 import PeriodClosing from './pages/finance/PeriodClosing';
-import AgentCodStatement from './pages/finance/AgentCodStatement';
 import AgentsModule from './pages/agents/AgentsModule';
 import AgentProfile from './pages/agents/AgentProfile';
 import BranchesModule from './pages/branches/BranchesModule';
@@ -345,17 +352,30 @@ export default function App() {
                     }
                   />
                   <Route
-                    path="/finance/ledger-finance-audit"
+                    path="/finance/statements"
                     element={
                       user?.userType === 'agent' ? (
                         <Navigate to="/agent-portal" replace />
                       ) : (
                         <RequirePermission permission="finance.read">
-                          <LedgerFinanceAudit />
+                          <FinanceStatementsShell />
                         </RequirePermission>
                       )
                     }
-                  />
+                  >
+                    <Route path="parties/agent" element={<PartyStatementPage partyType="agent" />} />
+                    <Route path="parties/customer" element={<PartyStatementPage partyType="customer" />} />
+                    <Route path="parties/sender-receiver" element={<PartyStatementPage partyType="sender_receiver" />} />
+                    <Route path="cash/cashbox" element={<CashboxStatementPage />} />
+                    <Route path="cash/receipts" element={<VoucherStatementPage voucherType="receipt" />} />
+                    <Route path="cash/payments" element={<VoucherStatementPage voucherType="payment" />} />
+                    <Route path="shipping/ledger-summary" element={<DailyLedgerSummaryPage />} />
+                    <Route path="shipping/shipments" element={<ShipmentsDatePage />} />
+                    <Route path="shipping/cod" element={<EmbeddedCodStatement />} />
+                    <Route path="hawala" element={<EmbeddedHawalaStatement />} />
+                    <Route path="reconciliation/agent-branch" element={<EmbeddedAgentBranchReconciliation />} />
+                    <Route path="reconciliation/ledger" element={<EmbeddedLedgerAudit />} />
+                  </Route>
                   <Route
                     path="/finance/general-ledger"
                     element={
@@ -370,20 +390,11 @@ export default function App() {
                   />
                   <Route path="/finance/debit-credit" element={<FinanceLegacyRedirect to="/finance/general-ledger" />} />
                   <Route path="/finance/account-statement" element={<FinanceLegacyRedirect to="/finance/daily-journal" />} />
-                  <Route path="/finance/agent-settlement" element={<FinanceLegacyRedirect to="/finance/agent-branch-reconciliation" />} />
-                  <Route path="/finance/hawala-reconciliation" element={<FinanceLegacyRedirect to="/finance/agent-branch-reconciliation" />} />
-                  <Route
-                    path="/finance/agent-branch-reconciliation"
-                    element={
-                      user?.userType === 'agent' ? (
-                        <Navigate to="/agent-portal" replace />
-                      ) : (
-                        <RequirePermission permission="finance.read">
-                          <AgentBranchReconciliation />
-                        </RequirePermission>
-                      )
-                    }
-                  />
+                  <Route path="/finance/agent-settlement" element={<Navigate to="/finance/statements/reconciliation/agent-branch" replace />} />
+                  <Route path="/finance/agent-cod-statement" element={<Navigate to="/finance/statements/shipping/cod" replace />} />
+                  <Route path="/finance/hawala-reconciliation" element={<Navigate to="/finance/statements/hawala" replace />} />
+                  <Route path="/finance/ledger-finance-audit" element={<Navigate to="/finance/statements/reconciliation/ledger" replace />} />
+                  <Route path="/finance/agent-branch-reconciliation" element={<Navigate to="/finance/statements/reconciliation/agent-branch" replace />} />
                   <Route
                     path="/finance/trial-balance"
                     element={
@@ -420,14 +431,7 @@ export default function App() {
                       )
                     }
                   />
-                  <Route
-                    path="/finance/agent-cod-statement"
-                    element={
-                      <RequirePermission permission="finance.read">
-                        <AgentCodStatement />
-                      </RequirePermission>
-                    }
-                  />
+
                   <Route
                     path="/finance/reports"
                     element={

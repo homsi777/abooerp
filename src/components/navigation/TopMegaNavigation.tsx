@@ -51,6 +51,7 @@ const NAV_MODULES: NavModule[] = [
   {
     id: 'finance', label: 'المالية', icon: '💰',
     children: [
+      { label: 'كشف — مركز الكشوف', path: '/finance/statements', icon: '📑', permission: 'finance.read' },
       { label: 'السندات', path: '/finance/vouchers', icon: '📜', permission: 'finance.vouchers.view' },
       { label: 'الصناديق', path: '/finance/cashboxes', icon: '💵', permission: 'finance.cashboxes.view' },
       { label: 'المصاريف', path: '/finance/expenses', icon: '💳', permission: 'finance.read' },
@@ -58,8 +59,6 @@ const NAV_MODULES: NavModule[] = [
       { label: 'تعريف الأسعار', path: '/finance/tariffs', icon: '💲', permission: 'finance.read' },
       { label: 'دفتر الأستاذ', path: '/finance/general-ledger', icon: '📒', permission: 'finance.read' },
       { label: 'دفتر اليومية', path: '/finance/daily-journal', icon: '📓', permission: 'finance.read' },
-      { label: 'مطابقة الوكيل ↔ الفرع الرئيسي', path: '/finance/agent-branch-reconciliation', icon: '🤝', permission: 'finance.read' },
-      { label: 'كشف مبالغ التسليم', path: '/finance/agent-cod-statement', icon: '◈', permission: 'finance.read' },
       { label: 'ميزان المراجعة', path: '/finance/trial-balance', icon: '⚖️', permission: 'finance.read' },
       { label: 'قائمة المركز المالي', path: '/finance/balance-sheet', icon: '📋', permission: 'finance.read' },
       { label: 'إقفال الفترات', path: '/finance/period-closing', icon: '🔒', permission: 'finance.read' },
@@ -117,11 +116,9 @@ const NAV_FINANCE_ACCOUNTANT: NavModule = {
   label: 'الذمم والمالية',
   icon: '💰',
   children: [
+    { label: 'كشف — مركز الكشوف', path: '/finance/statements', icon: '📑', permission: 'finance.read' },
     { label: 'دفتر الأستاذ — ذمم وأرصدة', path: '/finance/general-ledger', icon: '📒', permission: 'finance.read' },
     { label: 'دفتر اليومية — تفاصيل الحركات', path: '/finance/daily-journal', icon: '📓', permission: 'finance.read' },
-    { label: 'تحقق الدفter ↔ الذمم', path: '/finance/ledger-finance-audit', icon: '✓', permission: 'finance.read' },
-    { label: 'مطابقة الوكيل ↔ الفرع', path: '/finance/agent-branch-reconciliation', icon: '🤝', permission: 'finance.read' },
-    { label: 'كشف مبالغ التسليم', path: '/finance/agent-cod-statement', icon: '◈', permission: 'finance.read' },
     { label: 'ميزان المراجعة', path: '/finance/trial-balance', icon: '⚖️', permission: 'finance.read' },
     { label: 'قائمة المركز المالي', path: '/finance/balance-sheet', icon: '📋', permission: 'finance.read' },
     { label: 'التقارير المالية', path: '/finance/reports', icon: '📈', permission: 'finance.read' },
@@ -135,12 +132,22 @@ const NAV_FINANCE_ACCOUNTANT: NavModule = {
   ],
 };
 
-/** محاسب: مالية + حوالات + وكلاء + تقارير + العملاء */
+/** محاسب: مالية + حوالات + وكلاء + مراكز الشحن (عرض) + تقارير + العملاء */
+const NAV_SHIPPING_ACCOUNTANT: NavModule = {
+  id: 'shipping-centers',
+  label: 'شحن المراكز',
+  icon: '◎',
+  children: [
+    { label: 'المراكز', path: '/centers', icon: '◎', permission: 'deliveries.read' },
+  ],
+};
+
 const NAV_ACCOUNTANT: NavModule[] = [
   { id: 'home', label: 'الرئيسية', icon: '🏠', path: '/dashboard' },
   ...(NAV_MODULES.filter((m) => m.id === 'transfers')),
   ...(NAV_MODULES.filter((m) => m.id === 'customers')),
   ...(NAV_MODULES.filter((m) => m.id === 'agents')),
+  NAV_SHIPPING_ACCOUNTANT,
   NAV_FINANCE_ACCOUNTANT,
   ...(NAV_MODULES.filter((m) => m.id === 'reports')),
 ];

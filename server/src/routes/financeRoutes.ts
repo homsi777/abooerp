@@ -13,6 +13,11 @@ import { calculateShipmentFinancialBreakdown } from '../utils/shipmentFinancialB
 import { computeAgentRemittanceDue } from '../utils/agentShipmentSettlement.js';
 import { HttpError } from '../utils/errors.js';
 import { buildLedgerFinanceAuditReport } from '../services/ledgerFinanceAuditService.js';
+import {
+  buildDailyLedgerSummaryReport,
+  buildShipmentsByDateReport,
+  buildVoucherReport,
+} from '../services/financeStatementsService.js';
 
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
@@ -231,6 +236,17 @@ const agentReconciliationQuerySchema = accountingReportQuerySchema.extend({
 
 const ledgerFinanceAuditQuerySchema = z.object({
   fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).default('2026-06-01'),
+});
+
+const financeStatementDateRangeSchema = z.object({
+  dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  branchId: z.string().uuid().optional(),
+  agentId: z.string().uuid().optional(),
+  customerId: z.string().uuid().optional(),
+  cashboxId: z.string().uuid().optional(),
+  currencyCode: z.string().min(3).max(3).optional(),
+  status: z.string().optional(),
 });
 
 const closePeriodSchema = z.object({
@@ -842,6 +858,62 @@ export function createFinanceRouter(service: FinanceService) {
         action: 'LEDGER_FINANCE_AUDIT_GENERATED',
         entityType: 'ledger_finance_audit',
         metadata: { fromDate: query.fromDate },
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/finance-statements/vouchers/:type',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'كشف السندات غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const type = String(req.params.type);
+      if (type !== 'receipt' && type !== 'payment') {
+        res.status(400).json({ success: false, error: 'نوع السند غير صالح.' });
+        return;
+      }
+      const query = financeStatementDateRangeSchema.parse(req.query);
+      const data = await buildVoucherReport(parseDataScope(req), type, {
+        dateFrom: query.dateFrom,
+        dateTo: query.dateTo,
+        branchId: query.branchId,
+        agentId: query.agentId,
+        customerId: query.customerId,
+        cashboxId: query.cashboxId,
+        status: query.status,
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/finance-statements/daily-ledger-summary',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'كشف ملخص الدفتر غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = financeStatementDateRangeSchema.parse(req.query);
+      const companyId = requireCompanyId(req);
+      const data = await buildDailyLedgerSummaryReport(companyId, {
+        dateFrom: query.dateFrom,
+        dateTo: query.dateTo,
+        branchId: query.branchId,
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/finance-statements/shipments-by-date',
+    requireAnyPermissions(['finance.read', 'finance.view', 'shipments.read']),
+    asyncHandler(async (req, res) => {
+      const query = financeStatementDateRangeSchema.parse(req.query);
+      const data = await buildShipmentsByDateReport(parseDataScope(req), {
+        dateFrom: query.dateFrom,
+        dateTo: query.dateTo,
+        branchId: query.branchId,
+        agentId: query.agentId,
+        currencyCode: query.currencyCode,
       });
       res.json({ success: true, data });
     }),
