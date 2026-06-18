@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthProvider';
+import { hasAnyNavPermission } from '../../lib/auth/navPermissionAliases';
 
 // ── Module tree ───────────────────────────────────────────────────────────────
 interface NavChild {
@@ -8,6 +9,7 @@ interface NavChild {
   path: string;
   icon?: string;
   permission?: string;
+  permissionsAny?: string[];
   divider?: boolean;
 }
 
@@ -210,8 +212,16 @@ interface DropdownState {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
+function isChildPathActive(pathname: string, childPath: string): boolean {
+  const base = childPath.split('?')[0] ?? childPath;
+  return pathname === base || pathname.startsWith(`${base}/`);
+}
+
 export default function TopMegaNavigation() {
   const { hasPermission, user } = useAuth();
+  const userPermissions = user?.permissions;
+  const canSeeChild = (child: NavChild) =>
+    hasAnyNavPermission(userPermissions, child.permission, child.permissionsAny);
   const navigate = useNavigate();
   const location = useLocation();
   const [dropdown, setDropdown] = useState<DropdownState | null>(null);
@@ -235,9 +245,7 @@ export default function TopMegaNavigation() {
   const isModuleActive = (mod: NavModule): boolean => {
     if (mod.path) return location.pathname === mod.path || location.pathname.startsWith(mod.path + '/');
     if (mod.children) {
-      return mod.children.some(
-        (c) => location.pathname === c.path || location.pathname.startsWith(c.path + '/'),
-      );
+      return mod.children.some((c) => isChildPathActive(location.pathname, c.path));
     }
     return false;
   };
@@ -261,7 +269,7 @@ export default function TopMegaNavigation() {
     }
     if (mod.permission && !hasPermission(mod.permission)) return false;
     if (mod.children) {
-      const visible = mod.children.filter((c) => !c.permission || hasPermission(c.permission));
+      const visible = mod.children.filter((c) => canSeeChild(c));
       return visible.length > 0;
     }
     return true;
@@ -292,7 +300,7 @@ export default function TopMegaNavigation() {
   };
 
   const openModule = dropdown ? visibleModules.find((m) => m.id === dropdown.id) : null;
-  const openChildren = (openModule?.children ?? []).filter((c) => !c.permission || hasPermission(c.permission));
+  const openChildren = (openModule?.children ?? []).filter((c) => canSeeChild(c));
 
   return (
     <>
@@ -386,16 +394,16 @@ export default function TopMegaNavigation() {
                   width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
                   padding: '9px 14px', border: 'none',
                   borderRadius: '8px', cursor: 'pointer', textAlign: 'right',
-                  color: location.pathname === child.path ? '#a5b4fc' : 'rgba(255,255,255,.8)',
+                  color: isChildPathActive(location.pathname, child.path) ? '#a5b4fc' : 'rgba(255,255,255,.8)',
                   fontSize: '13px',
-                  background: location.pathname === child.path ? 'rgba(99,102,241,.15)' : 'none',
+                  background: isChildPathActive(location.pathname, child.path) ? 'rgba(99,102,241,.15)' : 'none',
                 } as React.CSSProperties}
                 onMouseEnter={(e) => {
-                  if (location.pathname !== child.path)
+                  if (!isChildPathActive(location.pathname, child.path))
                     Object.assign(e.currentTarget.style, { background: 'rgba(255,255,255,.06)', color: '#fff' });
                 }}
                 onMouseLeave={(e) => {
-                  if (location.pathname !== child.path)
+                  if (!isChildPathActive(location.pathname, child.path))
                     Object.assign(e.currentTarget.style, { background: 'none', color: 'rgba(255,255,255,.8)' });
                 }}
               >

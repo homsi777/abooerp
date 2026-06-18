@@ -43,6 +43,7 @@ type AuthContextValue = {
   refresh: () => Promise<boolean>;
   setActiveBranch: (branchId: string | null) => Promise<void>;
   hasPermission: (permission: string) => boolean;
+  hasAnyPermission: (permissions: string[]) => boolean;
   sessionExpiredMessage: string | null;
   clearSessionExpiredMessage: () => void;
 };
@@ -282,6 +283,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refresh,
       setActiveBranch,
       hasPermission: (permission: string) => Boolean(user?.permissions?.includes(permission)),
+      hasAnyPermission: (permissions: string[]) =>
+        permissions.some((permission) => Boolean(user?.permissions?.includes(permission))),
       sessionExpiredMessage,
       clearSessionExpiredMessage: () => setSessionExpiredMessage(null),
     }),

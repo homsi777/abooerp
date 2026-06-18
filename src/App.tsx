@@ -60,6 +60,8 @@ import { ToastProvider } from './components/Toast';
 import { useAuth } from './context/AuthProvider';
 import RequireAuth from './components/RequireAuth';
 import RequirePermission from './components/RequirePermission';
+import RequireAnyPermission from './components/RequireAnyPermission';
+import { NAV_PERMISSION_ALIASES } from './lib/auth/navPermissionAliases';
 
 function FinanceLegacyRedirect({ to }: { to: string }) {
   const { search } = useLocation();
@@ -357,9 +359,9 @@ export default function App() {
                       user?.userType === 'agent' ? (
                         <Navigate to="/agent-portal" replace />
                       ) : (
-                        <RequirePermission permission="finance.read">
+                        <RequireAnyPermission permissions={NAV_PERMISSION_ALIASES['finance.read']}>
                           <FinanceStatementsShell />
-                        </RequirePermission>
+                        </RequireAnyPermission>
                       )
                     }
                   >

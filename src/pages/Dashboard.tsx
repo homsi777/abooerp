@@ -474,6 +474,7 @@ export default function Dashboard() {
           {!isAgentScope && <QuickAction to="/agents" icon={<Users size={18} />} label="الوكلاء" sub="إدارة الوكلاء والمحافظات" />}
           {!isAgentScope && <QuickAction to="/customers" icon={<Box size={18} />} label="العملاء" sub="العملاء الدائمون والحسابيون" />}
           {!isAgentScope && <QuickAction to="/branches" icon={<Building2 size={18} />} label="الفروع" sub="إدارة الفروع والمناطق" />}
+          {canViewFinance && <QuickAction to="/finance/statements" icon={<FileText size={18} />} label="كشف — مركز الكشوف" sub="كل الكشوف المالية في مكان واحد" />}
           {canViewFinance && <QuickAction to="/finance/cashboxes" icon={<Wallet size={18} />} label="الصناديق" sub="مراقبة الأرصدة والحركات" />}
           {canViewFinance && <QuickAction to="/finance/general-ledger" icon={<ArrowLeftRight size={18} />} label="دفتر الأستاذ" sub="أرصدة الحسابات المالية" />}
           {canViewFinance && <QuickAction to="/finance/daily-journal" icon={<FileText size={18} />} label="دفتر اليومية" sub="سجل الحركات المالية" />}
