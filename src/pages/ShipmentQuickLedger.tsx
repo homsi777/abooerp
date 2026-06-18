@@ -490,6 +490,25 @@ function resolvePrintDestinationLabel(
   return '—';
 }
 
+function resolvePrintDriverLabel(
+  rows: RemoteDailyLedgerRow[],
+  activeSearch: string,
+  scope: 'driver' | 'date' | 'agent' | 'session',
+  selectedDriverName: string,
+  scopeFallback: string,
+): string {
+  if (activeSearch.trim()) {
+    const drivers = [...new Set(
+      rows.map((row) => normalizeName(row.driver_label ?? '')).filter(Boolean),
+    )];
+    if (drivers.length === 1) return drivers[0];
+    if (drivers.length > 1) return `كل السائقين (${drivers.length})`;
+    return scopeFallback;
+  }
+  if (scope === 'driver' && selectedDriverName) return selectedDriverName;
+  return scopeFallback;
+}
+
 function buildQuickLedgerPrintHtml(
   rows: QuickLedgerPrintRow[],
   meta: {
@@ -2210,7 +2229,8 @@ export default function ShipmentQuickLedger() {
       canViewAllLedgerEntriesRef.current &&
       (ledgerBranchModeRef.current === 'all' || !activeBranchIdRef.current);
     setPrintAllLines(managerWideView || canViewAllLedgerEntriesRef.current);
-    setPrintScope(scope ?? 'date');
+    const hasSearch = Boolean(normalizeName(searchQuick));
+    setPrintScope(hasSearch ? 'date' : (scope ?? 'date'));
     setPrintDialogOpen(true);
   };
 
@@ -2260,7 +2280,10 @@ export default function ShipmentQuickLedger() {
         groupedDrivers.set(key, existing);
       }
       const driverKeys = [...groupedDrivers.keys()];
-      if (driverKeys.length === 1) {
+      const hasSearch = Boolean(normalizeName(searchQuick));
+      if (hasSearch) {
+        setDestinationPdfDriverKey(ALL_DRIVERS_PDF_OPTION);
+      } else if (driverKeys.length === 1) {
         setDestinationPdfDriverKey(driverKeys[0]);
       } else {
         const currentTripDriverBackendId = tripRef.current.driverId
@@ -2745,10 +2768,17 @@ export default function ShipmentQuickLedger() {
         scope,
         printDestinationFilter,
       );
+      const driverLabel = resolvePrintDriverLabel(
+        rows,
+        activeSearch,
+        scope,
+        selectedDriver?.name ?? '',
+        scope === 'driver' ? selectedDriver?.name ?? '—' : scopeName,
+      );
       const html = buildQuickLedgerPrintHtml(printRows, {
         title: activeSearch ? `دفتر الشحن — ${activeSearch}` : `دفتر الشحن — ${scopeName}`,
         destinationLabel,
-        driverName: scope === 'driver' ? selectedDriver?.name ?? '—' : scopeName,
+        driverName: driverLabel,
       });
 
       setPrintDialogOpen(false);
@@ -2823,12 +2853,15 @@ export default function ShipmentQuickLedger() {
 
     setDestinationPdfExporting(true);
     try {
-      const rowsForSelectedDriver = destinationPdfRows.filter((row) => {
-        if (destinationPdfDriverKey === ALL_DRIVERS_PDF_OPTION) return true;
-        if (destinationPdfDriverKey.startsWith('id:')) return `id:${row.driver_id ?? ''}` === destinationPdfDriverKey;
-        const label = normalizeName(row.driver_label ?? '') || 'بدون سائق';
-        return `label:${label}` === destinationPdfDriverKey;
-      });
+      const hasSearch = Boolean(normalizeName(searchQuick));
+      const rowsForSelectedDriver = hasSearch
+        ? destinationPdfRows
+        : destinationPdfRows.filter((row) => {
+          if (destinationPdfDriverKey === ALL_DRIVERS_PDF_OPTION) return true;
+          if (destinationPdfDriverKey.startsWith('id:')) return `id:${row.driver_id ?? ''}` === destinationPdfDriverKey;
+          const label = normalizeName(row.driver_label ?? '') || 'بدون سائق';
+          return `label:${label}` === destinationPdfDriverKey;
+        });
       if (!rowsForSelectedDriver.length) {
         showToast('لا توجد أسطر مطابقة للسائق المحدد', 'info');
         return;
@@ -4172,7 +4205,7 @@ export default function ShipmentQuickLedger() {
               {searchQuick.trim() ? (
                 <>
                   {' '}
-                  البحث النشط <strong>«{searchQuick.trim()}»</strong> — ستُطبع وتُحسب محصلاته فقط.
+                  البحث النشط <strong>«{searchQuick.trim()}»</strong> — ستُطبع <strong>كل الأسطر الظاهرة بالبحث</strong> بغض النظر عن السائق.
                 </>
               ) : (
                 ' يمكنك اختيار نطاق السائق أو الجهة عند الحاجة.'
@@ -4184,6 +4217,7 @@ export default function ShipmentQuickLedger() {
                 <select
                   className="form-select w-full"
                   value={printScope}
+                  disabled={Boolean(searchQuick.trim())}
                   onChange={(e) => setPrintScope(e.target.value as 'driver' | 'date' | 'agent' | 'session')}
                 >
                   <option value="date">باليوم كامل (كل السائقين) — موصى به</option>
@@ -4191,6 +4225,11 @@ export default function ShipmentQuickLedger() {
                   <option value="agent">بالوكيل / الجهة</option>
                   {activeSessionId && <option value="session">الإرسالية الحالية فقط</option>}
                 </select>
+                {searchQuick.trim() ? (
+                  <p className="text-xs text-amber-800 mt-1">
+                    البحث نشط — يُطبع كل ما يطابق البحث من كل السائقين. امسح البحث لتقييد الطباعة بسائق واحد.
+                  </p>
+                ) : null}
               </label>
               {printScope === 'driver' && (
                 <label className="form-group block">
@@ -4309,7 +4348,7 @@ export default function ShipmentQuickLedger() {
                   className="form-select w-full"
                   value={destinationPdfDriverKey}
                   onChange={(e) => setDestinationPdfDriverKey(e.target.value)}
-                  disabled={destinationPdfLoading || destinationPdfExporting}
+                  disabled={destinationPdfLoading || destinationPdfExporting || Boolean(searchQuick.trim())}
                 >
                   <option value={ALL_DRIVERS_PDF_OPTION}>كل السائقين</option>
                   {destinationPdfDriverOptions.map((option) => (
@@ -4318,6 +4357,11 @@ export default function ShipmentQuickLedger() {
                     </option>
                   ))}
                 </select>
+                {searchQuick.trim() ? (
+                  <p className="text-xs text-amber-800 mt-1">
+                    البحث نشط «{searchQuick.trim()}» — يُصدَّر كل الأسطر المطابقة من كل السائقين.
+                  </p>
+                ) : null}
               </label>
               <div className="quick-ledger-destination-pdf-meta">
                 <span>خط المصدر: <strong>{trip.line || '—'}</strong></span>

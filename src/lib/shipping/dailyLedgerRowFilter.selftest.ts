@@ -110,12 +110,29 @@ function testPreparePrintDateScopeAllRows() {
   assert(prepared.length === 2, 'date scope keeps all rows');
 }
 
+function testPreparePrintDriverScopeIgnoredWhenSearchActive() {
+  const rows = [
+    sampleRow({ id: '1', destination: 'منبج', driver_id: 'd1', driver_label: 'سائق أ' }),
+    sampleRow({ id: '2', destination: 'منبج', driver_id: 'd2', driver_label: 'سائق ب', row_no: 2 }),
+    sampleRow({ id: '3', destination: 'حلب', driver_id: 'd1', driver_label: 'سائق أ', row_no: 3 }),
+  ];
+  const prepared = prepareLedgerOutputRows(rows, {
+    printScope: 'driver',
+    searchQuery: 'منبج',
+    driverBackendId: 'd1',
+    driverName: 'سائق أ',
+    agents,
+  });
+  assert(prepared.length === 2, 'active search should ignore driver scope and keep all matched rows');
+}
+
 function run() {
   testSearchByAgentName();
   testSearchTotals();
   testChronologicalSort();
   testPreparePrintDateScopeWithSearch();
   testPreparePrintDateScopeAllRows();
+  testPreparePrintDriverScopeIgnoredWhenSearchActive();
   console.log('dailyLedgerRowFilter.selftest: OK');
 }
 
