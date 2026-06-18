@@ -34,6 +34,9 @@ git reset --hard "origin/$BRANCH"
 echo "Installing dependencies"
 PUPPETEER_SKIP_DOWNLOAD=true npm install
 
+echo "Type-checking backend (fail fast before migrate/build)"
+npm run server:check
+
 echo "Ensuring Chromium for server PDF export (Ubuntu)"
 if command -v apt-get >/dev/null 2>&1; then
   if ! command -v chromium-browser >/dev/null 2>&1 && ! command -v chromium >/dev/null 2>&1; then

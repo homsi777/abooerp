@@ -102,7 +102,7 @@ export class BilateralReconciliationService {
     });
     if (!raw) return null;
 
-    const pkg = buildAgentMainBranchReconciliationPackage(raw);
+    const pkg = buildAgentMainBranchReconciliationPackage(raw) as Record<string, any>;
     const previousBalance = money(
       lastApproved?.current_balance ?? legacyLast?.balance_amount ?? 0,
     );

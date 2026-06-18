@@ -10,6 +10,14 @@ function shipmentShippingPriceSql(alias = 's') {
 function shipmentTableShippingPriceSql() {
     return `greatest(case when coalesce(prepaid_amount, 0) > 0 then coalesce(prepaid_amount, 0) + coalesce(transfer_fee, 0) else coalesce(freight_charge, 0) + coalesce(transfer_fee, 0) end, 0)`;
 }
+function resolveAgentReportCurrency(code) {
+    const normalized = String(code ?? 'USD').trim().toUpperCase();
+    return normalized || 'USD';
+}
+function shipmentEffectiveAtSql(alias = '') {
+    const p = alias ? `${alias}.` : '';
+    return `coalesce(${p}effective_date::timestamptz, ${p}created_at)`;
+}
 import { HttpError } from '../utils/errors.js';
 export class AgentRepository {
     async listAgents(companyId, branchId, includeInactive = false) {
@@ -276,6 +284,9 @@ export class AgentRepository {
         }
         return allMatches.rows[0];
     }
+    async getLastAgentReconciliationRecord(companyId, agentId) {
+        return this.getLastAgentReconciliation(companyId, agentId);
+    }
     async getLastAgentReconciliation(companyId, agentId) {
         const result = await pool.query(`
       select
@@ -322,7 +333,8 @@ export class AgentRepository {
     }
     async getAgentFinancialStatement(companyId, agentId, options) {
         const opts = typeof options === 'string' ? { currencyCode: options } : options ?? {};
-        const currencyCode = opts.currencyCode;
+        const reportCurrency = resolveAgentReportCurrency(opts.currencyCode ?? 'USD');
+        const currencyCode = reportCurrency;
         const agent = await this.getAgentById(agentId, companyId);
         if (!agent)
             return null;
@@ -380,7 +392,7 @@ export class AgentRepository {
         and s.agent_id = $2
         and s.deleted_at is null
         and upper(s.status) <> 'CANCELLED'
-        and ($4::text is null or upper(s.original_currency) = upper($4))
+        and upper(coalesce(s.original_currency, 'USD')) = upper($4)
         ${shipmentDateFilters.join(' ')}
       order by coalesce(s.effective_date::timestamptz, s.created_at) desc
       limit 500
@@ -427,9 +439,8 @@ export class AgentRepository {
           or t.agent_id = $2::uuid
         )
         and (
-          $3::text is null
-          or upper(t.currency) = upper($3)
-          or upper(t.agent_commission_currency) = upper($3)
+          upper(coalesce(t.currency, 'USD')) = upper($3)
+          or upper(coalesce(t.agent_commission_currency, t.currency, 'USD')) = upper($3)
         )
         ${transferDateFilters.join(' ')}
       order by coalesce(t.transfer_date, t.created_at) desc
@@ -442,14 +453,14 @@ export class AgentRepository {
         from receipt_vouchers rv
         left join cashboxes cb on cb.id = rv.cashbox_id
         where rv.company_id = $1 and rv.agent_id = $2
-          and ($3::text is null or upper(rv.original_currency) = upper($3))
+          and upper(coalesce(rv.original_currency, 'USD')) = upper($3)
         union all
         select 'payment' as voucher_kind, pv.id, pv.voucher_no, pv.created_at, pv.status, pv.notes,
           pv.original_amount, pv.original_currency, pv.cashbox_id, cb.name as cashbox_name
         from payment_vouchers pv
         left join cashboxes cb on cb.id = pv.cashbox_id
         where pv.company_id = $1 and pv.agent_id = $2
-          and ($3::text is null or upper(pv.original_currency) = upper($3))
+          and upper(coalesce(pv.original_currency, 'USD')) = upper($3)
       ) rows
       order by created_at desc
       limit 500
@@ -467,14 +478,14 @@ export class AgentRepository {
         if (opts.fromAt) {
             summaryValues.push(opts.fromAt);
             const p = summaryValues.length;
-            summaryShipmentDateFilters.push(`and created_at >= $${p}::timestamptz`);
+            summaryShipmentDateFilters.push(`and ${shipmentEffectiveAtSql()} >= $${p}::timestamptz`);
             summaryTransferDateFilters.push(`and coalesce(transfer_date, created_at) >= $${p}::timestamptz`);
             summaryVoucherDateFilters.push(`and created_at >= $${p}::timestamptz`);
         }
         if (opts.toAt) {
             summaryValues.push(opts.toAt);
             const p = summaryValues.length;
-            summaryShipmentDateFilters.push(`and created_at <= $${p}::timestamptz`);
+            summaryShipmentDateFilters.push(`and ${shipmentEffectiveAtSql()} <= $${p}::timestamptz`);
             summaryTransferDateFilters.push(`and coalesce(transfer_date, created_at) <= $${p}::timestamptz`);
             summaryVoucherDateFilters.push(`and created_at <= $${p}::timestamptz`);
         }
@@ -487,7 +498,7 @@ export class AgentRepository {
           coalesce(sum(coalesce(agent_commission_amount_snapshot, round((${shipmentTableShippingPriceSql()}) * coalesce($4::numeric, 0) / 100, 2), 0)) filter (where $3::timestamptz is not null and created_at > $3::timestamptz), 0)::numeric as shipment_commission_since
         from shipments
         where company_id = $1 and agent_id = $2 and deleted_at is null and upper(status) <> 'CANCELLED'
-          and ($5::text is null or upper(original_currency) = upper($5))
+          and upper(coalesce(original_currency, 'USD')) = upper($5)
           ${summaryShipmentDateFilters.join(' ')}
       ),
       transfer_totals as (
@@ -538,7 +549,10 @@ export class AgentRepository {
             or destination_agent_id = $2::uuid
             or agent_id = $2::uuid
           )
-          and ($5::text is null or upper(currency) = upper($5) or upper(agent_commission_currency) = upper($5))
+          and (
+            upper(coalesce(currency, 'USD')) = upper($5)
+            or upper(coalesce(agent_commission_currency, currency, 'USD')) = upper($5)
+          )
           ${summaryTransferDateFilters.join(' ')}
       ),
       receipt_totals as (
@@ -549,7 +563,7 @@ export class AgentRepository {
           coalesce(sum(original_amount) filter (where status = 'confirmed' and $3::timestamptz is not null and created_at > $3::timestamptz), 0)::numeric as receipts_since
         from receipt_vouchers
         where company_id = $1 and agent_id = $2
-          and ($5::text is null or upper(original_currency) = upper($5))
+          and upper(coalesce(original_currency, 'USD')) = upper($5)
           ${summaryVoucherDateFilters.join(' ')}
       ),
       payment_totals as (
@@ -560,7 +574,7 @@ export class AgentRepository {
           coalesce(sum(original_amount) filter (where status = 'confirmed' and $3::timestamptz is not null and created_at > $3::timestamptz), 0)::numeric as payments_since
         from payment_vouchers
         where company_id = $1 and agent_id = $2
-          and ($5::text is null or upper(original_currency) = upper($5))
+          and upper(coalesce(original_currency, 'USD')) = upper($5)
           ${summaryVoucherDateFilters.join(' ')}
       )
       select *
@@ -604,7 +618,7 @@ export class AgentRepository {
         and s.agent_id = $2
         and s.deleted_at is null
         and upper(s.status) <> 'CANCELLED'
-        and ($4::text is null or upper(s.original_currency) = upper($4))
+        and upper(coalesce(s.original_currency, 'USD')) = upper($4)
         ${remittanceDateFilters.join(' ')}
       `, remittanceValues);
         const totalAgentRemittanceDueFromShipments = Number(remittanceResult.rows[0]?.total_remittance_due ?? 0);
@@ -623,8 +637,8 @@ export class AgentRepository {
       where party_type = 'agent'
         and party_id = $1
         and is_reversal = false
-        and ($2::text is null or upper(coalesce(currency_code, original_currency)) = upper($2))
-      `, [agentId, currencyCode ?? null]);
+        and upper(coalesce(currency_code, original_currency, 'USD')) = upper($2)
+      `, [agentId, currencyCode]);
         const movementTotals = movementTotalsResult.rows[0] ?? {};
         const totalShipmentCommission = Number(totals.shipment_commission || 0);
         const totalTransferCommission = Number(totals.transfer_commission || 0);
@@ -639,7 +653,7 @@ export class AgentRepository {
             : totalTransferRemittanceDue;
         const totalAgentCommission = totalShipmentCommission;
         const sinceAgentCommission = sinceShipmentCommission;
-        const detailedStatement = await this.getAgentAccountStatement(companyId, agentId, currencyCode, null);
+        const detailedStatement = await this.getAgentAccountStatement(companyId, agentId, reportCurrency, null);
         const settlementBalance = Number(detailedStatement?.summary.netAgentDue ?? 0);
         const settlementBalanceSince = Number(detailedStatement?.summary.sinceLastReconciliation.netAgentDue ?? settlementBalance);
         const agentBalanceDue = computeAgentBalanceDue({
@@ -651,8 +665,15 @@ export class AgentRepository {
         const accountBalanceDue = Number(detailedStatement?.summary.agentBalanceDue ?? agentBalanceDue);
         return {
             agent,
+            reportCurrency,
             generatedAt: new Date().toISOString(),
             lastReconciliation,
+            accountStatement: detailedStatement
+                ? {
+                    summary: detailedStatement.summary,
+                    rows: detailedStatement.rows,
+                }
+                : { summary: {}, rows: [] },
             summary: {
                 shipmentsCount: Number(totals.shipments_count || 0),
                 transfersCount: Number(totals.transfers_count || 0),
@@ -744,6 +765,7 @@ export class AgentRepository {
         const agent = await this.getAgentById(agentId, companyId);
         if (!agent)
             return null;
+        const reportCurrency = resolveAgentReportCurrency(currencyCode ?? 'USD');
         const lastReconciliation = await this.getLastAgentReconciliation(companyId, agentId);
         const lastReconciledAt = lastReconciliation?.reconciled_at ?? null;
         const result = await pool.query(`
@@ -767,6 +789,7 @@ export class AgentRepository {
         from shipments s
         left join senders_receivers sender on sender.id = s.sender_id
         where s.company_id = $1 and s.agent_id = $2 and s.deleted_at is null and upper(s.status) <> 'CANCELLED'
+          and upper(coalesce(s.original_currency, 'USD')) = upper($4)
 
         union all
 
@@ -785,6 +808,7 @@ export class AgentRepository {
         where pfm.party_type = 'agent'
           and pfm.party_id = $2
           and pfm.is_reversal = false
+          and upper(coalesce(pfm.currency_code, pfm.original_currency, 'USD')) = upper($4)
           and pfm.movement_type in (
             'shipment_shipping_fee',
             'sender_collection_trust',
@@ -813,6 +837,7 @@ export class AgentRepository {
           'سند قبض' as party_name
         from receipt_vouchers rv
         where rv.company_id = $1 and rv.agent_id = $2 and rv.status = 'confirmed'
+          and upper(coalesce(rv.original_currency, 'USD')) = upper($4)
 
         union all
 
@@ -829,6 +854,7 @@ export class AgentRepository {
           'سند دفع' as party_name
         from payment_vouchers pv
         where pv.company_id = $1 and pv.agent_id = $2
+          and upper(coalesce(pv.original_currency, 'USD')) = upper($4)
 
         union all
 
@@ -849,11 +875,11 @@ export class AgentRepository {
         left join payment_vouchers pv on ct.source_voucher_type = 'payment' and pv.id = ct.source_voucher_id
         where ct.company_id = $1 and (ct.agent_id = $2 or cb.agent_id = $2)
           and ct.source_voucher_id is null
+          and upper(coalesce(ct.original_currency, 'USD')) = upper($4)
       ) x
-      where ($4::text is null or upper(x.currency_code) = upper($4))
       order by at desc
       limit $5
-      `, [companyId, agentId, Number(agent.commission_percentage ?? 0), currencyCode ?? null, rowLimit]);
+      `, [companyId, agentId, Number(agent.commission_percentage ?? 0), reportCurrency, rowLimit]);
         const totalDebit = result.rows.reduce((sum, row) => sum + Number(row.debit || 0), 0);
         const totalCredit = result.rows.reduce((sum, row) => sum + Number(row.credit || 0), 0);
         const agentBalanceDue = Math.max(totalDebit - totalCredit, 0);
@@ -865,6 +891,7 @@ export class AgentRepository {
         const sinceAgentBalanceDue = Math.max(sinceDebit - sinceCredit, 0);
         return {
             agent,
+            reportCurrency,
             generatedAt: new Date().toISOString(),
             lastReconciliation,
             summary: {

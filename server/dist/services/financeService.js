@@ -5,6 +5,7 @@ import { env } from '../config/env.js';
 import { ExchangeRateRepository } from '../repositories/exchangeRateRepository.js';
 import { ProfitLossReportService } from './profitLossReportService.js';
 import { AccountingReportsService, buildAgentMainBranchReconciliationPackage, buildHawalaReconciliationPackage, enrichAgentSettlementSummary, } from './accountingReportsService.js';
+import { BilateralReconciliationService } from './bilateralReconciliationService.js';
 const allowedVoucherTransitions = {
     draft: ['confirmed', 'cancelled'],
     confirmed: ['cancelled'],
@@ -37,6 +38,7 @@ export class FinanceService {
     }
     exchangeRateRepository = new ExchangeRateRepository();
     agentPortalVoucherService;
+    bilateralReconciliationService;
     constructor(repository, agentRepository) {
         this.repository = repository;
         this.agentRepository = agentRepository;
@@ -784,5 +786,29 @@ export class FinanceService {
         if (!raw)
             return null;
         return buildAgentMainBranchReconciliationPackage(raw);
+    }
+    bilateralService() {
+        if (!this.agentRepository) {
+            throw new HttpError(500, 'Bilateral reconciliation is not configured.');
+        }
+        if (!this.bilateralReconciliationService) {
+            this.bilateralReconciliationService = new BilateralReconciliationService(this.agentRepository);
+        }
+        return this.bilateralReconciliationService;
+    }
+    async getBilateralReconciliationPreview(companyId, agentId, options) {
+        return this.bilateralService().getPreview(companyId, agentId, options);
+    }
+    async listBilateralReconciliations(companyId, agentId) {
+        return this.bilateralService().list(companyId, agentId);
+    }
+    async getBilateralReconciliationById(companyId, id) {
+        return this.bilateralService().getById(companyId, id);
+    }
+    async saveBilateralReconciliationDraft(companyId, input) {
+        return this.bilateralService().saveDraft(companyId, input);
+    }
+    async approveBilateralReconciliation(companyId, input) {
+        return this.bilateralService().approve(companyId, input);
     }
 }

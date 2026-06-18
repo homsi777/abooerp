@@ -131,7 +131,7 @@ export async function runSeed() {
       insert into roles(code, name, description, is_active)
       values
         ('admin',      'مدير النظام',      'صلاحيات كاملة على جميع الوحدات',   true),
-        ('accountant', 'محاسب',            'عمليات المالية والتقارير',          true),
+        ('accountant', 'محاسب',            'المالية والسندات والحوالات والوكلاء (عرض) والتقارير والعملاء وشحن المراكز (عرض ومتابعة).', true),
         ('manager',    'مدير فرع',         'إدارة الفروع والعمليات',            true),
         ('cashier',    'أمين صندوق',       'عمليات الصناديق',                   true),
         ('operator',   'موظف عمليات',      'عمليات الشحن اليومية',             true),
