@@ -54,6 +54,7 @@ const NAV_MODULES: NavModule[] = [
     id: 'finance', label: 'المالية', icon: '💰',
     children: [
       { label: 'كشف — مركز الكشوف', path: '/finance/statements', icon: '📑', permission: 'finance.read' },
+      { label: 'مطابقة الوكيل ↔ الفرع', path: '/finance/statements/reconciliation/agent-branch', icon: '⚖️', permission: 'finance.read' },
       { label: 'السندات', path: '/finance/vouchers', icon: '📜', permission: 'finance.vouchers.view' },
       { label: 'الصناديق', path: '/finance/cashboxes', icon: '💵', permission: 'finance.cashboxes.view' },
       { label: 'المصاريف', path: '/finance/expenses', icon: '💳', permission: 'finance.read' },
@@ -119,6 +120,7 @@ const NAV_FINANCE_ACCOUNTANT: NavModule = {
   icon: '💰',
   children: [
     { label: 'كشف — مركز الكشوف', path: '/finance/statements', icon: '📑', permission: 'finance.read' },
+    { label: 'مطابقة الوكيل ↔ الفرع', path: '/finance/statements/reconciliation/agent-branch', icon: '⚖️', permission: 'finance.read' },
     { label: 'دفتر الأستاذ — ذمم وأرصدة', path: '/finance/general-ledger', icon: '📒', permission: 'finance.read' },
     { label: 'دفتر اليومية — تفاصيل الحركات', path: '/finance/daily-journal', icon: '📓', permission: 'finance.read' },
     { label: 'ميزان المراجعة', path: '/finance/trial-balance', icon: '⚖️', permission: 'finance.read' },
