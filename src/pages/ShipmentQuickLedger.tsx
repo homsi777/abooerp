@@ -4108,35 +4108,43 @@ export default function ShipmentQuickLedger() {
                 </th>
               )}
               <th>رقم الإيصال</th>
-              <th
-                className={`quick-ledger-sortable-th${destinationSort !== 'none' ? ' is-sorted' : ''}`}
-                onClick={cycleDestinationSort}
-                title={
-                  destinationSort === 'none'
-                    ? 'ترتيب تصاعدي حسب الجهة'
-                    : destinationSort === 'asc'
-                      ? 'ترتيب تنازلي حسب الجهة'
-                      : 'إلغاء الترتيب — العودة للترتيب الأصلي'
-                }
-                aria-sort={
-                  destinationSort === 'none'
-                    ? 'none'
-                    : destinationSort === 'asc'
-                      ? 'ascending'
-                      : 'descending'
-                }
-              >
-                <span className="quick-ledger-sortable-th-inner">
-                  الجهة
-                  {destinationSort === 'asc' ? (
+              {destinationSort === 'asc' ? (
+                <th
+                  className="quick-ledger-sortable-th is-sorted"
+                  onClick={cycleDestinationSort}
+                  title="ترتيب تنازلي حسب الجهة"
+                  aria-sort="ascending"
+                >
+                  <span className="quick-ledger-sortable-th-inner">
+                    الجهة
                     <ArrowUp size={14} aria-hidden />
-                  ) : destinationSort === 'desc' ? (
+                  </span>
+                </th>
+              ) : destinationSort === 'desc' ? (
+                <th
+                  className="quick-ledger-sortable-th is-sorted"
+                  onClick={cycleDestinationSort}
+                  title="إلغاء الترتيب — العودة للترتيب الأصلي"
+                  aria-sort="descending"
+                >
+                  <span className="quick-ledger-sortable-th-inner">
+                    الجهة
                     <ArrowDown size={14} aria-hidden />
-                  ) : (
+                  </span>
+                </th>
+              ) : (
+                <th
+                  className="quick-ledger-sortable-th"
+                  onClick={cycleDestinationSort}
+                  title="ترتيب تصاعدي حسب الجهة"
+                  aria-sort="none"
+                >
+                  <span className="quick-ledger-sortable-th-inner">
+                    الجهة
                     <ArrowUpDown size={14} aria-hidden className="quick-ledger-sort-icon-muted" />
-                  )}
-                </span>
-              </th>
+                  </span>
+                </th>
+              )}
               <th className="col-parcel-type">نوع الطرود</th>
               <th className="col-parcel-count">عدد الطرود</th>
               <th>الوزن كغ</th>
@@ -4314,6 +4322,8 @@ export default function ShipmentQuickLedger() {
                       id={`ledger-pc-${row.id}`}
                       data-ledger-field="true"
                       inputMode="numeric"
+                      title="عدد الطرود"
+                      aria-label="عدد الطرود"
                       value={row.parcelCount}
                       disabled={locked}
                       onFocus={() => setActiveRowId(row.id)}
@@ -4326,6 +4336,8 @@ export default function ShipmentQuickLedger() {
                     <input
                       data-ledger-field="true"
                       inputMode="decimal"
+                      title="الوزن"
+                      aria-label="الوزن"
                       value={row.weightKg}
                       disabled={locked}
                       onFocus={() => setActiveRowId(row.id)}

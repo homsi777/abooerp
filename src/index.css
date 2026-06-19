@@ -531,6 +531,7 @@ body {
   background: rgba(255,255,255,0.12);
   border-color: rgba(255,255,255,0.3);
   color: white;
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
 }
 .db-header-actions .toolbar-btn:hover {
@@ -1668,6 +1669,7 @@ body {
 
 .quick-ledger-table th.quick-ledger-sortable-th {
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
 }
 
