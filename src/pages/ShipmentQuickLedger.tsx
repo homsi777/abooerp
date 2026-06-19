@@ -28,6 +28,19 @@ import { exportLedgerStylePdf } from '../lib/export/ledgerStylePrint';
 import { useToast } from '../components/Toast';
 import { getBackendIdFromSynthetic, phase15Gateway, syntheticEntityId } from '../lib/api/phase15Gateway';
 import { httpClient } from '../lib/api/httpClient';
+import {
+  addDailyLedgerSyncAudit,
+  countPendingDailyLedgerDrafts,
+  isDailyLedgerOfflineStoreAvailable,
+  listDailyLedgerDrafts,
+  markDailyLedgerDraftPending,
+  markDailyLedgerDraftSynced,
+  putDailyLedgerDraft,
+  type DailyLedgerDraftContext,
+  type DailyLedgerDraftRecord,
+} from '../lib/offline/dailyLedgerOfflineStore';
+import { createOfflineId } from '../lib/offline/indexedDb';
+import { useCloudConnectionStatus } from '../lib/offline/useCloudConnectionStatus';
 import { isElectronRuntime } from '../lib/runtime/runtimeMode';
 import { useAuth } from '../context/AuthProvider';
 import SmartPartyInput from '../components/SmartPartyInput';
@@ -84,6 +97,7 @@ import type { Branch, City, Customer, Driver, GoodsType, Shipment, Tariff, Vehic
 
 type LedgerRow = {
   id: number;
+  clientRowId: string;
   serverRowNo?: number;
   sessionDriverId?: number;
   sessionId?: string;
@@ -167,6 +181,7 @@ const fallbackDestinations = ['دمشق', 'حلب', 'حمص', 'حماة', 'ال�
 function createEmptyRow(id: number): LedgerRow {
   return {
     id,
+    clientRowId: createOfflineId('ledger_row'),
     dbId: undefined,
     updatedAt: undefined,
     postedShipmentId: null,
@@ -708,6 +723,7 @@ export default function ShipmentQuickLedger() {
   const navigate = useNavigate();
   const { showToast } = useToast();
   const { user, activeBranchId, setActiveBranch, hasPermission } = useAuth();
+  const { status: cloudStatus } = useCloudConnectionStatus();
   const [rows, setRows] = useState<LedgerRow[]>(() => [createEmptyRow(1)]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [cities, setCities] = useState<City[]>([]);
@@ -785,7 +801,10 @@ export default function ShipmentQuickLedger() {
   const [includeLoaded, setIncludeLoaded] = useState(true);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteSyncedCount, setRemoteSyncedCount] = useState(0);
+  const [pendingLocalDraftCount, setPendingLocalDraftCount] = useState(0);
+  const [offlineStoreAvailable, setOfflineStoreAvailable] = useState(true);
   const loadGenerationRef = useRef(0);
+  const restoredDraftScopeRef = useRef<string>('');
   const canViewAllLedgerEntriesRef = useRef(false);
   const ledgerBranchModeRef = useRef<'all' | 'single'>('single');
   const [ledgerBranchMode, setLedgerBranchMode] = useState<'all' | 'single'>('single');
@@ -1252,6 +1271,37 @@ export default function ShipmentQuickLedger() {
     );
   }, [activeBranchId, branchSearch, branches, canViewAllLedgerEntries, ledgerBranchMode]);
 
+  const activeDraftContext = useMemo<DailyLedgerDraftContext | null>(() => {
+    if (canViewAllLedgerEntries && ledgerBranchMode === 'all') return null;
+    if (!activeBranchId || !trip.date || !trip.line) return null;
+    return {
+      branchId: activeBranchId,
+      ledgerDate: trip.date,
+      lineLabel: trip.line,
+      sessionId: activeSessionId ?? null,
+    };
+  }, [activeBranchId, activeSessionId, canViewAllLedgerEntries, ledgerBranchMode, trip.date, trip.line]);
+
+  const draftScopeKey = useMemo(() => {
+    if (!activeDraftContext) return '';
+    return [
+      activeDraftContext.branchId,
+      activeDraftContext.ledgerDate,
+      activeDraftContext.lineLabel,
+      activeDraftContext.sessionId ?? '',
+    ].join('|');
+  }, [activeDraftContext]);
+
+  const isCloudOffline = cloudStatus === 'offline';
+
+  const requireCloudConnection = (
+    message = 'هذا الإجراء يحتاج اتصالاً بالسحابة. سيتم حفظ الإدخال محلياً فقط حتى عودة الاتصال.',
+  ) => {
+    if (!isCloudOffline) return true;
+    showToast(message, 'error');
+    return false;
+  };
+
   /** branchLabel يُحفظ مع السطر للخادم — لا يُعرض (الخط = مصدر البضاعة). */
 
   /** يعمل المستخدم على تاريخ سابق — تنبيه أن الإدخال تصحيح ويستلزم إعادة الطباعة */
@@ -1262,6 +1312,7 @@ export default function ShipmentQuickLedger() {
 
   const mapRemoteRowToLocal = (remote: RemoteDailyLedgerRow, displayId: number): LedgerRow => ({
     id: displayId,
+    clientRowId: createOfflineId('ledger_row'),
     serverRowNo: remote.row_no,
     sessionDriverId: remote.driver_id ? syntheticEntityId(remote.driver_id) : undefined,
     sessionId: remote.session_id ?? undefined,
@@ -1346,6 +1397,117 @@ export default function ShipmentQuickLedger() {
     return [...consolidated, ...buildEntrySlotRows(nextEntryId, origin)];
   };
 
+  const rowToDraftPayload = (row: LedgerRow): Record<string, unknown> => ({
+    receiptNo: row.receiptNo,
+    origin: row.origin,
+    destination: row.destination,
+    parcelType: row.parcelType,
+    parcelCount: row.parcelCount,
+    weightKg: row.weightKg,
+    sender: row.sender,
+    receiver: row.receiver,
+    collectAmount: row.collectAmount,
+    prepaidAmount: row.prepaidAmount,
+    receiverCollect: row.receiverCollect,
+    transferServiceFee: row.transferServiceFee,
+    collectManual: row.collectManual ?? false,
+    agentId: row.agentId,
+    agentName: row.agentName,
+    notes: row.notes,
+    branchBackendId: row.branchBackendId,
+    branchLabel: row.branchLabel,
+  });
+
+  const draftToLocalRow = (draft: DailyLedgerDraftRecord, displayId: number): LedgerRow => {
+    const payload = draft.payload as Partial<LedgerRow>;
+    return {
+      ...createEmptyRow(displayId),
+      clientRowId: draft.clientRowId,
+      dbId: draft.serverRowId ?? undefined,
+      serverRowNo: draft.rowNo,
+      sessionId: draft.sessionId ?? undefined,
+      receiptNo: String(payload.receiptNo ?? ''),
+      origin: String(payload.origin ?? resolveTripOrigin(draft.lineLabel)),
+      destination: String(payload.destination ?? ''),
+      parcelType: String(payload.parcelType ?? ''),
+      parcelCount: String(payload.parcelCount ?? ''),
+      weightKg: String(payload.weightKg ?? ''),
+      sender: String(payload.sender ?? ''),
+      receiver: String(payload.receiver ?? ''),
+      collectAmount: String(payload.collectAmount ?? ''),
+      prepaidAmount: String(payload.prepaidAmount ?? ''),
+      receiverCollect: String(payload.receiverCollect ?? ''),
+      transferServiceFee: String(payload.transferServiceFee ?? ''),
+      collectManual: Boolean(payload.collectManual),
+      agentId: typeof payload.agentId === 'number' ? payload.agentId : undefined,
+      agentName: typeof payload.agentName === 'string' ? payload.agentName : '',
+      notes: String(payload.notes ?? ''),
+      branchBackendId: typeof payload.branchBackendId === 'string' ? payload.branchBackendId : draft.branchId,
+      branchLabel: typeof payload.branchLabel === 'string' ? payload.branchLabel : resolveBranchLabelFromList(branches, draft.branchId),
+    };
+  };
+
+  const refreshPendingDraftCount = async (context = activeDraftContext) => {
+    if (!context) {
+      setPendingLocalDraftCount(0);
+      return;
+    }
+    try {
+      setPendingLocalDraftCount(await countPendingDailyLedgerDrafts(context));
+    } catch {
+      setPendingLocalDraftCount(0);
+    }
+  };
+
+  const restoreLocalDraftsForContext = async (
+    context: DailyLedgerDraftContext,
+    remoteValues: RemoteDailyLedgerRow[],
+    baseRows: LedgerRow[],
+  ) => {
+    if (!offlineStoreAvailable) return baseRows;
+    const restoreKey = `${context.branchId}|${context.ledgerDate}|${context.lineLabel}|${context.sessionId ?? ''}`;
+    if (restoredDraftScopeRef.current === restoreKey) return baseRows;
+
+    const serverIds = new Set(remoteValues.map((row) => row.id));
+    const serverReceipts = new Set(
+      remoteValues.map((row) => normalizeReceiptNo(row.receipt_no ?? '')).filter(Boolean),
+    );
+    const localClientIds = new Set(baseRows.map((row) => row.clientRowId));
+
+    try {
+      const drafts = await listDailyLedgerDrafts(context);
+      const restoreCandidates = drafts.filter((draft) => {
+        if (draft.status === 'synced') return false;
+        if (localClientIds.has(draft.clientRowId)) return false;
+        if (draft.serverRowId && serverIds.has(draft.serverRowId)) return false;
+        const receipt = normalizeReceiptNo(draft.receiptNo ?? String(draft.payload.receiptNo ?? ''));
+        if (receipt && serverReceipts.has(receipt)) return false;
+        return true;
+      });
+      if (!restoreCandidates.length) {
+        restoredDraftScopeRef.current = restoreKey;
+        await refreshPendingDraftCount(context);
+        return baseRows;
+      }
+
+      const nonPlaceholder = baseRows.filter(isRowStarted);
+      const maxId = nonPlaceholder.reduce((max, row) => Math.max(max, row.id), 0);
+      const restoredRows = restoreCandidates.map((draft, index) => draftToLocalRow(draft, maxId + index + 1));
+      const merged = appendTrailingEntrySlot([...nonPlaceholder, ...restoredRows]);
+      restoredDraftScopeRef.current = restoreKey;
+      showToast(`تم استعادة ${restoredRows.length} صف محفوظ محلياً على هذا الجهاز.`, 'info');
+      await addDailyLedgerSyncAudit({
+        eventType: 'draft_restore',
+        message: `Restored ${restoredRows.length} local daily ledger draft rows.`,
+      });
+      await refreshPendingDraftCount(context);
+      return merged;
+    } catch (error) {
+      console.warn('[daily-ledger] local draft restore failed', error);
+      return baseRows;
+    }
+  };
+
   const loadRemoteRows = async (options?: { preserveSessionId?: string | null }) => {
     const branchId = activeBranchIdRef.current;
     const currentTrip = tripRef.current;
@@ -1397,7 +1559,20 @@ export default function ShipmentQuickLedger() {
       setRemoteSyncedCount(remoteValues.length);
       setReprintRequired(remoteValues.some((row) => row.session_reprint_required === true));
       setRemoteRowsRaw(remoteValues);
-      setRows(buildDisplayRowsFromRemote(remoteValues));
+      const displayRows = buildDisplayRowsFromRemote(remoteValues);
+      const draftContext = viewAllBranches
+        ? null
+        : {
+            branchId: branchId!,
+            ledgerDate: currentTrip.date,
+            lineLabel: currentTrip.line,
+            sessionId: options?.preserveSessionId ?? null,
+          };
+      const rowsWithDrafts = draftContext
+        ? await restoreLocalDraftsForContext(draftContext, remoteValues, displayRows)
+        : displayRows;
+      if (generation !== loadGenerationRef.current) return;
+      setRows(rowsWithDrafts);
     } catch (error) {
       if (generation === loadGenerationRef.current) {
         showToast(error instanceof Error ? error.message : 'تعذر تحديث دفتر الشحن اليومي من الشبكة', 'error');
@@ -1408,6 +1583,56 @@ export default function ShipmentQuickLedger() {
       }
     }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    void isDailyLedgerOfflineStoreAvailable().then((available) => {
+      if (cancelled) return;
+      setOfflineStoreAvailable(available);
+      if (!available) {
+        showToast('التخزين المحلي غير متاح في هذا المتصفح. سيبقى الدفتر يعمل، لكن المسودات المحلية قد لا تُستعاد بعد التحديث.', 'error');
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [showToast]);
+
+  useEffect(() => {
+    if (!offlineStoreAvailable || !activeDraftContext) return;
+    const context = activeDraftContext;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const drafts = rowsRef.current.filter((row) => {
+          if (row.loadedAt || row.postedShipmentId) return false;
+          return isRowStarted(row);
+        });
+
+        for (const row of drafts) {
+          const record: DailyLedgerDraftRecord = {
+            clientRowId: row.clientRowId,
+            serverRowId: row.dbId ?? null,
+            branchId: context.branchId,
+            ledgerDate: context.ledgerDate,
+            lineLabel: context.lineLabel,
+            sessionId: row.sessionId ?? context.sessionId ?? null,
+            rowNo: row.serverRowNo ?? row.id,
+            receiptNo: row.receiptNo,
+            payload: rowToDraftPayload(row),
+            status: isCloudOffline ? 'pending_sync' : row.dbId ? 'synced' : 'draft',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            lastError: null,
+          };
+          await putDailyLedgerDraft(record);
+        }
+        await refreshPendingDraftCount(context);
+      })().catch((error) => {
+        console.warn('[daily-ledger] local draft persistence failed', error);
+      });
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [activeDraftContext, draftScopeKey, isCloudOffline, offlineStoreAvailable, rows]);
 
   useEffect(() => {
     if (loadingRefs) return;
@@ -1753,6 +1978,11 @@ export default function ShipmentQuickLedger() {
     if (!row) return;
     if (receiptEditingRowIdRef.current === displayRowId) return;
     if (!shouldPersistRow(row)) return;
+    if (isCloudOffline) {
+      await markDailyLedgerDraftPending(row.clientRowId, 'لا يوجد اتصال بالسحابة. تم حفظ السطر محلياً.').catch(() => undefined);
+      await refreshPendingDraftCount();
+      return;
+    }
     const dup = findReceiptConflictForRow(row, rowsRef.current);
     if (dup) {
       const message = describeReceiptConflict(rowsRef.current, row, dup);
@@ -1838,9 +2068,17 @@ export default function ShipmentQuickLedger() {
           return mapped;
         });
 
+        if (latestRow.clientRowId) {
+          await markDailyLedgerDraftSynced(latestRow.clientRowId, saved.id);
+          await refreshPendingDraftCount();
+        }
         syncPostedShipmentInBackground(latestRow, saved, currentTrip);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'تعذر حفظ السطر';
+        if (latestRow.clientRowId) {
+          await markDailyLedgerDraftPending(latestRow.clientRowId, message).catch(() => undefined);
+          await refreshPendingDraftCount();
+        }
         quickLedgerLog.log('error', 'autosave', message, logRowContext(latestRow));
         showToast(message, 'error');
         throw error;
@@ -2360,6 +2598,7 @@ export default function ShipmentQuickLedger() {
 
   const confirmCancelActiveSession = async () => {
     if (!activeSessionId || sessionSwitching || cancelingSession) return;
+    if (!requireCloudConnection('إلغاء الإرسالية يحتاج اتصالاً بالسحابة.')) return;
     if (transferMode) exitTransferMode();
     if (deleteMode) exitDeleteMode();
 
@@ -2413,6 +2652,7 @@ export default function ShipmentQuickLedger() {
   };
 
   const openTransferDialog = async () => {
+    if (!requireCloudConnection('نقل الإرسالية يحتاج اتصالاً بالسحابة.')) return;
     if (!selectedTransferRowIds.length) {
       showToast('يجب تحديد سطر واحد على الأقل', 'error');
       return;
@@ -2460,6 +2700,7 @@ export default function ShipmentQuickLedger() {
   };
 
   const confirmTransfer = async () => {
+    if (!requireCloudConnection('تأكيد نقل الإرسالية يحتاج اتصالاً بالسحابة.')) return;
     const dbIds = selectedTransferRows.map((row) => row.dbId).filter((id): id is string => Boolean(id));
     if (!dbIds.length) {
       showToast('لا توجد أسطر محفوظة للنقل', 'error');
@@ -2535,6 +2776,11 @@ export default function ShipmentQuickLedger() {
     }
     if (selected.some((row) => row.loadedAt)) {
       showToast('لا يمكن حذف أسطر محمّلة على بيان', 'error');
+      return;
+    }
+
+    if (isCloudOffline && selected.some((row) => row.dbId)) {
+      showToast('حذف الصفوف المحفوظة على السحابة يحتاج اتصالاً. يمكنك حذف الصفوف المحلية غير المتزامنة فقط أثناء الانقطاع.', 'error');
       return;
     }
 
@@ -2691,6 +2937,7 @@ export default function ShipmentQuickLedger() {
     printedRows: RemoteDailyLedgerRow[],
     printScopeLabel: string,
   ) => {
+    if (isCloudOffline) return;
     const bySession = new Map<string, { rowCount: number; piecesCount: number; weightKg: number }>();
     for (const row of printedRows) {
       const sessionId = row.session_id;
@@ -2934,6 +3181,9 @@ export default function ShipmentQuickLedger() {
   };
 
   const saveRows = async () => {
+    if (!requireCloudConnection('حفظ الشحنات على السحابة يحتاج اتصالاً. ستبقى الصفوف محفوظة محلياً بانتظار المزامنة.')) {
+      return;
+    }
     if (!activeBranchId) {
       showToast('يرجى اختيار الفرع قبل حفظ الشحنات', 'error');
       return;
@@ -3373,6 +3623,14 @@ export default function ShipmentQuickLedger() {
     }
   };
 
+  const cloudStatusMessage =
+    cloudStatus === 'online'
+      ? 'متصل بالسحابة — الحفظ يعمل مباشرة.'
+      : cloudStatus === 'checking'
+        ? 'جاري فحص الاتصال بالسحابة...'
+        : 'غير متصل بالسحابة — يمكنك متابعة إدخال الشحنات، وسيتم حفظها على هذا الجهاز ومزامنتها لاحقاً عند عودة الاتصال.';
+  const selectedDeleteHasServerRows = rows.some((row) => selectedDeleteRowIds.includes(row.id) && Boolean(row.dbId));
+
   return (
     <div className="quick-ledger-page" dir="rtl">
       <button
@@ -3384,6 +3642,12 @@ export default function ShipmentQuickLedger() {
       >
         <HelpCircle size={22} />
       </button>
+      <div className={`quick-ledger-cloud-status is-${cloudStatus}`} role="status" aria-live="polite">
+        <span>{cloudStatusMessage}</span>
+        {pendingLocalDraftCount > 0 ? (
+          <strong>{`يوجد ${pendingLocalDraftCount} صف بانتظار المزامنة.`}</strong>
+        ) : null}
+      </div>
       <section className="quick-ledger-toolbar">
         <div>
           <div className="quick-ledger-eyebrow">إدخال سريع للشحنات</div>
@@ -3506,7 +3770,7 @@ export default function ShipmentQuickLedger() {
             <button
               type="button"
               onClick={() => requestCancelActiveSession()}
-              disabled={sessionSwitching || cancelingSession}
+              disabled={sessionSwitching || cancelingSession || isCloudOffline}
               title="حلّ الإرسالية وإرجاع أسطرها إلى «الكل» دون حذف البيانات"
             >
               <X size={16} />
@@ -3522,7 +3786,7 @@ export default function ShipmentQuickLedger() {
                 <button
                   type="button"
                   className="primary"
-                  disabled={transferring || !selectedTransferRowIds.length}
+                  disabled={transferring || isCloudOffline || !selectedTransferRowIds.length}
                   onClick={() => void openTransferDialog()}
                 >
                   <Truck size={16} />
@@ -3530,7 +3794,7 @@ export default function ShipmentQuickLedger() {
                 </button>
               </>
             ) : canLedgerDeleteRows && deleteMode ? null : !deleteMode ? (
-              <button type="button" onClick={enterTransferMode}>
+              <button type="button" onClick={enterTransferMode} disabled={isCloudOffline}>
                 <Truck size={16} />
                 نقل إرسالية
               </button>
@@ -3545,7 +3809,7 @@ export default function ShipmentQuickLedger() {
                 <button
                   type="button"
                   className="danger"
-                  disabled={deletingRows || !selectedDeleteRowIds.length}
+                  disabled={deletingRows || !selectedDeleteRowIds.length || (isCloudOffline && selectedDeleteHasServerRows)}
                   onClick={() => setDeleteConfirmOpen(true)}
                 >
                   <Trash2 size={16} />
@@ -3575,8 +3839,8 @@ export default function ShipmentQuickLedger() {
               type="button"
               className="primary"
               onClick={() => void saveRows()}
-              disabled={saving || loadingRefs || !activeSessionId}
-              title={!activeSessionId ? SESSION_SCOPE_REQUIRED_MSG : undefined}
+              disabled={saving || loadingRefs || !activeSessionId || isCloudOffline}
+              title={isCloudOffline ? 'الحفظ على السحابة يحتاج اتصالاً. الصفوف المحلية بانتظار المزامنة.' : !activeSessionId ? SESSION_SCOPE_REQUIRED_MSG : undefined}
             >
               <Save size={16} />
               {saving
@@ -4146,7 +4410,12 @@ export default function ShipmentQuickLedger() {
               <button type="button" onClick={() => setDeleteConfirmOpen(false)} disabled={deletingRows}>
                 إلغاء
               </button>
-              <button type="button" className="danger" onClick={() => void deleteSelectedRows()} disabled={deletingRows}>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => void deleteSelectedRows()}
+                disabled={deletingRows || (isCloudOffline && selectedDeleteHasServerRows)}
+              >
                 {deletingRows ? 'جاري الحذف...' : 'تأكيد الحذف'}
               </button>
             </div>
@@ -4178,7 +4447,7 @@ export default function ShipmentQuickLedger() {
                 type="button"
                 className="danger"
                 onClick={() => void confirmCancelActiveSession()}
-                disabled={cancelingSession}
+                disabled={cancelingSession || isCloudOffline}
               >
                 {cancelingSession ? 'جاري الإلغاء...' : 'تأكيد إلغاء الإرسالية'}
               </button>
