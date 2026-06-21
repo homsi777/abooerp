@@ -22,9 +22,9 @@ import com.example.ui.home.HomeViewModel
 import com.example.ui.home.ProfileScreen
 import com.example.ui.home.ProfileViewModel
 import com.example.ui.shipments.ShipmentDetailsScreen
-import com.example.ui.shipments.ShipmentsListScreen
-import com.example.ui.shipments.ShipmentsState
-import com.example.ui.shipments.ShipmentsViewModel
+import com.example.ui.documentation.DocumentationDetailScreen
+import com.example.ui.documentation.DocumentationScreen
+import com.example.ui.documentation.DocumentationViewModel
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -39,6 +39,10 @@ object ShipmentsRoute
 data class ShipmentDetailsRoute(val id: String)
 @Serializable
 object FinanceRoute
+@Serializable
+object DocumentationRoute
+@Serializable
+data class DocumentationDetailRoute(val id: String)
 
 @Composable
 fun AppNavigation() {
@@ -51,6 +55,7 @@ fun AppNavigation() {
 
     // Create ViewModel scoped to NavHost (or parent) to share state
     val shipmentsViewModel: ShipmentsViewModel = viewModel(factory = ShipmentsViewModel.Factory(appContainer.apiService))
+    val documentationViewModel: DocumentationViewModel = viewModel(factory = DocumentationViewModel.Factory(appContainer.apiService))
 
     NavHost(navController = navController, startDestination = startDestination) {
         composable<LoginRoute> {
@@ -70,6 +75,7 @@ fun AppNavigation() {
                 viewModel = homeViewModel,
                 onNavigateToShipments = { navController.navigate(ShipmentsRoute) },
                 onNavigateToFinance = { navController.navigate(FinanceRoute) },
+                onNavigateToDocumentation = { navController.navigate(DocumentationRoute) },
                 onNavigateToProfile = { navController.navigate(ProfileRoute) },
                 onLogout = {
                     authViewModel.logout()
@@ -134,6 +140,27 @@ fun AppNavigation() {
                 viewModel = financeViewModel,
                 onBack = { navController.popBackStack() },
                 onOpenShipment = { shipmentId -> navController.navigate(ShipmentDetailsRoute(shipmentId)) },
+            )
+        }
+
+        composable<DocumentationRoute> {
+            DocumentationScreen(
+                viewModel = documentationViewModel,
+                onBack = { navController.popBackStack() },
+                onOpenDetail = { id ->
+                    documentationViewModel.loadDetail(id)
+                    navController.navigate(DocumentationDetailRoute(id))
+                },
+            )
+        }
+
+        composable<DocumentationDetailRoute> {
+            DocumentationDetailScreen(
+                viewModel = documentationViewModel,
+                onBack = {
+                    documentationViewModel.clearDetail()
+                    navController.popBackStack()
+                },
             )
         }
     }

@@ -13,6 +13,8 @@ import { HttpError } from '../utils/errors.js';
 import { AuditService } from '../services/auditService.js';
 import { emit } from '../events/eventBus.js';
 import { calculateShipmentFinancialBreakdown } from '../utils/shipmentFinancialBreakdown.js';
+import type { DailyLedgerService } from '../services/dailyLedgerService.js';
+import { computeAgentTransitStatus } from '../utils/agentDocumentationScope.js';
 
 const actionSchema = z.object({
   note: z.string().max(400).optional(),
@@ -338,6 +340,7 @@ export function createAgentPortalRouter(
   financeService: FinanceService,
   transfersService: TransfersService,
   agents: AgentRepository,
+  dailyLedgerService: DailyLedgerService,
 ) {
   const router = Router();
   const auditService = new AuditService();
@@ -751,5 +754,50 @@ export function createAgentPortalRouter(
     }),
   );
 
+  const documentationQuerySchema = z.object({
+    dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    searchQuery: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(200).optional(),
+    offset: z.coerce.number().int().min(0).optional(),
+  });
+
+  router.get(
+    '/documentation',
+    requirePermissions(['agent_portal.view']),
+    asyncHandler(async (req, res) => {
+      requireAgentPortalContext(req);
+      const scope = parseDataScope(req);
+      const query = documentationQuerySchema.parse(req.query);
+      const rows = await dailyLedgerService.listAgentPrintDocuments(scope, query);
+      res.json({
+        success: true,
+        data: rows.map((row) => {
+          const transit = computeAgentTransitStatus(String(row.ledger_date), String(row.printed_at));
+          return {
+            ...row,
+            transit_status: transit.transitStatus,
+            transit_status_label: transit.transitStatusLabel,
+          };
+        }),
+      });
+    }),
+  );
+
+  router.get(
+    '/documentation/:id',
+    requirePermissions(['agent_portal.view']),
+    asyncHandler(async (req, res) => {
+      requireAgentPortalContext(req);
+      const scope = parseDataScope(req);
+      const document = await dailyLedgerService.getAgentPrintDocument(scope, String(req.params.id));
+      if (!document) {
+        throw new HttpError(404, 'DOCUMENT_NOT_FOUND');
+      }
+      res.json({ success: true, data: document });
+    }),
+  );
+
   return router;
 }
+

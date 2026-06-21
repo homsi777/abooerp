@@ -1,4 +1,5 @@
 import { HttpError } from '../utils/errors.js';
+import { agentDestinationHints, computeAgentTransitStatus, destinationMatchesAgentHints, filterRowsForAgent, } from '../utils/agentDocumentationScope.js';
 export class DailyLedgerService {
     repo;
     shipmentPosting;
@@ -42,5 +43,72 @@ export class DailyLedgerService {
     }
     recordSessionPrint(scope, input) {
         return this.repo.recordSessionPrint(scope, input);
+    }
+    createPrintDocument(scope, input) {
+        return this.repo.createPrintDocument(scope, input);
+    }
+    listPrintDocuments(scope, filters) {
+        return this.repo.listPrintDocuments(scope, filters);
+    }
+    getPrintDocument(scope, documentId) {
+        return this.repo.getPrintDocument(scope, documentId);
+    }
+    listAgentPrintDocuments(scope, filters) {
+        const hints = agentDestinationHints(scope);
+        if (!scope.companyId || !hints.length) {
+            return Promise.resolve([]);
+        }
+        return this.repo.listAgentPrintDocuments(scope, filters, hints);
+    }
+    async getAgentPrintDocument(scope, documentId) {
+        const hints = agentDestinationHints(scope);
+        if (!hints.length) {
+            throw new HttpError(403, 'AGENT_NOT_LINKED');
+        }
+        const doc = await this.repo.getPrintDocument(scope, documentId);
+        if (!doc)
+            return null;
+        const raw = doc;
+        const destinationLabel = String(raw.destination_label ?? raw.destinationLabel ?? '');
+        const searchQuery = String(raw.search_query ?? raw.searchQuery ?? '');
+        const headerMatch = destinationMatchesAgentHints(destinationLabel, hints) ||
+            destinationMatchesAgentHints(searchQuery, hints);
+        const snapshot = (raw.rows_snapshot ?? raw.rowsSnapshot ?? []);
+        const filteredRows = filterRowsForAgent(snapshot, hints);
+        if (!headerMatch && !filteredRows.length) {
+            return null;
+        }
+        const totals = filteredRows.reduce((acc, row) => {
+            acc.rowCount += 1;
+            acc.piecesCount += Number(row.parcelCount ?? 0) || 0;
+            acc.weightKg += Number(String(row.weightKg ?? '').replace(/[^\d.-]/g, '')) || 0;
+            acc.collectTotalUsd += Number(String(row.collectAmountUsd ?? '').replace(/[^\d.-]/g, '')) || 0;
+            acc.prepaidTotalUsd += Number(String(row.prepaidAmountUsd ?? '').replace(/[^\d.-]/g, '')) || 0;
+            acc.hawalaTotalUsd += Number(String(row.hawalaAmountUsd ?? '').replace(/[^\d.-]/g, '')) || 0;
+            acc.transferFeeTotalUsd += Number(String(row.transferServiceFeeUsd ?? '').replace(/[^\d.-]/g, '')) || 0;
+            return acc;
+        }, {
+            rowCount: 0,
+            piecesCount: 0,
+            weightKg: 0,
+            collectTotalUsd: 0,
+            prepaidTotalUsd: 0,
+            hawalaTotalUsd: 0,
+            transferFeeTotalUsd: 0,
+        });
+        const transit = computeAgentTransitStatus(String(raw.ledger_date ?? raw.ledgerDate ?? ''), String(raw.printed_at ?? raw.printedAt ?? ''));
+        return {
+            ...doc,
+            rows_snapshot: filteredRows,
+            row_count: totals.rowCount,
+            pieces_count: totals.piecesCount,
+            weight_kg: totals.weightKg,
+            collect_total_usd: totals.collectTotalUsd,
+            prepaid_total_usd: totals.prepaidTotalUsd,
+            hawala_total_usd: totals.hawalaTotalUsd,
+            transfer_fee_total_usd: totals.transferFeeTotalUsd,
+            transit_status: transit.transitStatus,
+            transit_status_label: transit.transitStatusLabel,
+        };
     }
 }

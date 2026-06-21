@@ -371,3 +371,59 @@ data class CreateAgentVoucherRequest(
     val currency: String = "USD",
     val description: String,
 )
+
+@JsonClass(generateAdapter = false)
+data class AgentDocumentationSummary(
+    val id: String,
+    @Json(name = "ledger_date") val ledgerDate: String? = null,
+    @Json(name = "ledger_date_to") val ledgerDateTo: String? = null,
+    @Json(name = "driver_label") val driverLabel: String? = null,
+    @Json(name = "destination_label") val destinationLabel: String? = null,
+    @Json(name = "origin_label") val originLabel: String? = null,
+    @Json(name = "line_label") val lineLabel: String? = null,
+    @Json(name = "branch_name") val branchName: String? = null,
+    @Json(name = "row_count") val rowCount: Int? = 0,
+    @Json(name = "pieces_count") val piecesCount: Int? = 0,
+    @Json(name = "weight_kg") val weightKg: String? = null,
+    @Json(name = "collect_total_usd") val collectTotalUsd: String? = null,
+    @Json(name = "printed_at") val printedAt: String? = null,
+    @Json(name = "transit_status") val transitStatus: String? = null,
+    @Json(name = "transit_status_label") val transitStatusLabel: String? = null,
+    val title: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class AgentDocumentationRow(
+    @Json(name = "rowId") val rowId: String? = null,
+    @Json(name = "rowNo") val rowNo: Int? = null,
+    @Json(name = "receiptNo") val receiptNo: String? = null,
+    val destination: String? = null,
+    @Json(name = "parcelType") val parcelType: String? = null,
+    @Json(name = "parcelCount") val parcelCount: Int? = null,
+    @Json(name = "weightKg") val weightKg: String? = null,
+    @Json(name = "senderName") val senderName: String? = null,
+    @Json(name = "receiverName") val receiverName: String? = null,
+    @Json(name = "collectAmountUsd") val collectAmountUsd: String? = null,
+    @Json(name = "prepaidAmountUsd") val prepaidAmountUsd: String? = null,
+    @Json(name = "hawalaAmountUsd") val hawalaAmountUsd: String? = null,
+    @Json(name = "transferServiceFeeUsd") val transferServiceFeeUsd: String? = null,
+    @Json(name = "driverLabel") val driverLabel: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class AgentDocumentationDetail(
+    val id: String,
+    @Json(name = "ledger_date") val ledgerDate: String? = null,
+    @Json(name = "driver_label") val driverLabel: String? = null,
+    @Json(name = "destination_label") val destinationLabel: String? = null,
+    @Json(name = "origin_label") val originLabel: String? = null,
+    @Json(name = "branch_name") val branchName: String? = null,
+    @Json(name = "row_count") val rowCount: Int? = 0,
+    @Json(name = "pieces_count") val piecesCount: Int? = 0,
+    @Json(name = "weight_kg") val weightKg: String? = null,
+    @Json(name = "collect_total_usd") val collectTotalUsd: String? = null,
+    @Json(name = "printed_at") val printedAt: String? = null,
+    @Json(name = "transit_status_label") val transitStatusLabel: String? = null,
+    @Json(name = "rows_snapshot") val rowsSnapshot: List<AgentDocumentationRow>? = null,
+    val title: String? = null,
+)

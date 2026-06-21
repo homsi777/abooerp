@@ -76,4 +76,15 @@ interface ApiService {
 
     @POST("agent-portal/vouchers")
     suspend fun createAgentVoucher(@Body request: CreateAgentVoucherRequest): ApiResponse<AgentVoucher>
+
+    @GET("agent-portal/documentation")
+    suspend fun getAgentDocumentation(
+        @Query("dateFrom") dateFrom: String? = null,
+        @Query("dateTo") dateTo: String? = null,
+        @Query("searchQuery") searchQuery: String? = null,
+        @Query("limit") limit: Int? = null,
+    ): ApiResponse<List<AgentDocumentationSummary>>
+
+    @GET("agent-portal/documentation/{id}")
+    suspend fun getAgentDocumentationDetail(@Path("id") id: String): ApiResponse<AgentDocumentationDetail>
 }

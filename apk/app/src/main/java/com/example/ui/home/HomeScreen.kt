@@ -11,6 +11,7 @@ import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.Money
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -29,6 +30,7 @@ fun HomeScreen(
     viewModel: HomeViewModel,
     onNavigateToShipments: () -> Unit,
     onNavigateToFinance: () -> Unit,
+    onNavigateToDocumentation: () -> Unit,
     onNavigateToProfile: () -> Unit,
     onLogout: () -> Unit
 ) {
@@ -183,6 +185,7 @@ fun HomeScreen(
                             verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
                             item { QuickActionButton("الشحنات", Icons.AutoMirrored.Filled.ListAlt, onNavigateToShipments) }
+                            item { QuickActionButton("التوثيق", Icons.Filled.Description, onNavigateToDocumentation) }
                             item { QuickActionButton("الحساب", Icons.Filled.Money, onNavigateToFinance) }
                             item { QuickActionButton("الملف الشخصي", Icons.Filled.Person, onNavigateToProfile) }
                         }

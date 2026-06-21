@@ -3,6 +3,7 @@ import { pool } from '../db/pool.js';
 import { resolveDriverIdByLabel } from '../utils/dailyLedgerDriverMatch.js';
 import { HttpError } from '../utils/errors.js';
 import type { DataScope } from '../utils/scope.js';
+import { appendAgentPrintDocumentScope } from '../utils/agentDocumentationScope.js';
 
 function normalizeLedgerReceiptNo(value: string | null | undefined): string {
   return String(value ?? '').trim().replace(/\s+/g, ' ');
@@ -1308,5 +1309,76 @@ export class DailyLedgerRepository {
       [documentId, scope.companyId],
     );
     return result.rows[0] ?? null;
+  }
+
+  async listAgentPrintDocuments(
+    scope: DataScope,
+    filters: DailyLedgerPrintDocumentListFilters,
+    destinationHints: string[],
+  ): Promise<DailyLedgerPrintDocumentSummary[]> {
+    if (!scope.companyId) throw new HttpError(400, 'Company scope is required.');
+    const conditions = ['d.company_id = $1'];
+    const values: unknown[] = [scope.companyId];
+    appendAgentPrintDocumentScope(conditions, values, destinationHints);
+    if (filters.dateFrom) {
+      values.push(filters.dateFrom);
+      conditions.push(`d.ledger_date >= $${values.length}::date`);
+    }
+    if (filters.dateTo) {
+      values.push(filters.dateTo);
+      conditions.push(`d.ledger_date <= $${values.length}::date`);
+    }
+    if (filters.searchQuery?.trim()) {
+      values.push(`%${filters.searchQuery.trim()}%`);
+      const qp = `$${values.length}`;
+      conditions.push(`(
+        coalesce(d.search_query, '') ilike ${qp}
+        or coalesce(d.destination_label, '') ilike ${qp}
+        or coalesce(d.driver_label, '') ilike ${qp}
+        or coalesce(d.title, '') ilike ${qp}
+      )`);
+    }
+    values.push(filters.limit ?? 100);
+    const limitParam = `$${values.length}`;
+    values.push(filters.offset ?? 0);
+    const offsetParam = `$${values.length}`;
+
+    const result = await pool.query<DailyLedgerPrintDocumentSummary>(
+      `
+      select
+        d.id,
+        d.branch_id,
+        b.name as branch_name,
+        d.ledger_date::text as ledger_date,
+        d.ledger_date_to::text as ledger_date_to,
+        d.line_label,
+        d.driver_id,
+        d.driver_label,
+        d.destination_label,
+        d.search_query,
+        d.print_type,
+        d.print_scope,
+        d.title,
+        d.row_count,
+        d.pieces_count,
+        d.weight_kg,
+        d.collect_total_usd,
+        d.prepaid_total_usd,
+        d.hawala_total_usd,
+        d.transfer_fee_total_usd,
+        d.printed_at,
+        u.full_name as printed_by_name,
+        u.username as printed_by_username
+      from daily_ledger_print_documents d
+      left join branches b on b.id = d.branch_id
+      left join users u on u.id = d.printed_by
+      where ${conditions.join(' and ')}
+      order by d.ledger_date desc, d.printed_at desc
+      limit ${limitParam}
+      offset ${offsetParam}
+      `,
+      values,
+    );
+    return result.rows;
   }
 }

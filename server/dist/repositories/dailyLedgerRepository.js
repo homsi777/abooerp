@@ -1,8 +1,18 @@
 import { pool } from '../db/pool.js';
 import { resolveDriverIdByLabel } from '../utils/dailyLedgerDriverMatch.js';
 import { HttpError } from '../utils/errors.js';
+import { appendAgentPrintDocumentScope } from '../utils/agentDocumentationScope.js';
 function normalizeLedgerReceiptNo(value) {
     return String(value ?? '').trim().replace(/\s+/g, ' ');
+}
+/** التحصيل (COD) والدفع المسبق حصريان — لا يجوز إدخالهما معاً في نفس السطر. */
+function exclusiveCollectPrepaidAmounts(collect, prepaid) {
+    const collectAmountUsd = Math.round(Number(collect ?? 0) * 100) / 100;
+    const prepaidAmountUsd = Math.round(Number(prepaid ?? 0) * 100) / 100;
+    if (collectAmountUsd > 0 && prepaidAmountUsd > 0) {
+        return { collectAmountUsd, prepaidAmountUsd: 0 };
+    }
+    return { collectAmountUsd, prepaidAmountUsd };
 }
 /** يعلّم الجلسة بأنها تحتاج إعادة طباعة إذا كانت قد طُبعت مسبقاً (تعديل/إضافة بعد الطباعة) */
 async function markSessionReprintIfPrinted(client, sessionId, reason) {
@@ -316,6 +326,12 @@ export class DailyLedgerRepository {
         if (!scope.companyId) {
             throw new Error('Company scope is required.');
         }
+        const amounts = exclusiveCollectPrepaidAmounts(input.collectAmountUsd, input.prepaidAmountUsd);
+        input = {
+            ...input,
+            collectAmountUsd: amounts.collectAmountUsd,
+            prepaidAmountUsd: amounts.prepaidAmountUsd,
+        };
         const client = await pool.connect();
         try {
             await client.query('begin');
@@ -694,5 +710,223 @@ export class DailyLedgerRepository {
         const deletedIds = result.rows.map((row) => row.id);
         const blockedIds = input.rowIds.filter((id) => !deletedIds.includes(id));
         return { deletedIds, blockedIds };
+    }
+    async createPrintDocument(scope, input) {
+        if (!scope.companyId)
+            throw new HttpError(400, 'Company scope is required.');
+        const result = await pool.query(`
+      insert into daily_ledger_print_documents(
+        company_id, branch_id, ledger_date, ledger_date_to, line_label, origin_label,
+        driver_id, driver_label, destination_label, search_query,
+        print_type, print_scope, title,
+        row_count, pieces_count, weight_kg,
+        collect_total_usd, prepaid_total_usd, hawala_total_usd, transfer_fee_total_usd,
+        rows_snapshot, printed_by
+      )
+      values($1,$2,$3::date,$4::date,$5,$6,$7::uuid,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22::uuid)
+      returning *
+      `, [
+            scope.companyId,
+            input.branchId ?? null,
+            input.ledgerDate,
+            input.ledgerDateTo ?? null,
+            input.lineLabel ?? null,
+            input.originLabel ?? null,
+            input.driverId ?? null,
+            input.driverLabel ?? null,
+            input.destinationLabel ?? null,
+            input.searchQuery ?? null,
+            input.printType ?? 'shipments',
+            input.printScope ?? null,
+            input.title ?? null,
+            input.rowCount ?? 0,
+            input.piecesCount ?? 0,
+            input.weightKg ?? 0,
+            input.collectTotalUsd ?? 0,
+            input.prepaidTotalUsd ?? 0,
+            input.hawalaTotalUsd ?? 0,
+            input.transferFeeTotalUsd ?? 0,
+            JSON.stringify(input.rowsSnapshot ?? []),
+            scope.userId ?? null,
+        ]);
+        return result.rows[0];
+    }
+    async listPrintDocuments(scope, filters) {
+        if (!scope.companyId)
+            throw new HttpError(400, 'Company scope is required.');
+        const conditions = ['d.company_id = $1'];
+        const values = [scope.companyId];
+        if (filters.branchId) {
+            values.push(filters.branchId);
+            conditions.push(`d.branch_id = $${values.length}::uuid`);
+        }
+        if (filters.dateFrom) {
+            values.push(filters.dateFrom);
+            conditions.push(`d.ledger_date >= $${values.length}::date`);
+        }
+        if (filters.dateTo) {
+            values.push(filters.dateTo);
+            conditions.push(`d.ledger_date <= $${values.length}::date`);
+        }
+        if (filters.driverId) {
+            values.push(filters.driverId);
+            conditions.push(`d.driver_id = $${values.length}::uuid`);
+        }
+        if (filters.destination?.trim()) {
+            values.push(`%${filters.destination.trim()}%`);
+            conditions.push(`coalesce(d.destination_label, '') ilike $${values.length}`);
+        }
+        if (filters.searchQuery?.trim()) {
+            values.push(`%${filters.searchQuery.trim()}%`);
+            const qp = `$${values.length}`;
+            conditions.push(`(
+        coalesce(d.search_query, '') ilike ${qp}
+        or coalesce(d.destination_label, '') ilike ${qp}
+        or coalesce(d.driver_label, '') ilike ${qp}
+        or coalesce(d.title, '') ilike ${qp}
+      )`);
+        }
+        values.push(filters.limit ?? 100);
+        const limitParam = `$${values.length}`;
+        values.push(filters.offset ?? 0);
+        const offsetParam = `$${values.length}`;
+        const result = await pool.query(`
+      select
+        d.id,
+        d.branch_id,
+        b.name as branch_name,
+        d.ledger_date::text as ledger_date,
+        d.ledger_date_to::text as ledger_date_to,
+        d.line_label,
+        d.driver_id,
+        d.driver_label,
+        d.destination_label,
+        d.search_query,
+        d.print_type,
+        d.print_scope,
+        d.title,
+        d.row_count,
+        d.pieces_count,
+        d.weight_kg,
+        d.collect_total_usd,
+        d.prepaid_total_usd,
+        d.hawala_total_usd,
+        d.transfer_fee_total_usd,
+        d.printed_at,
+        u.full_name as printed_by_name,
+        u.username as printed_by_username
+      from daily_ledger_print_documents d
+      left join branches b on b.id = d.branch_id
+      left join users u on u.id = d.printed_by
+      where ${conditions.join(' and ')}
+      order by d.printed_at desc, d.ledger_date desc
+      limit ${limitParam}
+      offset ${offsetParam}
+      `, values);
+        return result.rows;
+    }
+    async getPrintDocument(scope, documentId) {
+        if (!scope.companyId)
+            throw new HttpError(400, 'Company scope is required.');
+        const result = await pool.query(`
+      select
+        d.id,
+        d.company_id,
+        d.branch_id,
+        d.ledger_date::text as ledger_date,
+        d.ledger_date_to::text as ledger_date_to,
+        d.line_label,
+        d.origin_label,
+        d.driver_id,
+        d.driver_label,
+        d.destination_label,
+        d.search_query,
+        d.print_type,
+        d.print_scope,
+        d.title,
+        d.row_count,
+        d.pieces_count,
+        d.weight_kg,
+        d.collect_total_usd,
+        d.prepaid_total_usd,
+        d.hawala_total_usd,
+        d.transfer_fee_total_usd,
+        d.rows_snapshot,
+        d.printed_by,
+        d.printed_at,
+        d.created_at,
+        b.name as branch_name,
+        u.full_name as printed_by_name,
+        u.username as printed_by_username
+      from daily_ledger_print_documents d
+      left join branches b on b.id = d.branch_id
+      left join users u on u.id = d.printed_by
+      where d.id = $1::uuid and d.company_id = $2::uuid
+      limit 1
+      `, [documentId, scope.companyId]);
+        return result.rows[0] ?? null;
+    }
+    async listAgentPrintDocuments(scope, filters, destinationHints) {
+        if (!scope.companyId)
+            throw new HttpError(400, 'Company scope is required.');
+        const conditions = ['d.company_id = $1'];
+        const values = [scope.companyId];
+        appendAgentPrintDocumentScope(conditions, values, destinationHints);
+        if (filters.dateFrom) {
+            values.push(filters.dateFrom);
+            conditions.push(`d.ledger_date >= $${values.length}::date`);
+        }
+        if (filters.dateTo) {
+            values.push(filters.dateTo);
+            conditions.push(`d.ledger_date <= $${values.length}::date`);
+        }
+        if (filters.searchQuery?.trim()) {
+            values.push(`%${filters.searchQuery.trim()}%`);
+            const qp = `$${values.length}`;
+            conditions.push(`(
+        coalesce(d.search_query, '') ilike ${qp}
+        or coalesce(d.destination_label, '') ilike ${qp}
+        or coalesce(d.driver_label, '') ilike ${qp}
+        or coalesce(d.title, '') ilike ${qp}
+      )`);
+        }
+        values.push(filters.limit ?? 100);
+        const limitParam = `$${values.length}`;
+        values.push(filters.offset ?? 0);
+        const offsetParam = `$${values.length}`;
+        const result = await pool.query(`
+      select
+        d.id,
+        d.branch_id,
+        b.name as branch_name,
+        d.ledger_date::text as ledger_date,
+        d.ledger_date_to::text as ledger_date_to,
+        d.line_label,
+        d.driver_id,
+        d.driver_label,
+        d.destination_label,
+        d.search_query,
+        d.print_type,
+        d.print_scope,
+        d.title,
+        d.row_count,
+        d.pieces_count,
+        d.weight_kg,
+        d.collect_total_usd,
+        d.prepaid_total_usd,
+        d.hawala_total_usd,
+        d.transfer_fee_total_usd,
+        d.printed_at,
+        u.full_name as printed_by_name,
+        u.username as printed_by_username
+      from daily_ledger_print_documents d
+      left join branches b on b.id = d.branch_id
+      left join users u on u.id = d.printed_by
+      where ${conditions.join(' and ')}
+      order by d.ledger_date desc, d.printed_at desc
+      limit ${limitParam}
+      offset ${offsetParam}
+      `, values);
+        return result.rows;
     }
 }

@@ -11,8 +11,10 @@ function normalizeName(value) {
     return String(value ?? '').trim().replace(/\s+/g, ' ');
 }
 function amountsFromLedgerRow(row) {
-    const collect = money(row.collect_amount_usd);
-    const prepaid = money(row.prepaid_amount_usd);
+    let collect = money(row.collect_amount_usd);
+    let prepaid = money(row.prepaid_amount_usd);
+    if (collect > 0 && prepaid > 0)
+        prepaid = 0;
     const hawalaAmount = money(row.hawala_amount_usd);
     const transferServiceFee = money(row.transfer_service_fee_usd);
     return {

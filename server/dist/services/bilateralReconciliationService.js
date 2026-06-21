@@ -183,11 +183,26 @@ export class BilateralReconciliationService {
         const lastApproved = row.status === 'approved'
             ? null
             : await this.repository.getLastApproved(companyId, row.agent_id, row.currency_code);
+        let companyPackage = null;
+        try {
+            const raw = await this.agentRepository.getAgentFinancialStatement(companyId, row.agent_id, {
+                currencyCode: row.currency_code || 'USD',
+                fromAt: row.period_from,
+                toAt: row.period_to,
+            });
+            if (raw) {
+                companyPackage = buildAgentMainBranchReconciliationPackage(raw);
+            }
+        }
+        catch {
+            companyPackage = null;
+        }
         return {
             ...row,
             periodStartLabel: this.periodStartLabel(lastApproved),
             items: (row.items ?? []).map((item, index) => mapStoredItem(item, index)),
             readOnly: row.status === 'approved',
+            companyPackage,
         };
     }
     async getDiscrepancyReport(companyId, agentId, currencyCode = 'USD') {

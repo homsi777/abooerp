@@ -88,7 +88,16 @@ fun voucherStatusLabel(value: String?): String = when (value?.lowercase()) {
 
 fun formatIsoDateOnly(value: String?): String {
     if (value.isNullOrBlank()) return "—"
-    return value.take(10).replace('-', '/')
+    val ymd = value.trim().take(10)
+    if (!ymd.matches(Regex("""\d{4}-\d{2}-\d{2}"""))) return value
+    return ymd.replace('-', '/')
+}
+
+fun documentationTransitLabel(value: String?): String = when (value?.lowercase()) {
+    "en_route" -> "في الطريق إليك"
+    "dispatched" -> "خرجت من الفرع الرئيسي"
+    "historical" -> "سجل سابق"
+    else -> safeText(value)
 }
 
 fun buildAgentVoucherShareText(
