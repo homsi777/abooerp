@@ -1384,13 +1384,15 @@ export default function ShipmentQuickLedger() {
   const flushPendingRowSaves = async (scopeSessionId?: string | null) => {
     Object.values(saveTimersRef.current).forEach((timer) => window.clearTimeout(timer));
     saveTimersRef.current = {};
+    receiptEditingRowIdRef.current = null;
+    setReceiptEditingRowId(null);
     const targets = rowsRef.current.filter((row) => {
       if (!shouldPersistRow(row)) return false;
       if (scopeSessionId) return rowInActiveSessionScope(row, scopeSessionId);
       return true;
     });
     for (const row of targets) {
-      await saveRowToServerRef.current(row.id);
+      await saveRowToServerRef.current(row.id, { force: true });
     }
   };
 
@@ -1998,7 +2000,7 @@ export default function ShipmentQuickLedger() {
     })();
   };
 
-  const saveRowToServer = async (displayRowId: number) => {
+  const saveRowToServer = async (displayRowId: number, options?: { force?: boolean }) => {
     if (canViewAllLedgerEntriesRef.current && ledgerBranchModeRef.current === 'all') return;
     const branchId = activeBranchIdRef.current;
     const currentTrip = tripRef.current;
@@ -2016,7 +2018,7 @@ export default function ShipmentQuickLedger() {
     }
     const row = rowsRef.current.find((r) => r.id === displayRowId);
     if (!row) return;
-    if (receiptEditingRowIdRef.current === displayRowId) return;
+    if (!options?.force && receiptEditingRowIdRef.current === displayRowId) return;
     if (!shouldPersistRow(row)) return;
     if (isCloudOffline) {
       await markDailyLedgerDraftPending(row.clientRowId, 'لا يوجد اتصال بالسحابة. تم حفظ السطر محلياً.').catch(() => undefined);
@@ -3505,26 +3507,6 @@ export default function ShipmentQuickLedger() {
       for (let index = 0; index < rowsToPost.length; index += 1) {
         const row = rowsToPost[index];
         const itemKey = String(row.id);
-
-        if (row.dbId) {
-          upsertedRowIds.push(row.dbId);
-          savedDbIdByDisplayId.set(row.id, row.dbId);
-          progressSnapshot = progressSnapshot.map((item) =>
-            item.key === itemKey
-              ? { ...item, status: 'saved' as const, message: 'محفوظ مسبقاً — استكمال الترحيل' }
-              : item,
-          );
-          setSaveProgress((prev) => ({
-            ...applySaveProgressItemPatch(prev, itemKey, {
-              status: 'saved',
-              message: 'محفوظ مسبقاً — استكمال الترحيل',
-            }),
-            phaseLabel: resumeMode
-              ? `استكمال الحفظ في الدفتر (${index + 1} / ${rowsToPost.length})...`
-              : `حفظ الأسطر في الدفتر (${index + 1} / ${rowsToPost.length})...`,
-          }));
-          continue;
-        }
 
         patchSaveItem(itemKey, { status: 'running', message: 'جاري الحفظ...' });
         setSaveProgress((prev) => ({

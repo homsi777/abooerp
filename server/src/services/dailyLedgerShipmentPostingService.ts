@@ -403,9 +403,43 @@ export class DailyLedgerShipmentPostingService {
       .filter(Boolean)
       .join(' | ');
 
+    const newReceiptNo = normalizeName(row.receipt_no);
+    const existingShipmentRow = await pool.query<{ shipment_no: string }>(
+      `select shipment_no from shipments where id = $1::uuid and deleted_at is null limit 1`,
+      [row.posted_shipment_id],
+    );
+    const currentShipmentNo = normalizeName(existingShipmentRow.rows[0]?.shipment_no);
+    let shipmentNoUpdate: string | undefined;
+    let referenceNoUpdate: string | undefined;
+    if (newReceiptNo && newReceiptNo !== currentShipmentNo) {
+      const taken = await pool.query<{ id: string }>(
+        `
+        select id
+        from shipments
+        where company_id = $1::uuid
+          and deleted_at is null
+          and lower(trim(shipment_no)) = lower($2)
+          and id <> $3::uuid
+        limit 1
+        `,
+        [row.company_id, newReceiptNo, row.posted_shipment_id],
+      );
+      if (taken.rows[0]) {
+        throw new HttpError(
+          409,
+          `رقم الإيصال ${newReceiptNo} مستخدم في شحنة أخرى — اختر رقماً مختلفاً.`,
+        );
+      }
+      shipmentNoUpdate = newReceiptNo;
+      referenceNoUpdate = newReceiptNo;
+    }
+
     const updated = await this.shipmentService.update(
       row.posted_shipment_id,
       {
+        ...(shipmentNoUpdate
+          ? { shipmentNo: shipmentNoUpdate, referenceNo: referenceNoUpdate }
+          : {}),
         senderId,
         receiverId,
         agentId,
@@ -541,7 +575,7 @@ export class DailyLedgerShipmentPostingService {
       if (otherLink) {
         throw new HttpError(
           409,
-          `رقم الإيصال ${receiptNo} مربوط بسطر دفتر آخر (سطر ${otherLink.row_no}).`,
+          `رقم الإيصال ${receiptNo} مستخدم في سطر ${otherLink.row_no}. غيّر رقم الإيصال في هذا السطر ثم أعد الحفظ.`,
         );
       }
 
