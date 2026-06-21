@@ -24,6 +24,15 @@ export type LedgerLocalSearchRow = {
 
 export type LedgerPrintScope = 'driver' | 'date' | 'agent' | 'session';
 
+export type LedgerDriverMatchFilters = {
+  driverBackendId?: string;
+  driverName?: string;
+  /** مركبات مرتبطة بالسائق (UUID lowercase) */
+  vehicleIdsForDriver?: ReadonlySet<string>;
+  /** إرساليات بلا سائق/مركبة — تُنسب للسائق المختار (مع البحث النشط فقط) */
+  assignOrphanRowsToSelectedDriver?: boolean;
+};
+
 export type PrepareLedgerOutputOptions = {
   printScope: LedgerPrintScope;
   searchQuery?: string;
@@ -32,7 +41,13 @@ export type PrepareLedgerOutputOptions = {
   destinationFilter?: string;
   driverBackendId?: string;
   driverName?: string;
+  vehicleIdsForDriver?: ReadonlySet<string>;
+  assignOrphanRowsToSelectedDriver?: boolean;
 };
+
+function normalizeLedgerUuid(value: string | null | undefined): string {
+  return String(value ?? '').trim().toLowerCase();
+}
 
 export function normalizeLedgerSearchText(value: string | null | undefined): string {
   return String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
@@ -157,14 +172,38 @@ export function filterLocalRowsBySearch<T extends LedgerLocalSearchRow>(
 
 export function remoteRowMatchesDriver(
   remote: RemoteDailyLedgerRow,
-  filters: { driverBackendId?: string; driverName?: string },
+  filters: LedgerDriverMatchFilters,
 ): boolean {
-  if (filters.driverBackendId && remote.driver_id === filters.driverBackendId) return true;
-  const driverLabel = normalizeLedgerSearchText(remote.driver_label ?? '');
-  if (!driverLabel) return false;
-  if (!filters.driverName) return false;
-  const driverName = normalizeLedgerSearchText(filters.driverName);
-  return driverLabel === driverName || driverLabel.includes(driverName) || driverName.includes(driverLabel);
+  if (!filters.driverBackendId && !filters.driverName && !filters.vehicleIdsForDriver?.size) return true;
+
+  const targetDriverId = normalizeLedgerUuid(filters.driverBackendId);
+  const rowDriverId = normalizeLedgerUuid(remote.driver_id);
+  if (targetDriverId && rowDriverId && rowDriverId === targetDriverId) return true;
+
+  const rowVehicleId = normalizeLedgerUuid(remote.vehicle_id);
+  if (rowVehicleId && filters.vehicleIdsForDriver?.has(rowVehicleId)) return true;
+
+  if (filters.driverName) {
+    const driverLabel = normalizeLedgerSearchText(remote.driver_label ?? '');
+    if (driverLabel) {
+      const driverName = normalizeLedgerSearchText(filters.driverName);
+      if (driverLabel === driverName || driverLabel.includes(driverName) || driverName.includes(driverLabel)) {
+        return true;
+      }
+    }
+  }
+
+  if (
+    filters.assignOrphanRowsToSelectedDriver &&
+    targetDriverId &&
+    !rowDriverId &&
+    !normalizeLedgerSearchText(remote.driver_label ?? '') &&
+    !rowVehicleId
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 export function filterRemoteRowsByPrintScope(
@@ -173,13 +212,20 @@ export function filterRemoteRowsByPrintScope(
   options: {
     driverBackendId?: string;
     driverName?: string;
+    vehicleIdsForDriver?: ReadonlySet<string>;
+    assignOrphanRowsToSelectedDriver?: boolean;
     destinationFilter?: string;
     activeSessionId?: string | null;
   },
 ): RemoteDailyLedgerRow[] {
   if (scope === 'driver') {
     return rows.filter((row) =>
-      remoteRowMatchesDriver(row, { driverBackendId: options.driverBackendId, driverName: options.driverName }),
+      remoteRowMatchesDriver(row, {
+        driverBackendId: options.driverBackendId,
+        driverName: options.driverName,
+        vehicleIdsForDriver: options.vehicleIdsForDriver,
+        assignOrphanRowsToSelectedDriver: options.assignOrphanRowsToSelectedDriver,
+      }),
     );
   }
   if (scope === 'agent') {
@@ -218,6 +264,8 @@ export function prepareLedgerOutputRows(
   const scoped = filterRemoteRowsByPrintScope(printable, options.printScope, {
     driverBackendId: options.driverBackendId,
     driverName: options.driverName,
+    vehicleIdsForDriver: options.vehicleIdsForDriver,
+    assignOrphanRowsToSelectedDriver: options.assignOrphanRowsToSelectedDriver,
     destinationFilter: options.destinationFilter,
     activeSessionId: options.activeSessionId,
   });

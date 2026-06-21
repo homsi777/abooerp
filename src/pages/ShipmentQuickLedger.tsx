@@ -75,6 +75,7 @@ import {
 } from '../lib/shipping/dailyLedgerScope';
 import {
   filterPrintableDailyLedgerRows,
+  dedupeDailyLedgerRowsById,
   remoteRowCollectionUsd,
   sortDailyLedgerRows,
 } from '../lib/shipping/dailyLedgerPrintable';
@@ -503,6 +504,18 @@ function resolvePrintDestinationLabel(
   if (destinations.length === 1) return destinations[0];
   if (destinations.length > 1) return 'كل الوجهات';
   return '—';
+}
+
+function buildVehicleBackendIdsForDriver(driverBackendId: string, vehicleList: Vehicle[]): Set<string> {
+  const normalizedDriverId = driverBackendId.trim().toLowerCase();
+  const vehicleIds = new Set<string>();
+  for (const vehicle of vehicleList) {
+    const vehicleDriverBackendId = vehicle.driverId ? getBackendIdFromSynthetic(vehicle.driverId) : undefined;
+    if (!vehicleDriverBackendId || vehicleDriverBackendId.toLowerCase() !== normalizedDriverId) continue;
+    const vehicleBackendId = getBackendIdFromSynthetic(vehicle.id);
+    if (vehicleBackendId) vehicleIds.add(vehicleBackendId.toLowerCase());
+  }
+  return vehicleIds;
 }
 
 function resolvePrintDriverLabel(
@@ -2906,8 +2919,19 @@ export default function ShipmentQuickLedger() {
         ...(singleDay ? {} : { dateFrom: printDateFrom, dateTo: printDateTo }),
       },
     );
-    const data = await fetchAllDailyLedgerRows(queryScope);
     const activeSearch = searchQuick.trim();
+    const vehicleIdsForDriver =
+      printScope === 'driver' && driverBackendId
+        ? buildVehicleBackendIdsForDriver(driverBackendId, vehicles)
+        : undefined;
+    const fetched = await fetchAllDailyLedgerRows(queryScope);
+    const sameDayAsScreen =
+      printDateFrom === tripRef.current.date &&
+      printDateTo === tripRef.current.date;
+    const data =
+      activeSearch && sameDayAsScreen
+        ? dedupeDailyLedgerRowsById([...remoteRowsRaw, ...fetched])
+        : fetched;
     const rows = prepareLedgerOutputRows(data, {
       printScope,
       searchQuery: activeSearch,
@@ -2916,10 +2940,17 @@ export default function ShipmentQuickLedger() {
       destinationFilter: printScope === 'agent' ? printDestinationFilter : undefined,
       driverBackendId,
       driverName: selectedDriver?.name,
+      vehicleIdsForDriver,
+      assignOrphanRowsToSelectedDriver: printScope === 'driver' && Boolean(activeSearch),
     });
 
     if (!rows.length) {
-      showToast('لا توجد أسطر مطابقة لمعايير الطباعة', 'info');
+      showToast(
+        activeSearch && printScope === 'driver' && selectedDriver?.name
+          ? `لا توجد أسطر مطابقة للسائق «${selectedDriver.name}» مع البحث «${activeSearch}» — تأكد أن الإرسالية مرتبطة بهذا السائق`
+          : 'لا توجد أسطر مطابقة لمعايير الطباعة',
+        'info',
+      );
       return null;
     }
 

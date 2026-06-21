@@ -4,6 +4,7 @@
 import {
   filterRemoteRowsBySearch,
   prepareLedgerOutputRows,
+  remoteRowMatchesDriver,
   sortRemoteRowsChronological,
 } from './dailyLedgerRowFilter';
 import { computeTotalsFromRemoteRows } from './dailyLedgerTotals';
@@ -128,6 +129,45 @@ function testPreparePrintDriverScopeWithSearch() {
   assert(prepared[0].destination === 'منبج', 'matched destination');
 }
 
+function testDriverMatchViaVehicle() {
+  const row = sampleRow({
+    destination: 'منبج',
+    driver_id: null,
+    driver_label: null,
+    vehicle_id: 'v1',
+  });
+  assert(
+    remoteRowMatchesDriver(row, {
+      driverBackendId: 'd1',
+      vehicleIdsForDriver: new Set(['v1']),
+    }),
+    'vehicle assignment should match driver',
+  );
+}
+
+function testDriverMatchOrphanSelectedDriver() {
+  const row = sampleRow({
+    destination: 'منبج',
+    driver_id: null,
+    driver_label: null,
+    vehicle_id: null,
+  });
+  assert(
+    remoteRowMatchesDriver(row, {
+      driverBackendId: 'd1',
+      assignOrphanRowsToSelectedDriver: true,
+    }),
+    'orphan row should match selected driver when enabled',
+  );
+  assert(
+    !remoteRowMatchesDriver(row, {
+      driverBackendId: 'd1',
+      assignOrphanRowsToSelectedDriver: false,
+    }),
+    'orphan row should not match without explicit orphan assignment',
+  );
+}
+
 function run() {
   testSearchByAgentName();
   testSearchTotals();
@@ -135,6 +175,8 @@ function run() {
   testPreparePrintDateScopeWithSearch();
   testPreparePrintDateScopeAllRows();
   testPreparePrintDriverScopeWithSearch();
+  testDriverMatchViaVehicle();
+  testDriverMatchOrphanSelectedDriver();
   console.log('dailyLedgerRowFilter.selftest: OK');
 }
 
