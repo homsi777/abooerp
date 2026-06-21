@@ -24,7 +24,8 @@ import {
   renderCompanyPrintHeader,
 } from '../lib/export/companyPrintHeader';
 import { buildDailyLedgerDestinationPrintHtml } from '../lib/export/financialStatementPrint';
-import { exportLedgerStylePdf } from '../lib/export/ledgerStylePrint';
+import { exportLedgerStylePdf, printHtmlInBrowser } from '../lib/export/ledgerStylePrint';
+import { preparePrintHtmlForOutput, resolveCompanyLogoDataUrlForPrint } from '../lib/branding/companyLogoPrint';
 import { useToast } from '../components/Toast';
 import { getBackendIdFromSynthetic, phase15Gateway, syntheticEntityId } from '../lib/api/phase15Gateway';
 import { httpClient } from '../lib/api/httpClient';
@@ -423,32 +424,6 @@ function nextServerRowNoForDriver(rows: LedgerRow[], driverId: number) {
     .filter((r) => r.sessionDriverId === driverId && r.serverRowNo)
     .map((r) => r.serverRowNo as number);
   return nums.length ? Math.max(...nums) + 1 : 1;
-}
-
-function printHtmlInBrowser(html: string) {
-  const iframe = document.createElement('iframe');
-  iframe.setAttribute('aria-hidden', 'true');
-  iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
-  iframe.style.width = '0';
-  iframe.style.height = '0';
-  iframe.style.border = '0';
-  document.body.appendChild(iframe);
-  const frameWindow = iframe.contentWindow;
-  const frameDoc = iframe.contentDocument ?? frameWindow?.document;
-  if (!frameDoc || !frameWindow) {
-    document.body.removeChild(iframe);
-    throw new Error('تعذر تهيئة نافذة الطباعة');
-  }
-  frameDoc.open();
-  frameDoc.write(html);
-  frameDoc.close();
-  frameWindow.focus();
-  frameWindow.print();
-  window.setTimeout(() => {
-    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
-  }, 1000);
 }
 
 type QuickLedgerPrintRow = {
@@ -2529,6 +2504,7 @@ export default function ShipmentQuickLedger() {
     setPrintAllLines(managerWideView || canViewAllLedgerEntriesRef.current);
     setPrintScope(scope ?? 'date');
     setPrintDialogOpen(true);
+    void resolveCompanyLogoDataUrlForPrint();
   };
 
   const loadDestinationPdfRows = async (ledgerDate: string) => {
@@ -3168,6 +3144,7 @@ export default function ShipmentQuickLedger() {
   };
 
   const dispatchHtmlPrint = async (html: string, documentType: string) => {
+    const preparedHtml = await preparePrintHtmlForOutput(html);
     if (window.printer?.getDefault && window.printer?.print) {
       const defaultPrinter = await window.printer.getDefault();
       if (defaultPrinter.available && defaultPrinter.printer?.name) {
@@ -3176,7 +3153,7 @@ export default function ShipmentQuickLedger() {
           printerTarget: defaultPrinter.printer.name,
           copies: 1,
           payloadType: 'html',
-          content: html,
+          content: preparedHtml,
         });
         if (result.queued) {
           showToast(result.message || 'تم إرسال الطباعة', 'success');
@@ -3194,7 +3171,7 @@ export default function ShipmentQuickLedger() {
       return;
     }
 
-    printHtmlInBrowser(html);
+    await printHtmlInBrowser(preparedHtml);
     showToast('تم فتح معاينة الطباعة', 'success');
   };
 

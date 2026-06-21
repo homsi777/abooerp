@@ -5,6 +5,7 @@ import PrimaryRemoteUpdateBanner from '../components/layout/PrimaryRemoteUpdateB
 import { getLanPort, getLanState, getResolvedApiBaseUrl } from '../lib/api/httpClient';
 import { phase15Gateway } from '../lib/api/phase15Gateway';
 import { getBackendIdFromSynthetic } from '../lib/api/syntheticEntityId';
+import { resolveCompanyLogoDataUrlForPrint } from '../lib/branding/companyLogoPrint';
 
 interface LayoutProps {
   children: ReactNode;
@@ -88,6 +89,10 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [serverLanInfo, setServerLanInfo] = useState<ServerLanInfo | null>(null);
   const [branchName, setBranchName] = useState('غير محدد');
+
+  useEffect(() => {
+    void resolveCompanyLogoDataUrlForPrint();
+  }, []);
 
   useEffect(() => {
     const onConn = (ev: Event) => {

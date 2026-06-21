@@ -4,6 +4,11 @@ import {
   companyPrintHeaderStyles,
   renderCompanyPrintHeader,
 } from './companyPrintHeader';
+import {
+  embedCompanyLogoInPrintHtml,
+  preparePrintHtmlForOutput,
+  waitForDocumentImages,
+} from '../branding/companyLogoPrint';
 
 export type LedgerPrintMetaItem = { label: string; value: string };
 
@@ -104,7 +109,8 @@ export function buildLedgerStylePrintHtml(options: {
 </html>`;
 }
 
-export function printHtmlInBrowser(html: string) {
+export async function printHtmlInBrowser(html: string) {
+  const preparedHtml = await embedCompanyLogoInPrintHtml(html);
   const iframe = document.createElement('iframe');
   iframe.setAttribute('aria-hidden', 'true');
   iframe.style.position = 'fixed';
@@ -121,8 +127,9 @@ export function printHtmlInBrowser(html: string) {
     throw new Error('تعذر تهيئة نافذة الطباعة');
   }
   frameDoc.open();
-  frameDoc.write(html);
+  frameDoc.write(preparedHtml);
   frameDoc.close();
+  await waitForDocumentImages(frameDoc);
   frameWindow.focus();
   frameWindow.print();
   window.setTimeout(() => {
@@ -134,6 +141,7 @@ export async function printLedgerStyleDocument(
   html: string,
   documentType: string,
 ): Promise<'queued' | 'browser' | 'error'> {
+  const preparedHtml = await preparePrintHtmlForOutput(html);
   if (window.printer?.getDefault && window.printer?.print) {
     const defaultPrinter = await window.printer.getDefault();
     if (defaultPrinter.available && defaultPrinter.printer?.name) {
@@ -142,7 +150,7 @@ export async function printLedgerStyleDocument(
         printerTarget: defaultPrinter.printer.name,
         copies: 1,
         payloadType: 'html',
-        content: html,
+        content: preparedHtml,
       });
       return result.queued ? 'queued' : 'error';
     }
@@ -153,7 +161,7 @@ export async function printLedgerStyleDocument(
     return 'error';
   }
 
-  printHtmlInBrowser(html);
+  await printHtmlInBrowser(preparedHtml);
   return 'browser';
 }
 
@@ -163,7 +171,8 @@ export async function exportLedgerStylePdf(payload: {
   defaultFileName: string;
   landscape?: boolean;
 }) {
-  return exportPdfFromRuntimeOrBrowser(payload);
+  const html = await preparePrintHtmlForOutput(payload.html);
+  return exportPdfFromRuntimeOrBrowser({ ...payload, html });
 }
 
 export function formatLedgerMoney(value: unknown, currency = 'USD'): string {

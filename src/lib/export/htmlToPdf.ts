@@ -1,3 +1,5 @@
+import { waitForDocumentImages } from '../branding/companyLogoPrint';
+
 export type HtmlPdfExportResult = {
   saved: boolean;
   filePath: string | null;
@@ -13,7 +15,9 @@ async function waitForFrameDocument(frameDoc: Document): Promise<void> {
   if (frameDoc.fonts?.ready) {
     await frameDoc.fonts.ready.catch(() => undefined);
   }
-  await new Promise((resolve) => window.setTimeout(resolve, 400));
+  const { waitForDocumentImages } = await import('../branding/companyLogoPrint');
+  await waitForDocumentImages(frameDoc);
+  await new Promise((resolve) => window.setTimeout(resolve, 150));
 }
 
 function mountHtmlFrame(html: string, landscape?: boolean): HTMLIFrameElement {
