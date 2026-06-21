@@ -52,6 +52,7 @@ export type TransferSummary = {
   postedRowsCount: number;
   unpostedRowsCount: number;
   sourceLedgerDate: string | null;
+  sourceBranchId: string | null;
 };
 
 function money(value: string | number | null | undefined): number {
@@ -106,6 +107,7 @@ function summarize(rows: TransferRowRecord[]): TransferSummary {
     postedRowsCount,
     unpostedRowsCount: rows.length - postedRowsCount,
     sourceLedgerDate: rows[0]?.ledger_date ?? null,
+    sourceBranchId: rows[0]?.branch_id ?? null,
   };
 }
 
@@ -179,6 +181,14 @@ export class DailyLedgerTransferService {
     const missing = requestedIds.filter((id) => !foundIds.has(id));
     if (missing.length) {
       errors.push(`${missing.length} سطر غير موجود أو لا ينتمي لشركتك`);
+    }
+
+    const activeRows = rows.filter((row) => !row.deleted_at);
+    const branchIds = new Set(activeRows.map((row) => row.branch_id));
+    if (branchIds.size > 1) {
+      errors.push(
+        'لا يمكن نقل أسطر من فروع مختلفة في عملية واحدة — حدّد أسطر فرع واحد فقط، أو نفّذ نقلاً منفصلاً لكل فرع.',
+      );
     }
 
     const seenReceipts = new Map<string, number>();

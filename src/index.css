@@ -1652,6 +1652,11 @@ body {
   color: inherit;
 }
 
+.quick-ledger-transfer-branch-error {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
 .quick-ledger-stats div {
   display: flex;
   align-items: baseline;

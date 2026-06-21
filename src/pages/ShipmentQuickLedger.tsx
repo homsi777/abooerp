@@ -182,6 +182,16 @@ function resolveBranchLabelFromList(branches: Branch[], branchBackendId?: string
   return branches.find((branch) => getBackendIdFromSynthetic(branch.id) === branchBackendId)?.name ?? '—';
 }
 
+function uniqueTransferBranchIds(rows: LedgerRow[]): string[] {
+  return [
+    ...new Set(rows.map((row) => row.branchBackendId).filter((value): value is string => Boolean(value))),
+  ];
+}
+
+function uniqueTransferBranchLabels(rows: LedgerRow[], branches: Branch[]): string[] {
+  return uniqueTransferBranchIds(rows).map((branchId) => resolveBranchLabelFromList(branches, branchId));
+}
+
 const fallbackDestinations = ['دمشق', 'حلب', 'حمص', 'حماة', 'اللاذقية', 'طرطوس', 'إدلب'];
 
 function createEmptyRow(id: number): LedgerRow {
@@ -969,6 +979,8 @@ export default function ShipmentQuickLedger() {
       const dest = normalizeName(row.destination);
       if (dest) destinations.add(dest);
     }
+    const branchIds = uniqueTransferBranchIds(selectedTransferRows);
+    const branchLabels = uniqueTransferBranchLabels(selectedTransferRows, branches);
     return {
       rows: selectedTransferRows.length,
       pieces,
@@ -977,8 +989,11 @@ export default function ShipmentQuickLedger() {
       prepaid,
       freight,
       destinations: [...destinations],
+      branchIds,
+      branchLabels,
+      hasMultipleBranches: branchIds.length > 1,
     };
-  }, [selectedTransferRows]);
+  }, [selectedTransferRows, branches]);
 
   /** إرساليات/جلسات اليوم — مشتقّة من الأسطر المحمّلة (بدون أثر على البيانات) */
   const daySessions = useMemo(() => {
@@ -2672,6 +2687,12 @@ export default function ShipmentQuickLedger() {
     setSelectedDeleteRowIds([]);
     setTransferMode(true);
     setSelectedTransferRowIds([]);
+    if (ledgerBranchModeRef.current === 'all') {
+      showToast(
+        'نقل الإرسالية يتم لفرع واحد في كل عملية — حدّد أسطر نفس الفرع فقط (لا تجمع بين حلب والرئيسي مثلاً).',
+        'info',
+      );
+    }
   };
 
   const exitTransferMode = () => {
@@ -2682,14 +2703,71 @@ export default function ShipmentQuickLedger() {
   };
 
   const toggleTransferRowSelection = (rowId: number) => {
-    setSelectedTransferRowIds((prev) =>
-      prev.includes(rowId) ? prev.filter((id) => id !== rowId) : [...prev, rowId],
-    );
+    setSelectedTransferRowIds((prev) => {
+      if (prev.includes(rowId)) return prev.filter((id) => id !== rowId);
+      const row = rowsRef.current.find((entry) => entry.id === rowId);
+      if (!row?.branchBackendId) return [...prev, rowId];
+      const selectedBranchIds = uniqueTransferBranchIds(
+        rowsRef.current.filter((entry) => prev.includes(entry.id)),
+      );
+      if (selectedBranchIds.length > 0 && !selectedBranchIds.includes(row.branchBackendId)) {
+        const currentLabel = resolveBranchLabelFromList(branches, selectedBranchIds[0]);
+        const nextLabel = row.branchLabel ?? resolveBranchLabelFromList(branches, row.branchBackendId);
+        showToast(
+          `لا يمكن الجمع بين فروع مختلفة — الأسطر المحددة من «${currentLabel}»، وهذا السطر من «${nextLabel}».`,
+          'error',
+        );
+        return prev;
+      }
+      return [...prev, rowId];
+    });
   };
 
   const toggleSelectAllTransferable = () => {
-    const ids = transferableVisibleRows.map((row) => row.id);
-    setSelectedTransferRowIds((prev) => (prev.length === ids.length ? [] : ids));
+    const eligible = transferableVisibleRows;
+    if (!eligible.length) return;
+
+    const branchGroups = new Map<string, number[]>();
+    for (const row of eligible) {
+      const branchKey = row.branchBackendId ?? '__unknown__';
+      const bucket = branchGroups.get(branchKey) ?? [];
+      bucket.push(row.id);
+      branchGroups.set(branchKey, bucket);
+    }
+
+    if (branchGroups.size === 1) {
+      const ids = eligible.map((row) => row.id);
+      setSelectedTransferRowIds((prev) => (prev.length === ids.length ? [] : ids));
+      return;
+    }
+
+    const activeBackendBranchId = activeBranchIdRef.current
+      ? getBackendIdFromSynthetic(activeBranchIdRef.current)
+      : null;
+    let targetBranchKey =
+      activeBackendBranchId && branchGroups.has(activeBackendBranchId)
+        ? activeBackendBranchId
+        : [...branchGroups.entries()].sort((left, right) => right[1].length - left[1].length)[0]?.[0];
+    const targetIds = branchGroups.get(targetBranchKey ?? '') ?? [];
+    const allTargetSelected =
+      targetIds.length > 0 &&
+      targetIds.every((id) => selectedTransferRowIds.includes(id)) &&
+      selectedTransferRowIds.length === targetIds.length;
+
+    if (allTargetSelected) {
+      setSelectedTransferRowIds([]);
+      return;
+    }
+
+    setSelectedTransferRowIds(targetIds);
+    const targetLabel =
+      targetBranchKey && targetBranchKey !== '__unknown__'
+        ? resolveBranchLabelFromList(branches, targetBranchKey)
+        : 'فرع غير محدد';
+    showToast(
+      `تم تحديد ${targetIds.length} سطر من «${targetLabel}» فقط — النقل لا يجمع بين فروع مختلفة.`,
+      'info',
+    );
   };
 
   const openTransferDialog = async () => {
@@ -2701,6 +2779,13 @@ export default function ShipmentQuickLedger() {
     const dbIds = selectedTransferRows.map((row) => row.dbId).filter((id): id is string => Boolean(id));
     if (dbIds.length !== selectedTransferRows.length) {
       showToast('بعض الأسطر المحددة غير محفوظة — احفظ الدفتر أولاً قبل النقل', 'error');
+      return;
+    }
+    if (transferSelectionSummary.hasMultipleBranches) {
+      showToast(
+        `لا يمكن نقل أسطر من فروع مختلفة (${transferSelectionSummary.branchLabels.join('، ')}) — حدّد أسطر فرع واحد.`,
+        'error',
+      );
       return;
     }
     setTransferReason('');
@@ -3917,7 +4002,12 @@ export default function ShipmentQuickLedger() {
                 <button
                   type="button"
                   className="primary"
-                  disabled={transferring || isCloudOffline || !selectedTransferRowIds.length}
+                  disabled={
+                    transferring ||
+                    isCloudOffline ||
+                    !selectedTransferRowIds.length ||
+                    transferSelectionSummary.hasMultipleBranches
+                  }
                   onClick={() => void openTransferDialog()}
                 >
                   <Truck size={16} />
@@ -4200,9 +4290,19 @@ export default function ShipmentQuickLedger() {
             {transferSelectionSummary.destinations.length > 0 && (
               <span>الوجهات: <strong>{transferSelectionSummary.destinations.join('، ')}</strong></span>
             )}
+            {transferSelectionSummary.branchLabels.length === 1 && (
+              <span>الفرع: <strong>{transferSelectionSummary.branchLabels[0]}</strong></span>
+            )}
+            {transferSelectionSummary.hasMultipleBranches && (
+              <span className="quick-ledger-transfer-branch-error">
+                فروع متعددة ({transferSelectionSummary.branchLabels.join('، ')}) — لا يمكن النقل
+              </span>
+            )}
           </div>
           <p className="quick-ledger-hint">
-            حدّد الأسطر المراد نقلها إلى سائق/مركبة/تاريخ آخر. الأسطر المحمّلة على بيان غير قابلة للنقل.
+            {transferSelectionSummary.hasMultipleBranches
+              ? 'أزل التحديد عن أسطر الفروع الأخرى — كل عملية نقل لفرع واحد فقط.'
+              : 'حدّد الأسطر المراد نقلها إلى سائق/مركبة/تاريخ آخر. الأسطر المحمّلة على بيان غير قابلة للنقل.'}
           </p>
         </section>
       )}
