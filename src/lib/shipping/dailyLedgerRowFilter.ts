@@ -215,15 +215,12 @@ export function prepareLedgerOutputRows(
   options: PrepareLedgerOutputOptions,
 ): RemoteDailyLedgerRow[] {
   const printable = filterPrintableDailyLedgerRows(rows);
-  const hasActiveSearch = Boolean(normalizeLedgerSearchText(options.searchQuery ?? ''));
-  const scoped = hasActiveSearch
-    ? printable
-    : filterRemoteRowsByPrintScope(printable, options.printScope, {
-        driverBackendId: options.driverBackendId,
-        driverName: options.driverName,
-        destinationFilter: options.destinationFilter,
-        activeSessionId: options.activeSessionId,
-      });
+  const scoped = filterRemoteRowsByPrintScope(printable, options.printScope, {
+    driverBackendId: options.driverBackendId,
+    driverName: options.driverName,
+    destinationFilter: options.destinationFilter,
+    activeSessionId: options.activeSessionId,
+  });
   const searched = filterRemoteRowsBySearch(scoped, options.searchQuery ?? '', options.agents ?? []);
   return sortRemoteRowsChronological(searched);
 }
