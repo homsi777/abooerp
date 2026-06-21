@@ -3890,10 +3890,6 @@ export default function ShipmentQuickLedger() {
             <Printer size={16} />
             طباعة
           </button>
-          <button type="button" onClick={() => navigate('/shipment-quick-ledger/documentation')} title="أرشيف ما طُبِع من الدفتر">
-            <ScrollText size={16} />
-            التوثيق
-          </button>
           {canLedgerExportPdf ? (
             <button type="button" onClick={openDestinationPdfDialog}>
               <Printer size={16} />

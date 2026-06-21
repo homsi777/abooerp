@@ -186,7 +186,7 @@ export default function App() {
                     }
                   />
                   <Route
-                    path="/shipment-quick-ledger/documentation"
+                    path="/daily-ledger/documentation"
                     element={
                       <RequireAnyPermission permissions={['daily_ledger.documentation.read', 'shipments.read', 'shipments.write']}>
                         <DailyLedgerDocumentation />

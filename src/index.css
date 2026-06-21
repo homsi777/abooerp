@@ -3171,6 +3171,19 @@ body {
   gap: 12px;
 }
 
+.documentation-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.documentation-header-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .documentation-page .page-subtitle {
   color: #64748b;
   margin-top: 4px;
@@ -3249,6 +3262,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   margin-bottom: 12px;
 }
 

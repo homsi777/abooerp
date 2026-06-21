@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Search, FileText, X, ArrowRight } from 'lucide-react';
+import { Search, FileText, X, Printer } from 'lucide-react';
 import { useToast } from '../../components/Toast';
 import { phase15Gateway, getBackendIdFromSynthetic } from '../../lib/api/phase15Gateway';
 import {
@@ -10,6 +9,12 @@ import {
   type PrintDocumentationDetail,
   type PrintDocumentationSummary,
 } from '../../lib/shipping/dailyLedgerDocumentationGateway';
+import {
+  buildDocumentationDetailPrintHtml,
+  buildDocumentationListPrintHtml,
+  exportDocumentationPdf,
+  printDocumentationHtml,
+} from '../../lib/shipping/dailyLedgerDocumentationPrint';
 import type { Branch, Driver } from '../../types';
 
 function fmtMoney(value: string | number): string {
@@ -53,7 +58,6 @@ function fmtDateTime(value: string): string {
 }
 
 export default function DailyLedgerDocumentation() {
-  const navigate = useNavigate();
   const { showToast } = useToast();
   const [dateFrom, setDateFrom] = useState(
     new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0],
@@ -67,6 +71,7 @@ export default function DailyLedgerDocumentation() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [rows, setRows] = useState<PrintDocumentationSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<PrintDocumentationDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -127,6 +132,74 @@ export default function DailyLedgerDocumentation() {
     setDetail(null);
   };
 
+  const printList = async () => {
+    if (!rows.length) {
+      showToast('لا توجد وثائق للطباعة', 'info');
+      return;
+    }
+    try {
+      const html = buildDocumentationListPrintHtml(rows, { dateFrom, dateTo });
+      const result = await printDocumentationHtml(html);
+      if (result === 'queued') showToast('تم إرسال الطباعة', 'success');
+      else if (result === 'browser') showToast('تم فتح معاينة الطباعة', 'success');
+      else showToast('تعذر تنفيذ الطباعة', 'error');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر الطباعة', 'error');
+    }
+  };
+
+  const exportListPdf = async () => {
+    if (!rows.length) {
+      showToast('لا توجد وثائق للتصدير', 'info');
+      return;
+    }
+    setExporting(true);
+    try {
+      const html = buildDocumentationListPrintHtml(rows, { dateFrom, dateTo });
+      await exportDocumentationPdf({
+        title: `توثيق دفتر الشحن — ${dateFrom} — ${dateTo}`,
+        html,
+        defaultFileName: `ledger-documentation-${dateFrom}-${dateTo}.pdf`,
+      });
+      showToast('تم تصدير PDF', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر تصدير PDF', 'error');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const printDetail = async (doc: PrintDocumentationDetail) => {
+    try {
+      const html = buildDocumentationDetailPrintHtml(doc);
+      const result = await printDocumentationHtml(html);
+      if (result === 'queued') showToast('تم إرسال الطباعة', 'success');
+      else if (result === 'browser') showToast('تم فتح معاينة الطباعة', 'success');
+      else showToast('تعذر تنفيذ الطباعة', 'error');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر الطباعة', 'error');
+    }
+  };
+
+  const exportDetailPdf = async (doc: PrintDocumentationDetail) => {
+    setExporting(true);
+    try {
+      const html = buildDocumentationDetailPrintHtml(doc);
+      const safeDate = doc.ledger_date.replace(/[\\/:*?"<>|]+/g, '-');
+      const safeDest = (doc.destination_label || doc.search_query || 'doc').replace(/[\\/:*?"<>|]+/g, '-');
+      await exportDocumentationPdf({
+        title: doc.title || `توثيق — ${safeDest}`,
+        html,
+        defaultFileName: `ledger-documentation-${safeDate}-${safeDest}.pdf`,
+      });
+      showToast('تم تصدير PDF', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر تصدير PDF', 'error');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const totals = useMemo(
     () =>
       rows.reduce(
@@ -147,18 +220,23 @@ export default function DailyLedgerDocumentation() {
     <div className="page-shell documentation-page" dir="rtl">
       <header className="page-header">
         <div>
-          <button type="button" className="linkish documentation-back" onClick={() => navigate('/shipment-quick-ledger')}>
-            <ArrowRight size={16} />
-            العودة إلى دفتر الشحن اليومي
-          </button>
           <h1>التوثيق</h1>
           <p className="page-subtitle">
             أرشيف طباعة دفتر الشحن اليومي — مرجع للمحاسب والمدير حسب السائق والجهة والتاريخ.
           </p>
         </div>
-        <button type="button" className="primary" onClick={() => void loadRows()} disabled={loading}>
-          {loading ? 'جاري التحديث...' : 'تحديث'}
-        </button>
+        <div className="documentation-header-actions">
+          <button type="button" onClick={() => void loadRows()} disabled={loading || exporting}>
+            {loading ? 'جاري التحديث...' : 'تحديث'}
+          </button>
+          <button type="button" onClick={() => void printList()} disabled={loading || exporting || !rows.length}>
+            <Printer size={16} />
+            طباعة
+          </button>
+          <button type="button" className="primary" onClick={() => void exportListPdf()} disabled={loading || exporting || !rows.length}>
+            {exporting ? 'جاري التصدير...' : 'تصدير PDF'}
+          </button>
+        </div>
       </header>
 
       <section className="documentation-filters card-panel">
@@ -287,9 +365,22 @@ export default function DailyLedgerDocumentation() {
           <div className="quick-ledger-confirm-panel documentation-detail-panel">
             <div className="documentation-detail-header">
               <h3>تفاصيل التوثيق</h3>
-              <button type="button" onClick={closeDetail} aria-label="إغلاق">
-                <X size={18} />
-              </button>
+              <div className="documentation-header-actions">
+                {detail && !detailLoading ? (
+                  <>
+                    <button type="button" onClick={() => void printDetail(detail)} disabled={exporting}>
+                      <Printer size={16} />
+                      طباعة
+                    </button>
+                    <button type="button" className="primary" onClick={() => void exportDetailPdf(detail)} disabled={exporting}>
+                      {exporting ? 'جاري التصدير...' : 'تصدير PDF'}
+                    </button>
+                  </>
+                ) : null}
+                <button type="button" onClick={closeDetail} aria-label="إغلاق">
+                  <X size={18} />
+                </button>
+              </div>
             </div>
             {detailLoading || !detail ? (
               <p>جاري تحميل التفاصيل...</p>
