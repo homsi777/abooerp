@@ -314,6 +314,97 @@ export interface DailyLedgerRowListFilters {
   offset: number;
 }
 
+export type DailyLedgerPrintDocumentRowSnapshot = {
+  rowId: string;
+  rowNo: number;
+  receiptNo: string | null;
+  destination: string;
+  parcelType: string;
+  parcelCount: number | null;
+  weightKg: string | null;
+  senderName: string;
+  receiverName: string;
+  collectAmountUsd: string;
+  prepaidAmountUsd: string;
+  hawalaAmountUsd: string;
+  transferServiceFeeUsd: string;
+  notes: string | null;
+  driverLabel: string | null;
+  sessionId: string | null;
+};
+
+export type DailyLedgerPrintDocumentInput = {
+  branchId?: string | null;
+  ledgerDate: string;
+  ledgerDateTo?: string | null;
+  lineLabel?: string | null;
+  originLabel?: string | null;
+  driverId?: string | null;
+  driverLabel?: string | null;
+  destinationLabel?: string | null;
+  searchQuery?: string | null;
+  printType?: string;
+  printScope?: string | null;
+  title?: string | null;
+  rowCount?: number;
+  piecesCount?: number;
+  weightKg?: number;
+  collectTotalUsd?: number;
+  prepaidTotalUsd?: number;
+  hawalaTotalUsd?: number;
+  transferFeeTotalUsd?: number;
+  rowsSnapshot?: DailyLedgerPrintDocumentRowSnapshot[];
+};
+
+export type DailyLedgerPrintDocument = DailyLedgerPrintDocumentInput & {
+  id: string;
+  company_id: string;
+  rows_snapshot: DailyLedgerPrintDocumentRowSnapshot[];
+  printed_by: string | null;
+  printed_at: string;
+  created_at: string;
+  branch_name?: string | null;
+  printed_by_name?: string | null;
+  printed_by_username?: string | null;
+};
+
+export type DailyLedgerPrintDocumentSummary = {
+  id: string;
+  branch_id: string | null;
+  branch_name: string | null;
+  ledger_date: string;
+  ledger_date_to: string | null;
+  line_label: string | null;
+  driver_id: string | null;
+  driver_label: string | null;
+  destination_label: string | null;
+  search_query: string | null;
+  print_type: string;
+  print_scope: string | null;
+  title: string | null;
+  row_count: number;
+  pieces_count: number;
+  weight_kg: string;
+  collect_total_usd: string;
+  prepaid_total_usd: string;
+  hawala_total_usd: string;
+  transfer_fee_total_usd: string;
+  printed_at: string;
+  printed_by_name: string | null;
+  printed_by_username: string | null;
+};
+
+export type DailyLedgerPrintDocumentListFilters = {
+  branchId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  driverId?: string;
+  destination?: string;
+  searchQuery?: string;
+  limit?: number;
+  offset?: number;
+};
+
 export interface DailyLedgerUpsertInput {
   branchId: string;
   ledgerDate: string;
@@ -1046,5 +1137,152 @@ export class DailyLedgerRepository {
     const deletedIds = result.rows.map((row) => row.id);
     const blockedIds = input.rowIds.filter((id) => !deletedIds.includes(id));
     return { deletedIds, blockedIds };
+  }
+
+  async createPrintDocument(
+    scope: DataScope,
+    input: DailyLedgerPrintDocumentInput,
+  ): Promise<DailyLedgerPrintDocument> {
+    if (!scope.companyId) throw new HttpError(400, 'Company scope is required.');
+    const result = await pool.query<DailyLedgerPrintDocument>(
+      `
+      insert into daily_ledger_print_documents(
+        company_id, branch_id, ledger_date, ledger_date_to, line_label, origin_label,
+        driver_id, driver_label, destination_label, search_query,
+        print_type, print_scope, title,
+        row_count, pieces_count, weight_kg,
+        collect_total_usd, prepaid_total_usd, hawala_total_usd, transfer_fee_total_usd,
+        rows_snapshot, printed_by
+      )
+      values($1,$2,$3::date,$4::date,$5,$6,$7::uuid,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22::uuid)
+      returning *
+      `,
+      [
+        scope.companyId,
+        input.branchId ?? null,
+        input.ledgerDate,
+        input.ledgerDateTo ?? null,
+        input.lineLabel ?? null,
+        input.originLabel ?? null,
+        input.driverId ?? null,
+        input.driverLabel ?? null,
+        input.destinationLabel ?? null,
+        input.searchQuery ?? null,
+        input.printType ?? 'shipments',
+        input.printScope ?? null,
+        input.title ?? null,
+        input.rowCount ?? 0,
+        input.piecesCount ?? 0,
+        input.weightKg ?? 0,
+        input.collectTotalUsd ?? 0,
+        input.prepaidTotalUsd ?? 0,
+        input.hawalaTotalUsd ?? 0,
+        input.transferFeeTotalUsd ?? 0,
+        JSON.stringify(input.rowsSnapshot ?? []),
+        scope.userId ?? null,
+      ],
+    );
+    return result.rows[0];
+  }
+
+  async listPrintDocuments(
+    scope: DataScope,
+    filters: DailyLedgerPrintDocumentListFilters,
+  ): Promise<DailyLedgerPrintDocumentSummary[]> {
+    if (!scope.companyId) throw new HttpError(400, 'Company scope is required.');
+    const conditions = ['d.company_id = $1'];
+    const values: unknown[] = [scope.companyId];
+    if (filters.branchId) {
+      values.push(filters.branchId);
+      conditions.push(`d.branch_id = $${values.length}::uuid`);
+    }
+    if (filters.dateFrom) {
+      values.push(filters.dateFrom);
+      conditions.push(`d.ledger_date >= $${values.length}::date`);
+    }
+    if (filters.dateTo) {
+      values.push(filters.dateTo);
+      conditions.push(`d.ledger_date <= $${values.length}::date`);
+    }
+    if (filters.driverId) {
+      values.push(filters.driverId);
+      conditions.push(`d.driver_id = $${values.length}::uuid`);
+    }
+    if (filters.destination?.trim()) {
+      values.push(`%${filters.destination.trim()}%`);
+      conditions.push(`coalesce(d.destination_label, '') ilike $${values.length}`);
+    }
+    if (filters.searchQuery?.trim()) {
+      values.push(`%${filters.searchQuery.trim()}%`);
+      const qp = `$${values.length}`;
+      conditions.push(`(
+        coalesce(d.search_query, '') ilike ${qp}
+        or coalesce(d.destination_label, '') ilike ${qp}
+        or coalesce(d.driver_label, '') ilike ${qp}
+        or coalesce(d.title, '') ilike ${qp}
+      )`);
+    }
+    values.push(filters.limit ?? 100);
+    const limitParam = `$${values.length}`;
+    values.push(filters.offset ?? 0);
+    const offsetParam = `$${values.length}`;
+
+    const result = await pool.query<DailyLedgerPrintDocumentSummary>(
+      `
+      select
+        d.id,
+        d.branch_id,
+        b.name as branch_name,
+        d.ledger_date,
+        d.ledger_date_to,
+        d.line_label,
+        d.driver_id,
+        d.driver_label,
+        d.destination_label,
+        d.search_query,
+        d.print_type,
+        d.print_scope,
+        d.title,
+        d.row_count,
+        d.pieces_count,
+        d.weight_kg,
+        d.collect_total_usd,
+        d.prepaid_total_usd,
+        d.hawala_total_usd,
+        d.transfer_fee_total_usd,
+        d.printed_at,
+        u.full_name as printed_by_name,
+        u.username as printed_by_username
+      from daily_ledger_print_documents d
+      left join branches b on b.id = d.branch_id
+      left join users u on u.id = d.printed_by
+      where ${conditions.join(' and ')}
+      order by d.printed_at desc, d.ledger_date desc
+      limit ${limitParam}
+      offset ${offsetParam}
+      `,
+      values,
+    );
+    return result.rows;
+  }
+
+  async getPrintDocument(scope: DataScope, documentId: string): Promise<DailyLedgerPrintDocument | null> {
+    if (!scope.companyId) throw new HttpError(400, 'Company scope is required.');
+    const result = await pool.query<DailyLedgerPrintDocument>(
+      `
+      select
+        d.*,
+        b.name as branch_name,
+        u.full_name as printed_by_name,
+        u.username as printed_by_username
+      from daily_ledger_print_documents d
+      left join branches b on b.id = d.branch_id
+      left join users u on u.id = d.printed_by
+      where d.id = $1::uuid and d.company_id = $2::uuid
+      limit 1
+      `,
+      [documentId, scope.companyId],
+    );
+    return result.rows[0] ?? null;
   }
 }

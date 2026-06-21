@@ -89,6 +89,10 @@ import {
 } from '../lib/shipping/dailyLedgerRowFilter';
 import type { DailyLedgerEditingScope, RemoteDailyLedgerRow } from '../lib/shipping/dailyLedgerTypes';
 import {
+  savePrintDocumentation,
+  type PrintDocumentationRowSnapshot,
+} from '../lib/shipping/dailyLedgerDocumentationGateway';
+import {
   mergeLedgerRowWithAutoTariff,
   parseUsd,
   parseWeightKg,
@@ -516,6 +520,27 @@ function buildVehicleBackendIdsForDriver(driverBackendId: string, vehicleList: V
     if (vehicleBackendId) vehicleIds.add(vehicleBackendId.toLowerCase());
   }
   return vehicleIds;
+}
+
+function buildPrintRowsSnapshot(rows: RemoteDailyLedgerRow[]): PrintDocumentationRowSnapshot[] {
+  return rows.map((row) => ({
+    rowId: row.id,
+    rowNo: row.row_no,
+    receiptNo: row.receipt_no,
+    destination: row.destination ?? '',
+    parcelType: row.parcel_type ?? '',
+    parcelCount: row.parcel_count,
+    weightKg: row.weight_kg == null ? null : String(row.weight_kg),
+    senderName: row.sender_name ?? '',
+    receiverName: row.receiver_name ?? '',
+    collectAmountUsd: String(remoteRowCollectionUsd(row) || row.collect_amount_usd || '0'),
+    prepaidAmountUsd: String(row.prepaid_amount_usd ?? '0'),
+    hawalaAmountUsd: String(row.hawala_amount_usd ?? '0'),
+    transferServiceFeeUsd: String(row.transfer_service_fee_usd ?? '0'),
+    notes: row.notes,
+    driverLabel: row.driver_label,
+    sessionId: row.session_id ?? null,
+  }));
 }
 
 function resolvePrintDriverLabel(
@@ -2988,6 +3013,54 @@ export default function ShipmentQuickLedger() {
     }
   };
 
+  const recordPrintDocumentation = async (input: {
+    rows: RemoteDailyLedgerRow[];
+    printType: 'shipments' | 'receipts';
+    printScopeLabel: string;
+    title: string;
+    driverLabel: string;
+    destinationLabel: string;
+    activeSearch: string;
+    selectedDriver?: Driver;
+    scope: 'driver' | 'date' | 'agent' | 'session';
+  }) => {
+    if (isCloudOffline || !input.rows.length) return;
+    const totals = computeTotalsFromRemoteRows(input.rows);
+    const branchBackendId = activeBranchIdRef.current
+      ? resolveLedgerBranchId(activeBranchIdRef.current)
+      : input.rows[0]?.branch_id ?? null;
+    const driverBackendId =
+      input.scope === 'driver' && input.selectedDriver
+        ? getBackendIdFromSynthetic(input.selectedDriver.id) ?? null
+        : input.rows[0]?.driver_id ?? null;
+    try {
+      await savePrintDocumentation({
+        branchId: branchBackendId,
+        ledgerDate: printDateFrom,
+        ledgerDateTo: printDateFrom !== printDateTo ? printDateTo : null,
+        lineLabel: tripRef.current.line || input.rows[0]?.line_label || null,
+        originLabel: input.rows[0]?.origin_label || null,
+        driverId: driverBackendId,
+        driverLabel: input.driverLabel,
+        destinationLabel: input.destinationLabel,
+        searchQuery: input.activeSearch || null,
+        printType: input.printType,
+        printScope: input.printScopeLabel,
+        title: input.title,
+        rowCount: totals.rowCount,
+        piecesCount: totals.piecesCount,
+        weightKg: totals.weightKg,
+        collectTotalUsd: totals.collectionUsd,
+        prepaidTotalUsd: totals.prepaidUsd,
+        hawalaTotalUsd: totals.hawalaUsd,
+        transferFeeTotalUsd: totals.transferServiceFeeUsd,
+        rowsSnapshot: buildPrintRowsSnapshot(input.rows),
+      });
+    } catch {
+      /* حفظ التوثيق اختياري — لا نُفشل الطباعة بسببه */
+    }
+  };
+
   const dispatchHtmlPrint = async (html: string, documentType: string) => {
     if (window.printer?.getDefault && window.printer?.print) {
       const defaultPrinter = await window.printer.getDefault();
@@ -3058,6 +3131,17 @@ export default function ShipmentQuickLedger() {
       setPrintDialogOpen(false);
       await dispatchHtmlPrint(html, 'quick_ledger');
       await recordPrintForRows(rows, `shipments_${scope}`);
+      await recordPrintDocumentation({
+        rows,
+        printType: 'shipments',
+        printScopeLabel: `shipments_${scope}`,
+        title: activeSearch ? `دفتر الشحن — ${activeSearch}` : `دفتر الشحن — ${scopeName}`,
+        driverLabel,
+        destinationLabel,
+        activeSearch,
+        selectedDriver,
+        scope,
+      });
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'تعذر تنفيذ طباعة الشحنات', 'error');
     } finally {
@@ -3090,6 +3174,28 @@ export default function ShipmentQuickLedger() {
       setPrintDialogOpen(false);
       await dispatchHtmlPrint(html, 'mahmoud_receipt');
       await recordPrintForRows(rows, `receipts_${scope}`);
+      await recordPrintDocumentation({
+        rows,
+        printType: 'receipts',
+        printScopeLabel: `receipts_${scope}`,
+        title,
+        driverLabel: resolvePrintDriverLabel(
+          rows,
+          activeSearch,
+          scope,
+          selectedDriver?.name ?? '',
+          scope === 'driver' ? selectedDriver?.name ?? '—' : scopeName,
+        ),
+        destinationLabel: resolvePrintDestinationLabel(
+          rows.map(remoteRowToPrint),
+          activeSearch,
+          scope,
+          printDestinationFilter,
+        ),
+        activeSearch,
+        selectedDriver,
+        scope,
+      });
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'تعذر تنفيذ طباعة الإيصالات', 'error');
     } finally {
@@ -3783,6 +3889,10 @@ export default function ShipmentQuickLedger() {
           <button type="button" onClick={() => openPrintDialog()}>
             <Printer size={16} />
             طباعة
+          </button>
+          <button type="button" onClick={() => navigate('/shipment-quick-ledger/documentation')} title="أرشيف ما طُبِع من الدفتر">
+            <ScrollText size={16} />
+            التوثيق
           </button>
           {canLedgerExportPdf ? (
             <button type="button" onClick={openDestinationPdfDialog}>

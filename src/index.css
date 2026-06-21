@@ -3156,3 +3156,127 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px;
 }
+
+.documentation-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+}
+
+.documentation-page .page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.documentation-page .page-subtitle {
+  color: #64748b;
+  margin-top: 4px;
+}
+
+.documentation-filters,
+.documentation-table-wrap {
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.documentation-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.documentation-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.documentation-stats > div {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.documentation-stats strong {
+  font-size: 1.25rem;
+}
+
+.documentation-stats span {
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
+.documentation-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.documentation-table th,
+.documentation-table td {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 10px 8px;
+  text-align: right;
+  vertical-align: top;
+}
+
+.documentation-table th {
+  background: #f8fafc;
+  font-weight: 600;
+}
+
+.documentation-empty {
+  color: #64748b;
+  padding: 24px 8px;
+}
+
+.documentation-detail-panel {
+  width: min(1100px, 96vw);
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.documentation-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.documentation-detail-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 12px;
+  margin-bottom: 16px;
+  font-size: 0.92rem;
+}
+
+.documentation-detail-table-wrap {
+  overflow: auto;
+  max-height: 52vh;
+}
+
+button.linkish {
+  background: none;
+  border: none;
+  color: #2563eb;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+}
+
+.documentation-back {
+  margin-bottom: 8px;
+  font-size: 0.92rem;
+}

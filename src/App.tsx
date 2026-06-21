@@ -55,6 +55,7 @@ import TransfersShell from './pages/transfers/TransfersShell';
 import TransferReports from './pages/transfers/TransferReports';
 import PermissionsCenter from './pages/PermissionsCenter';
 import AdminEvents from './pages/admin/AdminEvents';
+import DailyLedgerDocumentation from './pages/shipping/DailyLedgerDocumentation';
 import AgentPortal from './pages/AgentPortal';
 import AgentDeliveryQueues from './pages/agent/AgentDeliveryQueues';
 import { ToastProvider } from './components/Toast';
@@ -182,6 +183,14 @@ export default function App() {
                       <RequirePermission permission="shipments.write">
                         <ShipmentQuickLedger />
                       </RequirePermission>
+                    }
+                  />
+                  <Route
+                    path="/shipment-quick-ledger/documentation"
+                    element={
+                      <RequireAnyPermission permissions={['daily_ledger.documentation.read', 'shipments.read', 'shipments.write']}>
+                        <DailyLedgerDocumentation />
+                      </RequireAnyPermission>
                     }
                   />
                   <Route

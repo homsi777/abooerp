@@ -1,6 +1,6 @@
 import express from 'express';
 import { z } from 'zod';
-import { requirePermissions } from '../middleware/authorization.js';
+import { requirePermissions, requireAnyPermissions } from '../middleware/authorization.js';
 import {
   canAccessAnyCompanyBranch,
   canUseDailyLedgerAction,
@@ -551,6 +551,147 @@ export function createDailyLedgerRouter(
         res.status(500).json({
           success: false,
           error: error instanceof Error ? error.message : 'تعذر تسجيل حدث الطباعة.',
+        });
+      }
+    },
+  );
+
+  const printDocumentRowSchema = z.object({
+    rowId: uuid,
+    rowNo: z.number().int(),
+    receiptNo: z.string().nullable().optional(),
+    destination: z.string(),
+    parcelType: z.string().optional(),
+    parcelCount: z.number().nullable().optional(),
+    weightKg: z.string().nullable().optional(),
+    senderName: z.string().optional(),
+    receiverName: z.string().optional(),
+    collectAmountUsd: z.string().optional(),
+    prepaidAmountUsd: z.string().optional(),
+    hawalaAmountUsd: z.string().optional(),
+    transferServiceFeeUsd: z.string().optional(),
+    notes: z.string().nullable().optional(),
+    driverLabel: z.string().nullable().optional(),
+    sessionId: uuid.nullable().optional(),
+  });
+
+  router.post(
+    '/print/document',
+    requirePermissions(['shipments.read']),
+    async (req, res) => {
+      const scope = parseDataScope(req);
+      const bodySchema = z.object({
+        branchId: uuid.nullable().optional(),
+        ledgerDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        ledgerDateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+        lineLabel: z.string().nullable().optional(),
+        originLabel: z.string().nullable().optional(),
+        driverId: uuid.nullable().optional(),
+        driverLabel: z.string().nullable().optional(),
+        destinationLabel: z.string().nullable().optional(),
+        searchQuery: z.string().nullable().optional(),
+        printType: z.string().optional(),
+        printScope: z.string().nullable().optional(),
+        title: z.string().nullable().optional(),
+        rowCount: z.number().int().min(0).optional(),
+        piecesCount: z.number().int().min(0).optional(),
+        weightKg: z.number().min(0).optional(),
+        collectTotalUsd: z.number().min(0).optional(),
+        prepaidTotalUsd: z.number().min(0).optional(),
+        hawalaTotalUsd: z.number().min(0).optional(),
+        transferFeeTotalUsd: z.number().min(0).optional(),
+        rowsSnapshot: z.array(printDocumentRowSchema).optional(),
+      });
+      try {
+        const input = bodySchema.parse(req.body);
+        const document = await service.createPrintDocument(scope, {
+          ...input,
+          rowsSnapshot: input.rowsSnapshot?.map((row) => ({
+            rowId: row.rowId,
+            rowNo: row.rowNo,
+            receiptNo: row.receiptNo ?? null,
+            destination: row.destination,
+            parcelType: row.parcelType ?? '',
+            parcelCount: row.parcelCount ?? null,
+            weightKg: row.weightKg ?? null,
+            senderName: row.senderName ?? '',
+            receiverName: row.receiverName ?? '',
+            collectAmountUsd: row.collectAmountUsd ?? '0',
+            prepaidAmountUsd: row.prepaidAmountUsd ?? '0',
+            hawalaAmountUsd: row.hawalaAmountUsd ?? '0',
+            transferServiceFeeUsd: row.transferServiceFeeUsd ?? '0',
+            notes: row.notes ?? null,
+            driverLabel: row.driverLabel ?? null,
+            sessionId: row.sessionId ?? null,
+          })),
+        });
+        res.json({ success: true, data: document });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          res.status(error.statusCode).json({ success: false, error: error.message });
+          return;
+        }
+        res.status(500).json({
+          success: false,
+          error: error instanceof Error ? error.message : 'تعذر حفظ توثيق الطباعة.',
+        });
+      }
+    },
+  );
+
+  router.get(
+    '/print/documents',
+    requireAnyPermissions(['daily_ledger.documentation.read', 'shipments.read']),
+    async (req, res) => {
+      const scope = parseDataScope(req);
+      const querySchema = z.object({
+        branchId: uuid.optional(),
+        dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        driverId: uuid.optional(),
+        destination: z.string().optional(),
+        searchQuery: z.string().optional(),
+        limit: z.coerce.number().int().min(1).max(500).optional(),
+        offset: z.coerce.number().int().min(0).optional(),
+      });
+      try {
+        const q = querySchema.parse(req.query);
+        const rows = await service.listPrintDocuments(scope, q);
+        res.json({ success: true, data: rows });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          res.status(error.statusCode).json({ success: false, error: error.message });
+          return;
+        }
+        res.status(500).json({
+          success: false,
+          error: error instanceof Error ? error.message : 'تعذر تحميل توثيق الطباعة.',
+        });
+      }
+    },
+  );
+
+  router.get(
+    '/print/documents/:id',
+    requireAnyPermissions(['daily_ledger.documentation.read', 'shipments.read']),
+    async (req, res) => {
+      const scope = parseDataScope(req);
+      const documentId = uuid.parse(req.params.id);
+      try {
+        const document = await service.getPrintDocument(scope, documentId);
+        if (!document) {
+          res.status(404).json({ success: false, error: 'سجل التوثيق غير موجود.' });
+          return;
+        }
+        res.json({ success: true, data: document });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          res.status(error.statusCode).json({ success: false, error: error.message });
+          return;
+        }
+        res.status(500).json({
+          success: false,
+          error: error instanceof Error ? error.message : 'تعذر تحميل تفاصيل التوثيق.',
         });
       }
     },

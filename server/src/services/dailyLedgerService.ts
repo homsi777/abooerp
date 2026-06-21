@@ -1,6 +1,6 @@
 import type { DataScope } from '../utils/scope.js';
 import { HttpError } from '../utils/errors.js';
-import type { DailyLedgerRowListFilters, DailyLedgerUpsertInput } from '../repositories/dailyLedgerRepository.js';
+import type { DailyLedgerRowListFilters, DailyLedgerPrintDocumentInput, DailyLedgerPrintDocumentListFilters, DailyLedgerUpsertInput } from '../repositories/dailyLedgerRepository.js';
 import { DailyLedgerRepository } from '../repositories/dailyLedgerRepository.js';
 import type { DailyLedgerShipmentPostingService } from './dailyLedgerShipmentPostingService.js';
 
@@ -95,5 +95,17 @@ export class DailyLedgerService {
     },
   ) {
     return this.repo.recordSessionPrint(scope, input);
+  }
+
+  createPrintDocument(scope: DataScope, input: DailyLedgerPrintDocumentInput) {
+    return this.repo.createPrintDocument(scope, input);
+  }
+
+  listPrintDocuments(scope: DataScope, filters: DailyLedgerPrintDocumentListFilters) {
+    return this.repo.listPrintDocuments(scope, filters);
+  }
+
+  getPrintDocument(scope: DataScope, documentId: string) {
+    return this.repo.getPrintDocument(scope, documentId);
   }
 }
