@@ -30,16 +30,27 @@ function fmtWeightKg(value: string | number): string {
   return `${n.toLocaleString('en-US', { maximumFractionDigits: 1 })} كغ (${tons.toLocaleString('en-US', { maximumFractionDigits: 3 })} طن)`;
 }
 
-function fmtDate(value: string): string {
+function normalizeLedgerYmd(value: string | null | undefined): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match?.[1] ?? '';
+}
+
+function fmtDate(value: string | null | undefined): string {
+  const ymd = normalizeLedgerYmd(value);
+  if (!ymd) return '—';
   try {
-    return new Date(`${value}T12:00:00`).toLocaleDateString('ar-SY', {
+    const d = new Date(`${ymd}T12:00:00`);
+    if (Number.isNaN(d.getTime())) return ymd;
+    return d.toLocaleDateString('ar-SY', {
       weekday: 'short',
       year: 'numeric',
       month: 'short',
       day: 'numeric',
     });
   } catch {
-    return value;
+    return ymd;
   }
 }
 

@@ -175,7 +175,9 @@ export function formatLedgerMoney(value: unknown, currency = 'USD'): string {
 
 export function formatLedgerDate(value: unknown): string {
   if (!value) return '—';
-  const d = new Date(String(value));
-  if (Number.isNaN(d.getTime())) return String(value).split('T')[0] ?? '—';
+  const raw = String(value).trim();
+  const ymd = raw.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
+  const d = ymd ? new Date(`${ymd}T12:00:00`) : new Date(raw);
+  if (Number.isNaN(d.getTime())) return ymd ?? raw.split('T')[0] ?? '—';
   return d.toLocaleDateString('ar-SY');
 }
