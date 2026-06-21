@@ -823,6 +823,9 @@ export default function ShipmentQuickLedger() {
       collectionTotal: number;
       prepaidTotal: number;
       destinations: string[];
+      postedRowsCount?: number;
+      unpostedRowsCount?: number;
+      sourceLedgerDate?: string | null;
     };
     warnings: string[];
     errors: string[];
@@ -2718,6 +2721,9 @@ export default function ShipmentQuickLedger() {
           collectionTotal: number;
           prepaidTotal: number;
           destinations: string[];
+          postedRowsCount?: number;
+          unpostedRowsCount?: number;
+          sourceLedgerDate?: string | null;
         };
         warnings: string[];
         errors: string[];
@@ -2772,8 +2778,14 @@ export default function ShipmentQuickLedger() {
         },
         reason: transferReason.trim(),
       });
+      const movedCount = result.movedRowsCount;
+      const allOperational =
+        (transferValidation.summary?.postedRowsCount ?? 0) > 0 &&
+        (transferValidation.summary?.unpostedRowsCount ?? 0) === 0;
       showToast(
-        `تم نقل الإرسالية بنجاح — ${result.movedRowsCount} سطر (${result.transferNo}). يرجى إعادة طباعة الإرساليات المتأثرة.`,
+        allOperational
+          ? `تم نقل ${movedCount} سطر تشغيلياً (${result.transferNo}) — بدون أثر مالي جديد. أعد طباعة الإرساليات المتأثرة.`
+          : `تم نقل الإرسالية بنجاح — ${movedCount} سطر (${result.transferNo}). يرجى إعادة طباعة الإرساليات المتأثرة.`,
         'success',
       );
       exitTransferMode();
@@ -4848,36 +4860,87 @@ export default function ShipmentQuickLedger() {
             ) : (
               <>
                 {transferValidation.summary && (
-                  <div className="quick-ledger-transfer-summary">
-                    <div>الأسطر: <strong>{transferValidation.summary.rowsCount}</strong></div>
-                    <div>الطرود: <strong>{transferValidation.summary.piecesCount}</strong></div>
-                    <div>الوزن: <strong>{formatWeightKgTons(transferValidation.summary.weightKg)}</strong></div>
-                    <div>أجرة الشحن: <strong>{transferValidation.summary.freightTotal.toLocaleString()}</strong></div>
-                    <div>التحصيل: <strong>{transferValidation.summary.collectionTotal.toLocaleString()}</strong></div>
-                    <div>المدفوع مسبقاً: <strong>{transferValidation.summary.prepaidTotal.toLocaleString()}</strong></div>
-                    {transferValidation.summary.destinations.length > 0 && (
-                      <div>الوجهات: <strong>{transferValidation.summary.destinations.join('، ')}</strong></div>
+                  <>
+                    <div className="quick-ledger-transfer-summary">
+                      <div>الأسطر: <strong>{transferValidation.summary.rowsCount}</strong></div>
+                      <div>الطرود: <strong>{transferValidation.summary.piecesCount}</strong></div>
+                      <div>الوزن: <strong>{formatWeightKgTons(transferValidation.summary.weightKg)}</strong></div>
+                      <div>أجرة الشحن: <strong>{transferValidation.summary.freightTotal.toLocaleString()}</strong></div>
+                      <div>التحصيل: <strong>{transferValidation.summary.collectionTotal.toLocaleString()}</strong></div>
+                      <div>المدفوع مسبقاً: <strong>{transferValidation.summary.prepaidTotal.toLocaleString()}</strong></div>
+                      {transferValidation.summary.destinations.length > 0 && (
+                        <div>الوجهات: <strong>{transferValidation.summary.destinations.join('، ')}</strong></div>
+                      )}
+                    </div>
+
+                    {transferValidation.errors.length === 0 && (
+                      <div
+                        className={
+                          transferValidation.summary.unpostedRowsCount === 0 &&
+                          (transferValidation.summary.postedRowsCount ?? 0) > 0
+                            ? 'quick-ledger-transfer-notice'
+                            : 'quick-ledger-transfer-notice quick-ledger-transfer-notice--ready'
+                        }
+                      >
+                        {(transferValidation.summary.postedRowsCount ?? 0) > 0 &&
+                        transferValidation.summary.unpostedRowsCount === 0 ? (
+                          <>
+                            <strong>نقل تشغيلي — جاهز للتأكيد</strong>
+                            <p>
+                              كل الأسطر المحددة ({transferValidation.summary.postedRowsCount}) مُرحّلة مسبقاً.
+                              سينتقل السائق/المركبة/التاريخ فقط <strong>بدون أثر مالي جديد</strong>.
+                            </p>
+                          </>
+                        ) : (transferValidation.summary.postedRowsCount ?? 0) === 0 ? (
+                          <>
+                            <strong>جاهز للنقل</strong>
+                            <p>الأسطر المحددة لم تُرحّل بعد — سيُنشأ أثرها المالي عند حفظ الشحنات في الإرسالية الهدف.</p>
+                          </>
+                        ) : (
+                          <>
+                            <strong>نقل مختلط</strong>
+                            <p>
+                              {transferValidation.summary.postedRowsCount} سطر مُرحّل (تشغيلي فقط) و{' '}
+                              {transferValidation.summary.unpostedRowsCount} سطر غير مُرحّل — راجع التحديد قبل التأكيد.
+                            </p>
+                          </>
+                        )}
+                        {(transferValidation.summary.sourceLedgerDate || isBackdateMode) && (
+                          <p className="quick-ledger-transfer-notice-meta">
+                            {transferValidation.summary.sourceLedgerDate
+                              ? `من دفتر تاريخ ${transferValidation.summary.sourceLedgerDate}`
+                              : `من دفتر تاريخ ${trip.date}`}
+                            {isBackdateMode ? ' — تصحيح على تاريخ سابق' : ''}
+                          </p>
+                        )}
+                      </div>
                     )}
-                  </div>
+                  </>
                 )}
 
                 {transferValidation.errors.length > 0 && (
-                  <ul className="quick-ledger-transfer-errors">
-                    {transferValidation.errors.map((err, idx) => (
-                      <li key={idx}>{err}</li>
-                    ))}
-                  </ul>
+                  <div className="quick-ledger-transfer-notice quick-ledger-transfer-notice--error">
+                    <strong>لا يمكن تنفيذ النقل ({transferValidation.errors.length} مشكلة)</strong>
+                    <ul className="quick-ledger-transfer-errors">
+                      {transferValidation.errors.slice(0, 8).map((err, idx) => (
+                        <li key={idx}>{err}</li>
+                      ))}
+                      {transferValidation.errors.length > 8 && (
+                        <li>{`… و ${transferValidation.errors.length - 8} مشكلة أخرى`}</li>
+                      )}
+                    </ul>
+                  </div>
                 )}
                 {transferValidation.warnings.length > 0 && (
-                  <ul className="quick-ledger-transfer-warnings">
+                  <div className="quick-ledger-transfer-notice quick-ledger-transfer-notice--warn">
                     {transferValidation.warnings.map((warn, idx) => (
-                      <li key={idx}>{warn}</li>
+                      <p key={idx}>{warn}</p>
                     ))}
-                  </ul>
+                  </div>
                 )}
 
                 <p className="quick-ledger-hint">
-                  لن يتم إنشاء أثر مالي جديد للأسطر المرحّلة مسبقاً. سيتم نقلها تشغيلياً فقط (تغيير السائق/المركبة/التاريخ).
+                  حدّد السائق أو المركبة والتاريخ الهدف، ثم اكتب سبب النقل للتوثيق.
                 </p>
 
                 <div className="quick-ledger-print-form space-y-3 mb-3">
