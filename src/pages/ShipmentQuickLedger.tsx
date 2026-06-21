@@ -131,6 +131,9 @@ type LedgerRow = {
   notes: string;
   branchBackendId?: string;
   branchLabel?: string;
+  /** من جلسة الدفتر — مطلوب للحفظ في وضع «كل الفروع» */
+  sessionLedgerDate?: string;
+  sessionLineLabel?: string;
 };
 
 const LEDGER_ENTRY_SLOTS = 1;
@@ -367,6 +370,34 @@ function shouldPersistRow(row: LedgerRow) {
   if (row.loadedAt) return false;
   if (row.dbId) return isRowStarted(row);
   return isRowSavable(row);
+}
+
+function resolveRowEditingScope(
+  row: LedgerRow,
+  viewAllBranches: boolean,
+  globalScope: DailyLedgerEditingScope,
+  activeBranchId: string | null,
+  currentTrip: { date: string; line: string },
+): DailyLedgerEditingScope | null {
+  if (viewAllBranches) {
+    const branchId = row.branchBackendId?.trim();
+    const ledgerDate = row.sessionLedgerDate?.trim() || currentTrip.date;
+    const lineLabel = row.sessionLineLabel?.trim() || currentTrip.line;
+    if (!branchId || !ledgerDate) return null;
+    return { branchId, ledgerDate, lineLabel };
+  }
+  if (
+    !globalScope.branchId ||
+    !globalScope.ledgerDate ||
+    !globalScope.lineLabel ||
+    !activeBranchId ||
+    globalScope.branchId !== activeBranchId ||
+    globalScope.ledgerDate !== currentTrip.date ||
+    globalScope.lineLabel !== currentTrip.line
+  ) {
+    return null;
+  }
+  return globalScope;
 }
 
 /** جاهز لترحيل الشحنة — لا يشترط وزناً ولا كمية ولا مبلغاً */
@@ -1372,6 +1403,8 @@ export default function ShipmentQuickLedger() {
     notes: remote.notes ?? '',
     branchBackendId: remote.branch_id,
     branchLabel: resolveBranchLabelFromList(branches, remote.branch_id),
+    sessionLedgerDate: remote.ledger_date,
+    sessionLineLabel: remote.line_label,
   });
 
   const flushPendingRowSaves = async (scopeSessionId?: string | null) => {
@@ -1994,23 +2027,19 @@ export default function ShipmentQuickLedger() {
   };
 
   const saveRowToServer = async (displayRowId: number, options?: { force?: boolean }) => {
-    if (canViewAllLedgerEntriesRef.current && ledgerBranchModeRef.current === 'all') return;
     const branchId = activeBranchIdRef.current;
     const currentTrip = tripRef.current;
     const saveScope = editingScopeRef.current;
-    if (!branchId) return;
-    if (
-      !saveScope.branchId ||
-      !saveScope.ledgerDate ||
-      !saveScope.lineLabel ||
-      saveScope.branchId !== branchId ||
-      saveScope.ledgerDate !== currentTrip.date ||
-      saveScope.lineLabel !== currentTrip.line
-    ) {
-      return;
-    }
+    const viewAllBranches = canViewAllLedgerEntriesRef.current && ledgerBranchModeRef.current === 'all';
     const row = rowsRef.current.find((r) => r.id === displayRowId);
     if (!row) return;
+    const rowScope = resolveRowEditingScope(row, viewAllBranches, saveScope, branchId, currentTrip);
+    if (!rowScope) {
+      if (viewAllBranches && shouldPersistRow(row)) {
+        showToast('تعذر حفظ السطر — بيانات الفرع أو تاريخ الدفتر غير متوفرة', 'error');
+      }
+      return;
+    }
     if (!options?.force && receiptEditingRowIdRef.current === displayRowId) return;
     if (!shouldPersistRow(row)) return;
     if (isCloudOffline) {
@@ -2035,7 +2064,7 @@ export default function ShipmentQuickLedger() {
       }
     }
 
-    const origin = resolveTripOrigin(saveScope.lineLabel);
+    const origin = resolveTripOrigin(rowScope.lineLabel);
 
     const task = (async () => {
       const latestRow = rowsRef.current.find((r) => r.id === displayRowId);
@@ -2057,9 +2086,9 @@ export default function ShipmentQuickLedger() {
 
       try {
         const saved = await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
-          branchId: resolveLedgerBranchId(saveScope.branchId),
-          ledgerDate: saveScope.ledgerDate,
-          lineLabel: saveScope.lineLabel,
+          branchId: resolveLedgerBranchId(rowScope.branchId),
+          ledgerDate: rowScope.ledgerDate,
+          lineLabel: rowScope.lineLabel,
           originLabel: origin,
           tripNo: currentTrip.tripNo || null,
           ...(latestRow.dbId ? { rowId: latestRow.dbId } : {}),
@@ -2746,29 +2775,17 @@ export default function ShipmentQuickLedger() {
     );
   };
 
-  const openTransferDialog = async () => {
-    if (!requireCloudConnection('نقل الإرسالية يحتاج اتصالاً بالسحابة.')) return;
-    if (!selectedTransferRowIds.length) {
-      showToast('يجب تحديد سطر واحد على الأقل', 'error');
-      return;
+  const flushTransferSelectionSaves = async (rowIds: number[]) => {
+    Object.values(saveTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+    saveTimersRef.current = {};
+    receiptEditingRowIdRef.current = null;
+    setReceiptEditingRowId(null);
+    for (const rowId of rowIds) {
+      await saveRowToServerRef.current(rowId, { force: true });
     }
-    const dbIds = selectedTransferRows.map((row) => row.dbId).filter((id): id is string => Boolean(id));
-    if (dbIds.length !== selectedTransferRows.length) {
-      showToast('بعض الأسطر المحددة غير محفوظة — احفظ الدفتر أولاً قبل النقل', 'error');
-      return;
-    }
-    if (transferSelectionSummary.hasMultipleBranches) {
-      showToast(
-        `لا يمكن نقل أسطر من فروع مختلفة (${transferSelectionSummary.branchLabels.join('، ')}) — حدّد أسطر فرع واحد.`,
-        'error',
-      );
-      return;
-    }
-    setTransferReason('');
-    setTransferDriverId(trip.driverId || 0);
-    setTransferVehicleId(trip.vehicleId || 0);
-    setTransferDate(trip.date);
-    setTransferDialogOpen(true);
+  };
+
+  const runTransferValidation = async (dbIds: string[]) => {
     setTransferValidation({ loading: true, warnings: [], errors: [] });
     try {
       const result = await httpClient.post<{
@@ -2804,6 +2821,38 @@ export default function ShipmentQuickLedger() {
     }
   };
 
+  const openTransferDialog = async () => {
+    if (!requireCloudConnection('نقل الإرسالية يحتاج اتصالاً بالسحابة.')) return;
+    if (!selectedTransferRowIds.length) {
+      showToast('يجب تحديد سطر واحد على الأقل', 'error');
+      return;
+    }
+    const dbIds = selectedTransferRows.map((row) => row.dbId).filter((id): id is string => Boolean(id));
+    if (dbIds.length !== selectedTransferRows.length) {
+      showToast('بعض الأسطر المحددة غير محفوظة — احفظ الدفتر أولاً قبل النقل', 'error');
+      return;
+    }
+    if (transferSelectionSummary.hasMultipleBranches) {
+      showToast(
+        `لا يمكن نقل أسطر من فروع مختلفة (${transferSelectionSummary.branchLabels.join('، ')}) — حدّد أسطر فرع واحد.`,
+        'error',
+      );
+      return;
+    }
+    setTransferReason('');
+    setTransferDriverId(trip.driverId || 0);
+    setTransferVehicleId(trip.vehicleId || 0);
+    setTransferDate(trip.date);
+    setTransferDialogOpen(true);
+    try {
+      await flushTransferSelectionSaves(selectedTransferRowIds);
+    } catch {
+      showToast('تعذر حفظ بعض التعديلات — راجع الأسطر ثم أعد المحاولة', 'error');
+      return;
+    }
+    await runTransferValidation(dbIds);
+  };
+
   const confirmTransfer = async () => {
     if (!requireCloudConnection('تأكيد نقل الإرسالية يحتاج اتصالاً بالسحابة.')) return;
     const dbIds = selectedTransferRows.map((row) => row.dbId).filter((id): id is string => Boolean(id));
@@ -2823,6 +2872,7 @@ export default function ShipmentQuickLedger() {
     const vehicleBackendId = transferVehicleId ? getBackendIdFromSynthetic(transferVehicleId) ?? null : null;
     setTransferring(true);
     try {
+      await flushTransferSelectionSaves(selectedTransferRowIds);
       const result = await httpClient.post<{
         transferNo: string;
         movedRowsCount: number;
@@ -5006,6 +5056,29 @@ export default function ShipmentQuickLedger() {
                         <li>{`… و ${transferValidation.errors.length - 8} مشكلة أخرى`}</li>
                       )}
                     </ul>
+                    <p className="quick-ledger-transfer-notice-meta">
+                      عدّل الأسطر في الجدول (تحصيل أو دفع مسبق)، ثم اضغط «إعادة التحقق بعد الحفظ».
+                    </p>
+                    <button
+                      type="button"
+                      className="quick-ledger-transfer-revalidate-btn"
+                      disabled={transferring || transferValidation.loading}
+                      onClick={() => {
+                        const dbIds = selectedTransferRows
+                          .map((row) => row.dbId)
+                          .filter((id): id is string => Boolean(id));
+                        void (async () => {
+                          try {
+                            await flushTransferSelectionSaves(selectedTransferRowIds);
+                            await runTransferValidation(dbIds);
+                          } catch {
+                            showToast('تعذر حفظ التعديلات — تحقق من الاتصال ثم أعد المحاولة', 'error');
+                          }
+                        })();
+                      }}
+                    >
+                      إعادة التحقق بعد الحفظ
+                    </button>
                   </div>
                 )}
                 {transferValidation.warnings.length > 0 && (

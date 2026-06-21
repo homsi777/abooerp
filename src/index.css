@@ -1657,6 +1657,22 @@ body {
   font-weight: 600;
 }
 
+.quick-ledger-transfer-revalidate-btn {
+  margin-top: 10px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid #fca5a5;
+  background: #fff;
+  color: #991b1b;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.quick-ledger-transfer-revalidate-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .quick-ledger-stats div {
   display: flex;
   align-items: baseline;
