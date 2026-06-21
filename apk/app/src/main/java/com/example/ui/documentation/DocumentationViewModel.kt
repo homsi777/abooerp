@@ -78,7 +78,12 @@ class DocumentationViewModel(private val apiService: ApiService) : ViewModel() {
                 }
             } catch (e: retrofit2.HttpException) {
                 _listState.value = DocumentationListState.Error(
-                    if (e.code() == 401) "انتهت الجلسة، يرجى تسجيل الدخول مجدداً" else "استجابة غير متوقعة من الخادم",
+                    when (e.code()) {
+                        401 -> "انتهت الجلسة، يرجى تسجيل الدخول مجدداً"
+                        404 -> "خدمة التوثيق غير متوفرة على الخادم — يُرجى تحديث السيرفر ثم إعادة المحاولة"
+                        403 -> "لا تملك صلاحية عرض التوثيق"
+                        else -> "استجابة غير متوقعة من الخادم"
+                    },
                 )
             } catch (e: Exception) {
                 _listState.value = DocumentationListState.Error(

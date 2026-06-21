@@ -48,6 +48,13 @@ curl -s https://www.abooerp.org/api/v1/system/lan-health
 
 - `GET /api/v1/agent-portal/shipments?date=YYYY-MM-DD`
 - `GET|POST /api/v1/agent-portal/vouchers`
+- `GET /api/v1/agent-portal/documentation?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD`
+
+تحقق أن مسار التوثيق موجود (بدون تسجيل دخول يُرجع **401** وليس **404**):
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" "https://www.abooerp.org/api/v1/agent-portal/documentation"
+```
 
 ## تطبيق Android (APK)
 
