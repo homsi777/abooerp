@@ -139,6 +139,13 @@ type LedgerRow = {
 const LEDGER_ENTRY_SLOTS = 1;
 const LEDGER_ROWS_ADD_INCREMENT = 1;
 const ROW_SAVE_DEBOUNCE_MS = 280;
+const FINANCIAL_SAVE_DEBOUNCE_MS = 120;
+const FINANCIAL_ROW_FIELDS = new Set<keyof LedgerRow>([
+  'collectAmount',
+  'prepaidAmount',
+  'receiverCollect',
+  'transferServiceFee',
+]);
 const SESSION_SCOPE_REQUIRED_MSG =
   'لا يمكن تنفيذ هذا الإجراء من وضع "الكل". اختر إرسالية محددة أولاً.';
 
@@ -379,6 +386,19 @@ function resolveRowEditingScope(
   activeBranchId: string | null,
   currentTrip: { date: string; line: string },
 ): DailyLedgerEditingScope | null {
+  if (row.dbId) {
+    const branchId =
+      row.branchBackendId?.trim() ||
+      (viewAllBranches ? '' : globalScope.branchId?.trim()) ||
+      activeBranchId?.trim() ||
+      '';
+    const ledgerDate =
+      row.sessionLedgerDate?.trim() || globalScope.ledgerDate?.trim() || currentTrip.date;
+    const lineLabel =
+      row.sessionLineLabel?.trim() || globalScope.lineLabel?.trim() || currentTrip.line;
+    if (!branchId || !ledgerDate) return null;
+    return { branchId, ledgerDate, lineLabel };
+  }
   if (viewAllBranches) {
     const branchId = row.branchBackendId?.trim();
     const ledgerDate = row.sessionLedgerDate?.trim() || currentTrip.date;
@@ -1422,6 +1442,21 @@ export default function ShipmentQuickLedger() {
     }
   };
 
+  useEffect(() => {
+    const flush = () => {
+      void flushPendingRowSaves();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
+
   const buildEntrySlotRows = (startId: number, origin: string, count = LEDGER_ENTRY_SLOTS) =>
     Array.from({ length: count }, (_, idx) =>
       mergeRowWithAutoTariff(
@@ -1588,9 +1623,7 @@ export default function ShipmentQuickLedger() {
     const generation = ++loadGenerationRef.current;
 
     try {
-      if (!viewAllBranches) {
-        await flushPendingRowSaves();
-      }
+      await flushPendingRowSaves();
       if (generation !== loadGenerationRef.current) return;
 
       if (options?.preserveSessionId) {
@@ -1899,7 +1932,11 @@ export default function ShipmentQuickLedger() {
       clearFailedSaveRow(id);
     }
     if (field !== 'receiptNo') {
-      queueRowSave(id);
+      if (FINANCIAL_ROW_FIELDS.has(field)) {
+        queueFinancialRowSave(id);
+      } else {
+        queueRowSave(id);
+      }
     }
   };
 
@@ -2035,7 +2072,7 @@ export default function ShipmentQuickLedger() {
     if (!row) return;
     const rowScope = resolveRowEditingScope(row, viewAllBranches, saveScope, branchId, currentTrip);
     if (!rowScope) {
-      if (viewAllBranches && shouldPersistRow(row)) {
+      if (shouldPersistRow(row)) {
         showToast('تعذر حفظ السطر — بيانات الفرع أو تاريخ الدفتر غير متوفرة', 'error');
       }
       return;
@@ -2122,6 +2159,17 @@ export default function ShipmentQuickLedger() {
                   updatedAt: saved.updated_at,
                   postedShipmentId: saved.posted_shipment_id,
                   loadedAt: saved.loaded_at,
+                  collectAmount:
+                    String(
+                      parseUsd(String(saved.collect_amount_usd ?? '')) +
+                        parseUsd(String(saved.fees_amount_usd ?? '')) || '',
+                    ) || r.collectAmount,
+                  prepaidAmount: String(saved.prepaid_amount_usd ?? '') || r.prepaidAmount,
+                  receiverCollect: String(saved.hawala_amount_usd ?? '') || r.receiverCollect,
+                  transferServiceFee: String(saved.transfer_service_fee_usd ?? '') || r.transferServiceFee,
+                  branchBackendId: saved.branch_id ?? r.branchBackendId,
+                  sessionLedgerDate: saved.ledger_date ?? r.sessionLedgerDate,
+                  sessionLineLabel: saved.line_label ?? r.sessionLineLabel,
                 }
               : r,
           );
@@ -2167,6 +2215,15 @@ export default function ShipmentQuickLedger() {
       delete saveTimersRef.current[rowNo];
       void saveRowToServer(rowNo);
     }, ROW_SAVE_DEBOUNCE_MS);
+  };
+
+  const queueFinancialRowSave = (rowNo: number) => {
+    const timer = saveTimersRef.current[rowNo];
+    if (timer) window.clearTimeout(timer);
+    saveTimersRef.current[rowNo] = window.setTimeout(() => {
+      delete saveTimersRef.current[rowNo];
+      void saveRowToServer(rowNo);
+    }, FINANCIAL_SAVE_DEBOUNCE_MS);
   };
 
   const flushRowSave = (rowNo: number) => {

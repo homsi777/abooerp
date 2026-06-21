@@ -186,6 +186,42 @@ async function nextRowNoForSession(client: PoolClient, sessionId: string): Promi
   return (Number(result.rows[0]?.max_no) || 0) + 1;
 }
 
+/** يستخرج نطاق الجلسة الفعلي من السطر المحفوظ — لا يعتمد على بيانات الواجهة */
+async function resolveRowSessionScopeForUpsert(
+  client: PoolClient,
+  companyId: string,
+  rowId: string,
+): Promise<{ branchId: string; ledgerDate: string; lineLabel: string } | null> {
+  const result = await client.query<{
+    branch_id: string;
+    ledger_date: string;
+    line_label: string;
+  }>(
+    `
+    select
+      s.branch_id,
+      s.ledger_date::text as ledger_date,
+      s.line_label
+    from daily_ledger_rows r
+    join daily_ledger_sessions s on s.id = r.session_id
+    join branches b on b.id = s.branch_id
+    where r.id = $1::uuid
+      and r.deleted_at is null
+      and s.deleted_at is null
+      and b.company_id = $2::uuid
+    limit 1
+    `,
+    [rowId, companyId],
+  );
+  const hit = result.rows[0];
+  if (!hit?.branch_id || !hit.ledger_date) return null;
+  return {
+    branchId: hit.branch_id,
+    ledgerDate: hit.ledger_date,
+    lineLabel: hit.line_label ?? '',
+  };
+}
+
 /** ينقل السطر إلى جلسة السائق إذا كان محفوظاً في جلسة «بدون سائق» أو سائق مختلف */
 async function migrateRowToDriverSessionIfNeeded(
   client: PoolClient,
@@ -660,6 +696,23 @@ export class DailyLedgerRepository {
           ledgerScope,
           input.receiptNo,
         );
+      }
+
+      if (effectiveRowId) {
+        const sessionScope = await resolveRowSessionScopeForUpsert(
+          client,
+          scope.companyId,
+          effectiveRowId,
+        );
+        if (!sessionScope) {
+          throw new HttpError(404, 'سطر الدفتر غير موجود أو لا ينتمي لشركتك.');
+        }
+        input = {
+          ...input,
+          branchId: sessionScope.branchId,
+          ledgerDate: sessionScope.ledgerDate,
+          lineLabel: sessionScope.lineLabel,
+        };
       }
 
       await assertUniqueLedgerReceiptNo(

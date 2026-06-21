@@ -26,8 +26,11 @@ export class DailyLedgerService {
       try {
         await this.shipmentPosting.syncPostedShipmentFromLedgerRow(scope, row.id);
       } catch (error) {
-        const detail = error instanceof Error ? error.message : 'تعذر تحديث الشحنة المرتبطة.';
-        throw new HttpError(409, `تم حفظ سطر الدفتر، لكن ${detail}`);
+        console.warn(
+          '[daily-ledger] ledger row saved but shipment sync failed',
+          row.id,
+          error instanceof Error ? error.message : error,
+        );
       }
     }
     return row;
