@@ -104,6 +104,10 @@ export async function getPrintDocumentation(id: string): Promise<PrintDocumentat
   return httpClient.get<PrintDocumentationDetail>(`/daily-ledger/print/documents/${id}`);
 }
 
+export async function deletePrintDocumentation(id: string): Promise<void> {
+  await httpClient.delete<{ id: string }>(`/daily-ledger/print/documents/${id}`);
+}
+
 export async function savePrintDocumentation(input: SavePrintDocumentationInput): Promise<{ id: string }> {
   const created = await httpClient.post<{ id: string }>('/daily-ledger/print/document', input);
   return created;

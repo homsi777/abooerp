@@ -3324,6 +3324,21 @@ body {
   padding: 24px 8px;
 }
 
+.documentation-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.documentation-delete-btn {
+  color: #ef4444;
+}
+
+.documentation-delete-btn:disabled {
+  opacity: 0.6;
+}
+
 .documentation-detail-panel {
   width: min(1100px, 96vw);
   max-height: 90vh;

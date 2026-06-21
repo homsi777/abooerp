@@ -1364,6 +1364,19 @@ export class DailyLedgerRepository {
     return result.rows[0] ?? null;
   }
 
+  async deletePrintDocument(scope: DataScope, documentId: string): Promise<boolean> {
+    if (!scope.companyId) throw new HttpError(400, 'Company scope is required.');
+    const result = await pool.query<{ id: string }>(
+      `
+      delete from daily_ledger_print_documents
+      where id = $1::uuid and company_id = $2::uuid
+      returning id
+      `,
+      [documentId, scope.companyId],
+    );
+    return result.rows.length > 0;
+  }
+
   async listAgentPrintDocuments(
     scope: DataScope,
     filters: DailyLedgerPrintDocumentListFilters,

@@ -118,6 +118,10 @@ export class DailyLedgerService {
     return this.repo.getPrintDocument(scope, documentId);
   }
 
+  deletePrintDocument(scope: DataScope, documentId: string) {
+    return this.repo.deletePrintDocument(scope, documentId);
+  }
+
   listAgentPrintDocuments(scope: DataScope, filters: DailyLedgerPrintDocumentListFilters) {
     const hints = agentDestinationHints(scope);
     if (!scope.companyId || !hints.length) {

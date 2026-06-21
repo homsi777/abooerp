@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Search, FileText, X, Printer } from 'lucide-react';
+import { Search, FileText, X, Printer, Trash2 } from 'lucide-react';
 import { useToast } from '../../components/Toast';
+import { useAuth } from '../../context/AuthProvider';
 import { phase15Gateway, getBackendIdFromSynthetic } from '../../lib/api/phase15Gateway';
 import {
+  deletePrintDocumentation,
   getPrintDocumentation,
   listPrintDocumentation,
   printTypeLabel,
@@ -70,6 +72,8 @@ function fmtDateTime(value: string): string {
 
 export default function DailyLedgerDocumentation() {
   const { showToast } = useToast();
+  const { hasPermission } = useAuth();
+  const canDeleteDocumentation = hasPermission('shipments.write');
   const [dateFrom, setDateFrom] = useState(
     new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
   );
@@ -86,6 +90,7 @@ export default function DailyLedgerDocumentation() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<PrintDocumentationDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     void Promise.all([phase15Gateway.branches.getAll(), phase15Gateway.drivers.getAll()])
@@ -141,6 +146,34 @@ export default function DailyLedgerDocumentation() {
   const closeDetail = () => {
     setSelectedId(null);
     setDetail(null);
+  };
+
+  const deleteDocument = async (doc: PrintDocumentationSummary) => {
+    if (!canDeleteDocumentation) {
+      showToast('لا تملك صلاحية حذف سجلات التوثيق', 'error');
+      return;
+    }
+    const label = [
+      fmtDate(doc.ledger_date),
+      doc.driver_label || '',
+      doc.destination_label || doc.search_query || '',
+      printTypeLabel(doc.print_type),
+    ]
+      .filter(Boolean)
+      .join(' — ');
+    if (!window.confirm(`حذف سجل التوثيق هذا نهائياً؟\n\n${label}`)) return;
+
+    setDeletingId(doc.id);
+    try {
+      await deletePrintDocumentation(doc.id);
+      setRows((prev) => prev.filter((row) => row.id !== doc.id));
+      if (selectedId === doc.id) closeDetail();
+      showToast('تم حذف سجل التوثيق', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر حذف سجل التوثيق', 'error');
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   const printList = async () => {
@@ -338,7 +371,7 @@ export default function DailyLedgerDocumentation() {
                 <th>تحصيل $</th>
                 <th>طُبع في</th>
                 <th>بواسطة</th>
-                <th></th>
+                <th>إجراءات</th>
               </tr>
             </thead>
             <tbody>
@@ -359,10 +392,24 @@ export default function DailyLedgerDocumentation() {
                   <td>{fmtDateTime(row.printed_at)}</td>
                   <td>{row.printed_by_name || row.printed_by_username || '—'}</td>
                   <td>
-                    <button type="button" className="linkish" onClick={() => void openDetail(row.id)}>
-                      <FileText size={14} />
-                      تفاصيل
-                    </button>
+                    <div className="documentation-row-actions">
+                      <button type="button" className="linkish" onClick={() => void openDetail(row.id)}>
+                        <FileText size={14} />
+                        تفاصيل
+                      </button>
+                      {canDeleteDocumentation ? (
+                        <button
+                          type="button"
+                          className="linkish documentation-delete-btn"
+                          onClick={() => void deleteDocument(row)}
+                          disabled={deletingId === row.id}
+                          title="حذف سجل التوثيق"
+                        >
+                          <Trash2 size={14} />
+                          {deletingId === row.id ? 'جاري الحذف...' : 'حذف'}
+                        </button>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -386,6 +433,17 @@ export default function DailyLedgerDocumentation() {
                     <button type="button" className="primary" onClick={() => void exportDetailPdf(detail)} disabled={exporting}>
                       {exporting ? 'جاري التصدير...' : 'تصدير PDF'}
                     </button>
+                    {canDeleteDocumentation ? (
+                      <button
+                        type="button"
+                        className="danger"
+                        onClick={() => void deleteDocument(detail)}
+                        disabled={deletingId === detail.id}
+                      >
+                        <Trash2 size={16} />
+                        {deletingId === detail.id ? 'جاري الحذف...' : 'حذف'}
+                      </button>
+                    ) : null}
                   </>
                 ) : null}
                 <button type="button" onClick={closeDetail} aria-label="إغلاق">
