@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Printer } from 'lucide-react';
 import { convertToUsd, formatCurrency, getExchangeRatesToUsd, type CurrencyCode } from '../../lib/currency/currency';
 import { phase3FinanceGateway, type BackendCashboxRecord } from '../../lib/api/phase3FinanceGateway';
 import type { PaymentVoucher } from '../../types';
 import { useToast } from '../../components/Toast';
 import { downloadCsv } from '../../lib/export/csvDownload';
-import { exportPdfTable } from '../../lib/export/pdfExport';
+import { buildPdfTableHtml, exportPdfTable } from '../../lib/export/pdfExport';
+import { printLedgerStyleDocument } from '../../lib/export/ledgerStylePrint';
 
 const statusStyle: Record<string, string> = {
   draft: 'bg-yellow-100 text-yellow-800',
@@ -19,17 +21,42 @@ const statusAr: Record<string, string> = {
   cancelled: 'ملغى',
 };
 
+const TABLE_HEADERS = ['رقم السند', 'التاريخ', 'المستفيد', 'الصندوق', 'المبلغ', 'USD', 'الطريقة', 'الحالة', 'الوصف'];
+
+function monthStartIso(): string {
+  const clock = new Date();
+  const month = String(clock.getMonth() + 1).padStart(2, '0');
+  return `${clock.getFullYear()}-${month}-01`;
+}
+
+function todayIso(): string {
+  return new Date().toISOString().split('T')[0] ?? '';
+}
+
+function ymd(d: string): string {
+  return d.split('T')[0] ?? d;
+}
+
+function paymentMethodLabel(method: PaymentVoucher['paymentMethod']): string {
+  if (method === 'cheque') return 'شيك';
+  if (method === 'transfer') return 'تحويل';
+  return 'نقدي';
+}
+
 export default function FinanceExpenses() {
   const { showToast } = useToast();
   const rates = getExchangeRatesToUsd();
   const [vouchers, setVouchers] = useState<PaymentVoucher[]>([]);
   const [cashboxes, setCashboxes] = useState<BackendCashboxRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [dateFrom, setDateFrom] = useState(monthStartIso);
+  const [dateTo, setDateTo] = useState(todayIso);
   const [showCreate, setShowCreate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
-    date: new Date().toISOString().split('T')[0] ?? '',
+    date: todayIso(),
     category: '',
     amount: 0,
     currency: 'USD' as CurrencyCode,
@@ -58,46 +85,73 @@ export default function FinanceExpenses() {
     void load();
   }, [load]);
 
-  const ymd = (d: string) => d.split('T')[0] ?? d;
+  const expenseVouchers = useMemo(
+    () => vouchers.filter((v) => v.relatedEntityType === 'expense'),
+    [vouchers],
+  );
 
   const cashboxesForCurrency = useMemo(
     () => cashboxes.filter((c) => c.is_active && c.currency_code === form.currency),
     [cashboxes, form.currency],
   );
 
-  const { todayTotal, monthTotal, draftCount, filtered } = useMemo(() => {
-    const clock = new Date();
-    const today = clock.toISOString().split('T')[0] ?? '';
-    const m = String(clock.getMonth() + 1).padStart(2, '0');
-    const y = String(clock.getFullYear());
+  const filtered = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-
-    let todayUsd = 0;
-    let monthUsd = 0;
-    let draft = 0;
-    for (const v of vouchers) {
+    return expenseVouchers.filter((v) => {
       const d = ymd(v.date);
-      const cur = (v.currency ?? 'USD') as CurrencyCode;
-      const usd = v.amountUsd ?? convertToUsd(v.amount, cur, rates);
-      if (d === today) todayUsd += usd;
-      if (d.startsWith(`${y}-${m}`)) monthUsd += usd;
-      if (v.createdBy === 'draft') draft += 1;
-    }
-
-    const fil = vouchers.filter((e) => {
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo && d > dateTo) return false;
       if (!q) return true;
       return (
-        e.voucherNo.toLowerCase().includes(q) ||
-        e.vendorName.toLowerCase().includes(q) ||
-        (e.description && e.description.toLowerCase().includes(q))
+        v.voucherNo.toLowerCase().includes(q) ||
+        v.vendorName.toLowerCase().includes(q) ||
+        (v.description && v.description.toLowerCase().includes(q))
       );
     });
-    return { todayTotal: todayUsd, monthTotal: monthUsd, draftCount: draft, filtered: fil };
-  }, [vouchers, searchTerm, rates]);
+  }, [expenseVouchers, searchTerm, dateFrom, dateTo]);
+
+  const buildExportRows = useCallback(
+    (rows: PaymentVoucher[]) =>
+      rows.map((v) => {
+        const cur = (v.currency ?? 'USD') as CurrencyCode;
+        const usd = v.amountUsd ?? convertToUsd(v.amount, cur, rates);
+        const st = v.createdBy;
+        return [
+          v.voucherNo,
+          v.date,
+          v.vendorName,
+          v.cashboxName ?? '-',
+          formatCurrency(v.amount, cur),
+          formatCurrency(usd, 'USD'),
+          paymentMethodLabel(v.paymentMethod),
+          statusAr[st] ?? st,
+          v.description || '-',
+        ];
+      }),
+    [rates],
+  );
+
+  const buildSubtitle = useCallback(() => {
+    const parts: string[] = [];
+    if (dateFrom || dateTo) parts.push(`الفترة: ${dateFrom || '…'} → ${dateTo || '…'}`);
+    if (searchTerm.trim()) parts.push(`بحث: ${searchTerm.trim()}`);
+    return parts.length ? parts.join(' | ') : undefined;
+  }, [dateFrom, dateTo, searchTerm]);
+
+  const stats = useMemo(() => {
+    let totalUsd = 0;
+    let draft = 0;
+    for (const v of filtered) {
+      const cur = (v.currency ?? 'USD') as CurrencyCode;
+      totalUsd += v.amountUsd ?? convertToUsd(v.amount, cur, rates);
+      if (v.createdBy === 'draft') draft += 1;
+    }
+    return { totalUsd, draft, count: filtered.length };
+  }, [filtered, rates]);
 
   const resetForm = () => {
     setForm({
-      date: new Date().toISOString().split('T')[0] ?? '',
+      date: todayIso(),
       category: '',
       amount: 0,
       currency: 'USD',
@@ -145,9 +199,14 @@ export default function FinanceExpenses() {
   };
 
   const exportCsv = () => {
+    if (!filtered.length) {
+      showToast('لا توجد سجلات للتصدير', 'info');
+      return;
+    }
+    const rangeLabel = dateFrom && dateTo ? `${dateFrom}_${dateTo}` : todayIso();
     downloadCsv(
-      `expenses-${new Date().toISOString().split('T')[0]}.csv`,
-      ['رقم السند', 'التاريخ', 'المستفيد', 'المبلغ', 'العملة', 'USD', 'الطريقة', 'الحالة', 'الوصف'],
+      `expenses-${rangeLabel}.csv`,
+      TABLE_HEADERS,
       filtered.map((v) => {
         const cur = (v.currency ?? 'USD') as CurrencyCode;
         const usd = v.amountUsd ?? convertToUsd(v.amount, cur, rates);
@@ -156,10 +215,11 @@ export default function FinanceExpenses() {
           v.voucherNo,
           v.date,
           v.vendorName,
+          v.cashboxName ?? '',
           v.amount,
           cur,
           usd,
-          v.paymentMethod === 'cheque' ? 'شيك' : v.paymentMethod === 'transfer' ? 'تحويل' : 'نقدي',
+          paymentMethodLabel(v.paymentMethod),
           statusAr[st] ?? st,
           v.description || '',
         ];
@@ -169,30 +229,46 @@ export default function FinanceExpenses() {
   };
 
   const exportPdf = async () => {
-    const result = await exportPdfTable({
-      title: 'المصاريف',
-      subtitle: searchTerm.trim() ? `بحث: ${searchTerm.trim()}` : undefined,
-      defaultFileName: `expenses-${new Date().toISOString().split('T')[0]}.pdf`,
-      headers: ['رقم السند', 'التاريخ', 'المستفيد', 'المبلغ', 'USD', 'الطريقة', 'الحالة', 'الوصف'],
-      rows: filtered.map((v) => {
-        const cur = (v.currency ?? 'USD') as CurrencyCode;
-        const usd = v.amountUsd ?? convertToUsd(v.amount, cur, rates);
-        const st = v.createdBy;
-        return [
-          v.voucherNo,
-          v.date,
-          v.vendorName,
-          formatCurrency(v.amount, cur),
-          formatCurrency(usd, 'USD'),
-          v.paymentMethod === 'cheque' ? 'شيك' : v.paymentMethod === 'transfer' ? 'تحويل' : 'نقدي',
-          statusAr[st] ?? st,
-          v.description || '-',
-        ];
-      }),
-    });
+    if (!filtered.length) {
+      showToast('لا توجد سجلات للتصدير', 'info');
+      return;
+    }
+    setExporting(true);
+    try {
+      const rangeLabel = dateFrom && dateTo ? `${dateFrom}_${dateTo}` : todayIso();
+      const result = await exportPdfTable({
+        title: 'المصاريف',
+        subtitle: buildSubtitle(),
+        defaultFileName: `expenses-${rangeLabel}.pdf`,
+        headers: TABLE_HEADERS,
+        rows: buildExportRows(filtered),
+      });
+      if (result.saved) showToast('تم حفظ ملف PDF', 'success');
+      else if (result.message !== 'cancelled') showToast('تعذر إنشاء PDF', 'error');
+    } finally {
+      setExporting(false);
+    }
+  };
 
-    if (result.saved) showToast('تم حفظ ملف PDF', 'success');
-    else if (result.message !== 'cancelled') showToast('تعذر إنشاء PDF', 'error');
+  const printList = async () => {
+    if (!filtered.length) {
+      showToast('لا توجد سجلات للطباعة', 'info');
+      return;
+    }
+    try {
+      const html = buildPdfTableHtml({
+        title: 'المصاريف',
+        subtitle: buildSubtitle(),
+        headers: TABLE_HEADERS,
+        rows: buildExportRows(filtered),
+      });
+      const result = await printLedgerStyleDocument(html, 'finance_expenses');
+      if (result === 'queued') showToast('تم إرسال الطباعة', 'success');
+      else if (result === 'browser') showToast('تم فتح معاينة الطباعة', 'success');
+      else showToast('تعذر تنفيذ الطباعة', 'error');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر الطباعة', 'error');
+    }
   };
 
   if (loading) {
@@ -206,10 +282,19 @@ export default function FinanceExpenses() {
         <div className="flex flex-wrap gap-2">
           <button type="button" className="toolbar-btn primary" onClick={() => setShowCreate(true)}>إضافة مصروف</button>
           <Link to="/finance/vouchers" className="toolbar-btn">إدارة السندات</Link>
-          <button type="button" className="toolbar-btn" onClick={() => void load()}>تحديث</button>
-          <button type="button" className="toolbar-btn" onClick={exportCsv}>تصدير Excel (CSV)</button>
-          <button type="button" className="toolbar-btn" onClick={() => void exportPdf()}>تصدير PDF</button>
-          <button type="button" className="toolbar-btn" onClick={() => window.print()}>طباعة</button>
+          <button type="button" className="toolbar-btn" onClick={() => void load()} disabled={loading || exporting}>
+            تحديث
+          </button>
+          <button type="button" className="toolbar-btn" onClick={exportCsv} disabled={exporting || !filtered.length}>
+            تصدير Excel (CSV)
+          </button>
+          <button type="button" className="toolbar-btn" onClick={() => void exportPdf()} disabled={exporting || !filtered.length}>
+            {exporting ? 'جاري التصدير...' : 'تصدير PDF'}
+          </button>
+          <button type="button" className="toolbar-btn" onClick={() => void printList()} disabled={exporting || !filtered.length}>
+            <Printer size={16} />
+            طباعة
+          </button>
         </div>
       </div>
 
@@ -279,46 +364,75 @@ export default function FinanceExpenses() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="stat-card">
-          <div className="stat-value">{formatCurrency(todayTotal, 'USD')}</div>
-          <div className="stat-label">تقدير اليوم بالدولار</div>
+          <div className="stat-value">{formatCurrency(stats.totalUsd, 'USD')}</div>
+          <div className="stat-label">إجمالي الفترة بالدولار</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{formatCurrency(monthTotal, 'USD')}</div>
-          <div className="stat-label">تقدير الشهر بالدولار</div>
+          <div className="stat-value">{stats.count}</div>
+          <div className="stat-label">سجلات الفترة</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{draftCount}</div>
+          <div className="stat-value">{stats.draft}</div>
           <div className="stat-label">مسودات</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{vouchers.length}</div>
-          <div className="stat-label">إجمالي السجلات</div>
+          <div className="stat-value">{expenseVouchers.length}</div>
+          <div className="stat-label">إجمالي المصاريف</div>
         </div>
       </div>
 
-      <div className="card">
-        <input
-          type="text"
-          placeholder="بحث برقم السند، المستفيد، البيان..."
-          className="form-input w-full"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
+      <div className="card voucher-register-filters">
+        <div className="voucher-register-filters-head">
+          <strong>فلتر العرض</strong>
+          <span>{filtered.length} سجل</span>
+        </div>
+        <div className="voucher-register-filters-grid">
+          <input
+            type="text"
+            placeholder="بحث برقم السند، المستفيد، البيان..."
+            className="form-input"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+          <label className="form-group block">
+            <span className="form-label">من تاريخ</span>
+            <input
+              type="date"
+              className="form-input w-full"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+            />
+          </label>
+          <label className="form-group block">
+            <span className="form-label">إلى تاريخ</span>
+            <input
+              type="date"
+              className="form-input w-full"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            className="toolbar-btn"
+            onClick={() => {
+              setDateFrom('');
+              setDateTo('');
+              setSearchTerm('');
+            }}
+          >
+            مسح الفلتر
+          </button>
+        </div>
       </div>
 
       <div className="card overflow-auto">
         <table className="data-grid text-sm">
           <thead>
             <tr>
-              <th>رقم السند</th>
-              <th>التاريخ</th>
-              <th>المستفيد / الطرف</th>
-              <th>الصندوق</th>
-              <th>المبلغ</th>
-              <th>USD</th>
-              <th>الطريقة</th>
-              <th>الحالة</th>
-              <th>الوصف</th>
+              {TABLE_HEADERS.map((header) => (
+                <th key={header}>{header}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -334,7 +448,7 @@ export default function FinanceExpenses() {
                   <td>{v.cashboxName ?? '-'}</td>
                   <td className="text-left">{formatCurrency(v.amount, cur)}</td>
                   <td className="text-left">{formatCurrency(usd, 'USD')}</td>
-                  <td>{v.paymentMethod === 'cheque' ? 'شيك' : v.paymentMethod === 'transfer' ? 'تحويل' : 'نقدي'}</td>
+                  <td>{paymentMethodLabel(v.paymentMethod)}</td>
                   <td>
                     <span className={`status-badge ${statusStyle[st] ?? 'bg-gray-100'}`}>
                       {statusAr[st] ?? st}
@@ -346,7 +460,7 @@ export default function FinanceExpenses() {
             })}
           </tbody>
         </table>
-        {filtered.length === 0 && <p className="p-4 text-gray-500">لا توجد سجلات</p>}
+        {filtered.length === 0 && <p className="p-4 text-gray-500">لا توجد سجلات مطابقة للفلتر</p>}
       </div>
     </div>
   );
