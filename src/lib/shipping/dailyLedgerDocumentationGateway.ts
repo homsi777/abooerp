@@ -17,6 +17,7 @@ export type PrintDocumentationRowSnapshot = {
   notes: string | null;
   driverLabel: string | null;
   sessionId: string | null;
+  ledgerDate?: string | null;
 };
 
 export type PrintDocumentationSummary = {

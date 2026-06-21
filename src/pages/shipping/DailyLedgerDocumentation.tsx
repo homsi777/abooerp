@@ -60,7 +60,7 @@ function fmtDateTime(value: string): string {
 export default function DailyLedgerDocumentation() {
   const { showToast } = useToast();
   const [dateFrom, setDateFrom] = useState(
-    new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0],
+    new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
   );
   const [dateTo, setDateTo] = useState(new Date().toISOString().split('T')[0]);
   const [branchId, setBranchId] = useState('');
@@ -318,7 +318,7 @@ export default function DailyLedgerDocumentation() {
           <table className="documentation-table">
             <thead>
               <tr>
-                <th>تاريخ الشحن</th>
+                <th>تاريخ الدفتر</th>
                 <th>السائق</th>
                 <th>الجهة</th>
                 <th>النوع</th>
@@ -388,7 +388,7 @@ export default function DailyLedgerDocumentation() {
               <>
                 <div className="documentation-detail-meta">
                   <span><strong>العنوان:</strong> {detail.title || '—'}</span>
-                  <span><strong>التاريخ:</strong> {fmtDate(detail.ledger_date)}</span>
+                  <span><strong>تاريخ الدفتر:</strong> {fmtDate(detail.ledger_date)}</span>
                   <span><strong>السائق:</strong> {detail.driver_label || '—'}</span>
                   <span><strong>الجهة:</strong> {detail.destination_label || detail.search_query || '—'}</span>
                   <span><strong>الفرع:</strong> {detail.branch_name || '—'}</span>

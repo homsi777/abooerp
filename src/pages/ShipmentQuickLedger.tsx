@@ -84,6 +84,7 @@ import {
   filterLocalRowsBySearch,
   prepareLedgerOutputRows,
   filterRemoteRowsBySearch,
+  resolveDocumentationLedgerDates,
   sortRemoteRowsChronological,
   uniqueDestinationsFromRows,
 } from '../lib/shipping/dailyLedgerRowFilter';
@@ -540,6 +541,7 @@ function buildPrintRowsSnapshot(rows: RemoteDailyLedgerRow[]): PrintDocumentatio
     notes: row.notes,
     driverLabel: row.driver_label,
     sessionId: row.session_id ?? null,
+    ledgerDate: row.ledger_date ?? null,
   }));
 }
 
@@ -2495,9 +2497,9 @@ export default function ShipmentQuickLedger() {
   const openPrintDialog = (scope?: 'driver' | 'date' | 'agent' | 'session') => {
     setDeleteMode(false);
     setSelectedDeleteRowIds([]);
-    setPrintDriverId(trip.driverId || 0);
-    setPrintDateFrom(trip.date);
-    setPrintDateTo(trip.date);
+    setPrintDriverId(tripRef.current.driverId || 0);
+    setPrintDateFrom(tripRef.current.date);
+    setPrintDateTo(tripRef.current.date);
     if (normalizeName(searchQuick) && !printDestinationFilter) {
       setPrintDestinationFilter(searchQuick.trim());
     }
@@ -3033,11 +3035,16 @@ export default function ShipmentQuickLedger() {
       input.scope === 'driver' && input.selectedDriver
         ? getBackendIdFromSynthetic(input.selectedDriver.id) ?? null
         : input.rows[0]?.driver_id ?? null;
+    const { ledgerDate, ledgerDateTo } = resolveDocumentationLedgerDates(input.rows, {
+      dateFrom: printDateFrom,
+      dateTo: printDateTo,
+      screenDate: tripRef.current.date,
+    });
     try {
       await savePrintDocumentation({
         branchId: branchBackendId,
-        ledgerDate: printDateFrom,
-        ledgerDateTo: printDateFrom !== printDateTo ? printDateTo : null,
+        ledgerDate,
+        ledgerDateTo,
         lineLabel: tripRef.current.line || input.rows[0]?.line_label || null,
         originLabel: input.rows[0]?.origin_label || null,
         driverId: driverBackendId,

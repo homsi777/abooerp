@@ -279,3 +279,35 @@ export function uniqueDestinationsFromRows(rows: RemoteDailyLedgerRow[]): string
     a.localeCompare(b, 'ar'),
   );
 }
+
+function normalizeLedgerYmd(value: string | null | undefined): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  return raw.split('T')[0] ?? raw;
+}
+
+/** تاريخ/فترة التوثيق من أسطر الدفتر المطبوعة — لا من تاريخ اليوم أو نافذة الطباعة */
+export function resolveDocumentationLedgerDates(
+  rows: RemoteDailyLedgerRow[],
+  fallback: { dateFrom: string; dateTo: string; screenDate?: string },
+): { ledgerDate: string; ledgerDateTo: string | null } {
+  const rowDates = [...new Set(rows.map((row) => normalizeLedgerYmd(row.ledger_date)).filter(Boolean))].sort();
+  if (rowDates.length) {
+    const min = rowDates[0];
+    const max = rowDates[rowDates.length - 1];
+    return {
+      ledgerDate: min,
+      ledgerDateTo: min !== max ? max : null,
+    };
+  }
+
+  const dateFrom = normalizeLedgerYmd(fallback.dateFrom) || normalizeLedgerYmd(fallback.screenDate);
+  const dateTo = normalizeLedgerYmd(fallback.dateTo) || dateFrom;
+  if (!dateFrom) {
+    return { ledgerDate: normalizeLedgerYmd(fallback.screenDate) || new Date().toISOString().split('T')[0], ledgerDateTo: null };
+  }
+  return {
+    ledgerDate: dateFrom,
+    ledgerDateTo: dateFrom !== dateTo ? dateTo : null,
+  };
+}

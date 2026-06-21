@@ -5,6 +5,7 @@ import {
   filterRemoteRowsBySearch,
   prepareLedgerOutputRows,
   remoteRowMatchesDriver,
+  resolveDocumentationLedgerDates,
   sortRemoteRowsChronological,
 } from './dailyLedgerRowFilter';
 import { computeTotalsFromRemoteRows } from './dailyLedgerTotals';
@@ -168,6 +169,33 @@ function testDriverMatchOrphanSelectedDriver() {
   );
 }
 
+function testDocumentationLedgerDatesFromRows() {
+  const rows = [
+    sampleRow({ id: '1', ledger_date: '2026-06-18' }),
+    sampleRow({ id: '2', ledger_date: '2026-06-18' }),
+  ];
+  const resolved = resolveDocumentationLedgerDates(rows, {
+    dateFrom: '2026-06-21',
+    dateTo: '2026-06-21',
+    screenDate: '2026-06-21',
+  });
+  assert(resolved.ledgerDate === '2026-06-18', 'documentation date should come from printed rows');
+  assert(resolved.ledgerDateTo === null, 'single-day print should not set dateTo');
+}
+
+function testDocumentationLedgerDatesRangeFromRows() {
+  const rows = [
+    sampleRow({ id: '1', ledger_date: '2026-06-16' }),
+    sampleRow({ id: '2', ledger_date: '2026-06-18' }),
+  ];
+  const resolved = resolveDocumentationLedgerDates(rows, {
+    dateFrom: '2026-06-21',
+    dateTo: '2026-06-21',
+  });
+  assert(resolved.ledgerDate === '2026-06-16', 'range start from rows');
+  assert(resolved.ledgerDateTo === '2026-06-18', 'range end from rows');
+}
+
 function run() {
   testSearchByAgentName();
   testSearchTotals();
@@ -177,6 +205,8 @@ function run() {
   testPreparePrintDriverScopeWithSearch();
   testDriverMatchViaVehicle();
   testDriverMatchOrphanSelectedDriver();
+  testDocumentationLedgerDatesFromRows();
+  testDocumentationLedgerDatesRangeFromRows();
   console.log('dailyLedgerRowFilter.selftest: OK');
 }
 
