@@ -766,12 +766,13 @@ function buildQuickLedgerPrintHtml(
     th, td { border: 1px solid #7f93a7; padding: 3px 2px; vertical-align: middle; line-height: 1.15; }
     th { background: #dce8e5; font-weight: 800; text-align: center; min-height: 30px; word-break: break-word; }
     td { text-align: center; min-height: 22px; background: #fff; white-space: nowrap; overflow: hidden; }
-    .col-receipt { width: 7%; }
+    .col-receipt { width: 6%; }
     .col-dest { width: 9%; }
-    .col-type { width: 12%; }
-    .col-count { width: 5%; }
-    .col-weight { width: 5%; }
-    .col-party { width: 15%; text-align: right; }
+    .col-type { width: 11%; }
+    .col-count { width: 4%; }
+    .col-weight { width: 9%; min-width: 14mm; direction: ltr; font-size: 12px; font-variant-numeric: tabular-nums; }
+    td.col-weight, th.col-weight { overflow: visible; padding-inline: 3px; }
+    .col-party { width: 14%; text-align: right; }
     .col-money { width: 6.5%; direction: ltr; font-size: 12px; }
     th.col-money { font-size: 10px; line-height: 1.1; padding: 2px 1px; }
     tfoot { display: table-footer-group; }
