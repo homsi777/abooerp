@@ -1193,6 +1193,34 @@ export class DailyLedgerRepository {
     return { deletedIds, blockedIds };
   }
 
+  async fetchRowAuditSnapshots(scope: DataScope, rowIds: string[]): Promise<DailyLedgerRowWithSession[]> {
+    if (!scope.companyId || !rowIds.length) return [];
+    const result = await pool.query<DailyLedgerRowWithSession>(
+      `
+      select
+        r.*,
+        s.branch_id,
+        s.ledger_date,
+        s.line_label,
+        s.origin_label,
+        s.trip_no,
+        s.vehicle_label,
+        s.driver_label,
+        s.driver_id,
+        s.vehicle_id
+      from daily_ledger_rows r
+      join daily_ledger_sessions s on s.id = r.session_id
+      join branches b on b.id = s.branch_id
+      where b.company_id = $1
+        and r.id = any($2::uuid[])
+        and r.deleted_at is null
+        and s.deleted_at is null
+      `,
+      [scope.companyId, rowIds],
+    );
+    return result.rows;
+  }
+
   async createPrintDocument(
     scope: DataScope,
     input: DailyLedgerPrintDocumentInput,

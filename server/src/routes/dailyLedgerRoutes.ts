@@ -19,6 +19,11 @@ import type { DailyLedgerTransferService } from '../services/dailyLedgerTransfer
 import { appendQuickLedgerClientLogs } from '../services/quickLedgerLogService.js';
 import { HttpError } from '../utils/errors.js';
 import { emit } from '../events/eventBus.js';
+import { AuditService } from '../services/auditService.js';
+import {
+  dailyLedgerRowAuditSnapshot,
+  diffDailyLedgerRowSnapshots,
+} from '../utils/dailyLedgerAudit.js';
 
 const uuid = z.string().uuid();
 
@@ -65,6 +70,7 @@ export function createDailyLedgerRouter(
   transferService?: DailyLedgerTransferService,
 ) {
   const router = express.Router();
+  const auditService = new AuditService();
 
   router.get(
     '/rows',
@@ -218,9 +224,48 @@ export function createDailyLedgerRouter(
       }
 
       const ownerUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, getRequestPermissions(req));
+      const previousRows =
+        input.rowId != null ? await service.fetchRowAuditSnapshots(scope, [input.rowId]) : [];
+      const previousSnapshot =
+        previousRows[0] != null ? dailyLedgerRowAuditSnapshot(previousRows[0]) : null;
       const row = await service.upsertRow(scope, {
         ...input,
         restrictToCreatedByUserId: ownerUserId,
+      });
+      const afterSnapshot = dailyLedgerRowAuditSnapshot(row);
+      const isUpdate = previousSnapshot != null;
+      const diff =
+        previousSnapshot != null
+          ? diffDailyLedgerRowSnapshots(previousSnapshot, afterSnapshot)
+          : { changedFields: [] as string[], changes: {} as Record<string, { before: unknown; after: unknown }> };
+      auditService.logAsync({
+        req,
+        context: { branchId: row.branch_id },
+        action: isUpdate ? 'DAILY_LEDGER_ROW_UPDATED' : 'DAILY_LEDGER_ROW_CREATED',
+        entityType: 'daily_ledger_row',
+        entityId: row.id,
+        metadata: {
+          summary: isUpdate
+            ? `تعديل سطر ${row.row_no}${row.receipt_no ? ` — إيصال ${row.receipt_no}` : ''}`
+            : `إدخال سطر ${row.row_no}${row.receipt_no ? ` — إيصال ${row.receipt_no}` : ''}`,
+          ledgerDate: row.ledger_date,
+          lineLabel: row.line_label,
+          rowNo: row.row_no,
+          receiptNo: row.receipt_no,
+          destination: row.destination,
+          senderName: row.sender_name,
+          receiverName: row.receiver_name,
+          collectUsd: afterSnapshot.collectUsd,
+          prepaidUsd: afterSnapshot.prepaidUsd,
+          ...(isUpdate
+            ? {
+                changedFields: diff.changedFields,
+                changes: diff.changes,
+                before: previousSnapshot,
+                after: afterSnapshot,
+              }
+            : { after: afterSnapshot }),
+        },
       });
       res.json({ success: true, data: row });
     },
@@ -393,7 +438,28 @@ export function createDailyLedgerRouter(
       });
       const { rowIds } = bodySchema.parse(req.body);
       const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, permissions);
+      const snapshots = await service.fetchRowAuditSnapshots(scope, rowIds);
       const result = await service.deleteRows(scope, rowIds, allowedBranchIds, createdByUserId);
+      for (const snapshotRow of snapshots) {
+        if (!result.deletedIds.includes(snapshotRow.id)) continue;
+        const snap = dailyLedgerRowAuditSnapshot(snapshotRow);
+        auditService.logAsync({
+          req,
+          context: { branchId: snapshotRow.branch_id },
+          action: 'DAILY_LEDGER_ROW_DELETED',
+          entityType: 'daily_ledger_row',
+          entityId: snapshotRow.id,
+          metadata: {
+            summary: `حذف سطر ${snap.rowNo}${snap.receiptNo ? ` — إيصال ${snap.receiptNo}` : ''}`,
+            ledgerDate: snap.ledgerDate,
+            lineLabel: snap.lineLabel,
+            rowNo: snap.rowNo,
+            receiptNo: snap.receiptNo,
+            destination: snap.destination,
+            before: snap,
+          },
+        });
+      }
       res.json({ success: true, data: result });
     },
   );

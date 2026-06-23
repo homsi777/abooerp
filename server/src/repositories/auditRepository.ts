@@ -34,6 +34,23 @@ export interface AuditLogFilters {
   limit?: number;
 }
 
+export interface AuditActivityUserSummary {
+  user_id: string | null;
+  actor_display_name: string | null;
+  actor_username: string | null;
+  actor_role_code: string | null;
+  actor_user_type: string | null;
+  agent_profile_name: string | null;
+  total_events: number;
+  created_count: number;
+  updated_count: number;
+  deleted_count: number;
+  ledger_row_events: number;
+  shipment_events: number;
+  finance_events: number;
+  last_event_at: string | null;
+}
+
 export interface AuditLogContext {
   companyId: string;
   branchId?: string;
@@ -218,6 +235,110 @@ export class AuditRepository {
       where ${conditions.join(' and ')}
       order by al.created_at desc
       limit $${values.length}
+      `,
+      values,
+    );
+    return result.rows;
+  }
+
+  async getAuditLogEnrichedById(companyId: string, id: string, scope?: DataScope): Promise<AuditLogEnrichedRecord | null> {
+    const values: unknown[] = [companyId, id];
+    const conditions = ['al.company_id = $1', 'al.id = $2'];
+    if (scope?.branchId) {
+      values.push(scope.branchId);
+      conditions.push(`al.branch_id = $${values.length}`);
+    }
+    const result = await pool.query<AuditLogEnrichedRecord>(
+      `
+      select
+        al.id,
+        al.company_id,
+        al.branch_id,
+        al.user_id,
+        al.action,
+        al.entity_type,
+        al.entity_id,
+        al.metadata,
+        al.ip_address,
+        al.user_agent,
+        al.created_at::text as created_at,
+        coalesce(nullif(trim(coalesce(u.full_name, '')), ''), u.username) as actor_display_name,
+        u.username as actor_username,
+        u.role as actor_role_code,
+        b.name as branch_name,
+        ag.name as agent_profile_name
+      from audit_logs al
+      left join users u on u.id = al.user_id
+      left join branches b on b.id = al.branch_id
+      left join agents ag on ag.id = u.agent_id
+      where ${conditions.join(' and ')}
+      limit 1
+      `,
+      values,
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async listActivitySummaryByUser(
+    companyId: string,
+    filters?: AuditLogFilters,
+    scope?: DataScope,
+  ): Promise<AuditActivityUserSummary[]> {
+    const values: unknown[] = [companyId];
+    const conditions: string[] = ['al.company_id = $1'];
+
+    if (scope?.branchId) {
+      values.push(scope.branchId);
+      conditions.push(`al.branch_id = $${values.length}`);
+    }
+    if (filters?.branchId) {
+      values.push(filters.branchId);
+      conditions.push(`al.branch_id = $${values.length}`);
+    }
+    if (filters?.userId) {
+      values.push(filters.userId);
+      conditions.push(`al.user_id = $${values.length}`);
+    }
+    if (filters?.entityType) {
+      values.push(filters.entityType);
+      conditions.push(`al.entity_type = $${values.length}`);
+    }
+    if (filters?.action) {
+      values.push(filters.action);
+      conditions.push(`al.action = $${values.length}`);
+    }
+    if (filters?.fromAt) {
+      values.push(filters.fromAt);
+      conditions.push(`al.created_at >= $${values.length}::timestamptz`);
+    }
+    if (filters?.toAt) {
+      values.push(filters.toAt);
+      conditions.push(`al.created_at <= $${values.length}::timestamptz`);
+    }
+
+    const result = await pool.query<AuditActivityUserSummary>(
+      `
+      select
+        al.user_id,
+        coalesce(nullif(trim(coalesce(u.full_name, '')), ''), u.username) as actor_display_name,
+        u.username as actor_username,
+        u.role as actor_role_code,
+        u.user_type as actor_user_type,
+        ag.name as agent_profile_name,
+        count(*)::int as total_events,
+        count(*) filter (where al.action ~ 'CREATED$')::int as created_count,
+        count(*) filter (where al.action ~ 'UPDATED$')::int as updated_count,
+        count(*) filter (where al.action ~ 'DELETED$')::int as deleted_count,
+        count(*) filter (where al.entity_type = 'daily_ledger_row')::int as ledger_row_events,
+        count(*) filter (where al.entity_type = 'shipment')::int as shipment_events,
+        count(*) filter (where al.entity_type in ('voucher', 'cashbox', 'journal_entry'))::int as finance_events,
+        max(al.created_at)::text as last_event_at
+      from audit_logs al
+      left join users u on u.id = al.user_id
+      left join agents ag on ag.id = u.agent_id
+      where ${conditions.join(' and ')}
+      group by al.user_id, u.full_name, u.username, u.role, u.user_type, ag.name
+      order by max(al.created_at) desc nulls last, actor_display_name asc nulls last
       `,
       values,
     );

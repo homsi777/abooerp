@@ -79,6 +79,10 @@ export class DailyLedgerService {
     );
   }
 
+  fetchRowAuditSnapshots(scope: DataScope, rowIds: string[]) {
+    return this.repo.fetchRowAuditSnapshots(scope, rowIds);
+  }
+
   cancelSession(
     scope: DataScope,
     sessionId: string,
