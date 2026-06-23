@@ -37,6 +37,7 @@ function summarize(rows) {
         if (dest)
             destinations.add(dest);
     }
+    const postedRowsCount = rows.filter((row) => Boolean(row.posted_shipment_id)).length;
     return {
         rowsCount: rows.length,
         piecesCount,
@@ -46,6 +47,10 @@ function summarize(rows) {
         collectionTotal: Math.round(collectionTotal * 100) / 100,
         prepaidTotal: Math.round(prepaidTotal * 100) / 100,
         destinations: [...destinations],
+        postedRowsCount,
+        unpostedRowsCount: rows.length - postedRowsCount,
+        sourceLedgerDate: rows[0]?.ledger_date ?? null,
+        sourceBranchId: rows[0]?.branch_id ?? null,
     };
 }
 export class DailyLedgerTransferService {
@@ -104,7 +109,14 @@ export class DailyLedgerTransferService {
         if (missing.length) {
             errors.push(`${missing.length} سطر غير موجود أو لا ينتمي لشركتك`);
         }
+        const activeRows = rows.filter((row) => !row.deleted_at);
+        const branchIds = new Set(activeRows.map((row) => row.branch_id));
+        if (branchIds.size > 1) {
+            errors.push('لا يمكن نقل أسطر من فروع مختلفة في عملية واحدة — حدّد أسطر فرع واحد فقط، أو نفّذ نقلاً منفصلاً لكل فرع.');
+        }
         const seenReceipts = new Map();
+        let postedRowsCount = 0;
+        let unpostedRowsCount = 0;
         for (const row of rows) {
             if (row.deleted_at) {
                 errors.push(`السطر ${row.row_no}: لا يمكن نقل سطر محذوف`);
@@ -136,8 +148,14 @@ export class DailyLedgerTransferService {
                 }
             }
             if (row.posted_shipment_id) {
-                warnings.push(`السطر ${row.row_no} (${row.receipt_no ?? ''}): مُرحَّل مسبقاً — سيُنقل تشغيلياً فقط دون أثر مالي جديد`);
+                postedRowsCount += 1;
             }
+            else {
+                unpostedRowsCount += 1;
+            }
+        }
+        if (postedRowsCount > 0 && unpostedRowsCount > 0) {
+            warnings.push(`${postedRowsCount} سطر مُرحّل مسبقاً (نقل تشغيلي فقط) و ${unpostedRowsCount} سطر لم يُرحّل بعد — راجع التحديد قبل التأكيد.`);
         }
         return { warnings, errors };
     }

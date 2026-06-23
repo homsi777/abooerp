@@ -229,6 +229,7 @@ export class ShipmentRepository {
             const result = await client.query(`
         update shipments
         set
+          shipment_no = coalesce($32, shipment_no),
           reference_no = coalesce($2, reference_no),
           customer_id = coalesce($3, customer_id),
           sender_id = coalesce($4, sender_id),
@@ -297,6 +298,7 @@ export class ShipmentRepository {
                 typeof payload.agentCommissionBaseAmount === 'number' ? payload.agentCommissionBaseAmount : null,
                 typeof payload.agentCommissionPercentageSnapshot === 'number' ? payload.agentCommissionPercentageSnapshot : null,
                 typeof payload.agentCommissionAmountSnapshot === 'number' ? payload.agentCommissionAmountSnapshot : null,
+                payload.shipmentNo ?? null,
             ]);
             const updated = result.rows[0] ?? null;
             if (!updated) {

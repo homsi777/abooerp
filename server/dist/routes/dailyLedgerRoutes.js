@@ -578,5 +578,27 @@ export function createDailyLedgerRouter(service, transferService) {
             });
         }
     });
+    router.delete('/print/documents/:id', requirePermissions(['shipments.write']), async (req, res) => {
+        const scope = parseDataScope(req);
+        const documentId = uuid.parse(req.params.id);
+        try {
+            const deleted = await service.deletePrintDocument(scope, documentId);
+            if (!deleted) {
+                res.status(404).json({ success: false, error: 'سجل التوثيق غير موجود.' });
+                return;
+            }
+            res.json({ success: true, data: { id: documentId } });
+        }
+        catch (error) {
+            if (error instanceof HttpError) {
+                res.status(error.statusCode).json({ success: false, error: error.message });
+                return;
+            }
+            res.status(500).json({
+                success: false,
+                error: error instanceof Error ? error.message : 'تعذر حذف سجل التوثيق.',
+            });
+        }
+    });
     return router;
 }

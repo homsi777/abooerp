@@ -127,6 +127,31 @@ async function nextRowNoForSession(client, sessionId) {
     const result = await client.query(`select max(row_no) as max_no from daily_ledger_rows where session_id = $1::uuid and deleted_at is null`, [sessionId]);
     return (Number(result.rows[0]?.max_no) || 0) + 1;
 }
+/** يستخرج نطاق الجلسة الفعلي من السطر المحفوظ — لا يعتمد على بيانات الواجهة */
+async function resolveRowSessionScopeForUpsert(client, companyId, rowId) {
+    const result = await client.query(`
+    select
+      s.branch_id,
+      s.ledger_date::text as ledger_date,
+      s.line_label
+    from daily_ledger_rows r
+    join daily_ledger_sessions s on s.id = r.session_id
+    join branches b on b.id = s.branch_id
+    where r.id = $1::uuid
+      and r.deleted_at is null
+      and s.deleted_at is null
+      and b.company_id = $2::uuid
+    limit 1
+    `, [rowId, companyId]);
+    const hit = result.rows[0];
+    if (!hit?.branch_id || !hit.ledger_date)
+        return null;
+    return {
+        branchId: hit.branch_id,
+        ledgerDate: hit.ledger_date,
+        lineLabel: hit.line_label ?? '',
+    };
+}
 /** ينقل السطر إلى جلسة السائق إذا كان محفوظاً في جلسة «بدون سائق» أو سائق مختلف */
 async function migrateRowToDriverSessionIfNeeded(client, scope, rowId, input, resolvedDriverId, resolvedDriverLabel) {
     if (!resolvedDriverId)
@@ -343,6 +368,18 @@ export class DailyLedgerRepository {
             let effectiveRowId = input.rowId ?? null;
             if (!effectiveRowId) {
                 effectiveRowId = await resolveExistingLedgerRowIdByReceipt(client, scope.companyId, ledgerScope, input.receiptNo);
+            }
+            if (effectiveRowId) {
+                const sessionScope = await resolveRowSessionScopeForUpsert(client, scope.companyId, effectiveRowId);
+                if (!sessionScope) {
+                    throw new HttpError(404, 'سطر الدفتر غير موجود أو لا ينتمي لشركتك.');
+                }
+                input = {
+                    ...input,
+                    branchId: sessionScope.branchId,
+                    ledgerDate: sessionScope.ledgerDate,
+                    lineLabel: sessionScope.lineLabel,
+                };
             }
             await assertUniqueLedgerReceiptNo(client, scope.companyId, input.receiptNo, ledgerScope, effectiveRowId);
             if (effectiveRowId) {
@@ -865,6 +902,16 @@ export class DailyLedgerRepository {
       limit 1
       `, [documentId, scope.companyId]);
         return result.rows[0] ?? null;
+    }
+    async deletePrintDocument(scope, documentId) {
+        if (!scope.companyId)
+            throw new HttpError(400, 'Company scope is required.');
+        const result = await pool.query(`
+      delete from daily_ledger_print_documents
+      where id = $1::uuid and company_id = $2::uuid
+      returning id
+      `, [documentId, scope.companyId]);
+        return result.rows.length > 0;
     }
     async listAgentPrintDocuments(scope, filters, destinationHints) {
         if (!scope.companyId)

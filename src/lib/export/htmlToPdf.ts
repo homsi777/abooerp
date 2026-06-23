@@ -15,7 +15,6 @@ async function waitForFrameDocument(frameDoc: Document): Promise<void> {
   if (frameDoc.fonts?.ready) {
     await frameDoc.fonts.ready.catch(() => undefined);
   }
-  const { waitForDocumentImages } = await import('../branding/companyLogoPrint');
   await waitForDocumentImages(frameDoc);
   await new Promise((resolve) => window.setTimeout(resolve, 150));
 }

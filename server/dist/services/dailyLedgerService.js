@@ -17,8 +17,7 @@ export class DailyLedgerService {
                 await this.shipmentPosting.syncPostedShipmentFromLedgerRow(scope, row.id);
             }
             catch (error) {
-                const detail = error instanceof Error ? error.message : 'تعذر تحديث الشحنة المرتبطة.';
-                throw new HttpError(409, `تم حفظ سطر الدفتر، لكن ${detail}`);
+                console.warn('[daily-ledger] ledger row saved but shipment sync failed', row.id, error instanceof Error ? error.message : error);
             }
         }
         return row;
@@ -52,6 +51,9 @@ export class DailyLedgerService {
     }
     getPrintDocument(scope, documentId) {
         return this.repo.getPrintDocument(scope, documentId);
+    }
+    deletePrintDocument(scope, documentId) {
+        return this.repo.deletePrintDocument(scope, documentId);
     }
     listAgentPrintDocuments(scope, filters) {
         const hints = agentDestinationHints(scope);
