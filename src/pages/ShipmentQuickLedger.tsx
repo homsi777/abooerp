@@ -379,45 +379,100 @@ function shouldPersistRow(row: LedgerRow) {
   return isRowSavable(row);
 }
 
+function resolveBranchBackendIdFromLine(line: string, branchList: Branch[]): string | null {
+  const needle = normalizeName(line);
+  if (!needle) return null;
+  const exact = branchList.find((item) => normalizeName(item.name) === needle);
+  if (exact) return getBackendIdFromSynthetic(exact.id) ?? null;
+  const partial = branchList.find((item) => {
+    const name = normalizeName(item.name);
+    return name.includes(needle) || needle.includes(name);
+  });
+  if (partial) return getBackendIdFromSynthetic(partial.id) ?? null;
+  const firstPart = normalizeName(needle.split(/\s*[-–—]\s*/)[0] || needle);
+  if (!firstPart) return null;
+  const byFirst = branchList.find((item) => {
+    const name = normalizeName(item.name);
+    return name === firstPart || name.includes(firstPart) || firstPart.includes(name);
+  });
+  return byFirst ? getBackendIdFromSynthetic(byFirst.id) ?? null : null;
+}
+
+function resolveDefaultAleppoBranchId(branchList: Branch[]): string | null {
+  const aleppo = branchList.find((item) => normalizeName(item.name).includes('حلب'));
+  if (aleppo) return getBackendIdFromSynthetic(aleppo.id) ?? null;
+  return branchList[0] ? getBackendIdFromSynthetic(branchList[0].id) ?? null : null;
+}
+
+function stampRowLedgerScope(
+  row: LedgerRow,
+  context: {
+    activeBranchId: string | null;
+    trip: { date: string; line: string };
+    branchList: Branch[];
+    userBranchId?: string | null;
+  },
+): LedgerRow {
+  const resolvedBranch =
+    row.branchBackendId?.trim() ||
+    context.activeBranchId?.trim() ||
+    context.userBranchId?.trim() ||
+    resolveBranchBackendIdFromLine(context.trip.line, context.branchList) ||
+    resolveBranchBackendIdFromLine(row.origin, context.branchList) ||
+    resolveDefaultAleppoBranchId(context.branchList) ||
+    '';
+  const ledgerDate = row.sessionLedgerDate?.trim() || context.trip.date?.trim() || '';
+  const lineLabel =
+    row.sessionLineLabel?.trim() ||
+    context.trip.line?.trim() ||
+    row.origin?.trim() ||
+    '';
+  if (!resolvedBranch && !ledgerDate && !lineLabel) return row;
+  return {
+    ...row,
+    branchBackendId: row.branchBackendId || resolvedBranch || undefined,
+    branchLabel:
+      row.branchLabel ||
+      (resolvedBranch ? resolveBranchLabelFromList(context.branchList, resolvedBranch) : undefined),
+    sessionLedgerDate: row.sessionLedgerDate || ledgerDate || undefined,
+    sessionLineLabel: row.sessionLineLabel || lineLabel || undefined,
+  };
+}
+
 function resolveRowEditingScope(
   row: LedgerRow,
-  viewAllBranches: boolean,
+  _viewAllBranches: boolean,
   globalScope: DailyLedgerEditingScope,
   activeBranchId: string | null,
   currentTrip: { date: string; line: string },
+  branchList: Branch[],
+  userBranchId?: string | null,
 ): DailyLedgerEditingScope | null {
-  if (row.dbId) {
-    const branchId =
-      row.branchBackendId?.trim() ||
-      (viewAllBranches ? '' : globalScope.branchId?.trim()) ||
-      activeBranchId?.trim() ||
-      '';
-    const ledgerDate =
-      row.sessionLedgerDate?.trim() || globalScope.ledgerDate?.trim() || currentTrip.date;
-    const lineLabel =
-      row.sessionLineLabel?.trim() || globalScope.lineLabel?.trim() || currentTrip.line;
-    if (!branchId || !ledgerDate) return null;
-    return { branchId, ledgerDate, lineLabel };
-  }
-  if (viewAllBranches) {
-    const branchId = row.branchBackendId?.trim();
-    const ledgerDate = row.sessionLedgerDate?.trim() || currentTrip.date;
-    const lineLabel = row.sessionLineLabel?.trim() || currentTrip.line;
-    if (!branchId || !ledgerDate) return null;
-    return { branchId, ledgerDate, lineLabel };
-  }
-  if (
-    !globalScope.branchId ||
-    !globalScope.ledgerDate ||
-    !globalScope.lineLabel ||
-    !activeBranchId ||
-    globalScope.branchId !== activeBranchId ||
-    globalScope.ledgerDate !== currentTrip.date ||
-    globalScope.lineLabel !== currentTrip.line
-  ) {
-    return null;
-  }
-  return globalScope;
+  const ledgerDate =
+    row.sessionLedgerDate?.trim() ||
+    globalScope.ledgerDate?.trim() ||
+    currentTrip.date?.trim() ||
+    new Date().toISOString().slice(0, 10);
+  const lineLabel =
+    row.sessionLineLabel?.trim() ||
+    globalScope.lineLabel?.trim() ||
+    currentTrip.line?.trim() ||
+    row.origin?.trim() ||
+    branchList.find((item) => normalizeName(item.name).includes('حلب'))?.name ||
+    branchList[0]?.name ||
+    '';
+  const branchId =
+    row.branchBackendId?.trim() ||
+    globalScope.branchId?.trim() ||
+    activeBranchId?.trim() ||
+    userBranchId?.trim() ||
+    resolveBranchBackendIdFromLine(currentTrip.line, branchList) ||
+    resolveBranchBackendIdFromLine(row.origin, branchList) ||
+    resolveDefaultAleppoBranchId(branchList) ||
+    '';
+
+  if (!branchId || !ledgerDate || !lineLabel) return null;
+  return { branchId, ledgerDate, lineLabel };
 }
 
 /** جاهز لترحيل الشحنة — لا يشترط وزناً ولا كمية ولا مبلغاً */
@@ -895,7 +950,7 @@ export default function ShipmentQuickLedger() {
   });
   const saveTimersRef = useRef<Record<number, number>>({});
   const saveInFlightRef = useRef<Record<number, Promise<void>>>({});
-  const saveRowToServerRef = useRef<(displayRowId: number) => Promise<void>>(async () => {});
+  const saveRowToServerRef = useRef<(displayRowId: number, options?: { force?: boolean }) => Promise<void>>(async () => {});
   const receiptEditingRowIdRef = useRef<number | null>(null);
   const receiptCommittedViaEnterRef = useRef(false);
   const [branchSearch, setBranchSearch] = useState('');
@@ -1224,10 +1279,15 @@ export default function ShipmentQuickLedger() {
   const rowsRef = useRef(rows);
   const customersRef = useRef(customers);
   const goodsTypesRef = useRef(goodsTypes);
+  const userRef = useRef(user);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
   const tripRef = useRef(trip);
   const activeBranchIdRef = useRef(activeBranchId);
   const driversRef = useRef(drivers);
   const vehiclesRef = useRef(vehicles);
+  const branchesRef = useRef(branches);
 
   useEffect(() => {
     driversRef.current = drivers;
@@ -1236,6 +1296,10 @@ export default function ShipmentQuickLedger() {
   useEffect(() => {
     vehiclesRef.current = vehicles;
   }, [vehicles]);
+
+  useEffect(() => {
+    branchesRef.current = branches;
+  }, [branches]);
 
   useEffect(() => {
     rowsRef.current = rows;
@@ -1299,12 +1363,23 @@ export default function ShipmentQuickLedger() {
   }, [ledgerBranchMode]);
 
   useEffect(() => {
+    const branchId = activeBranchIdRef.current;
+    const currentTrip = tripRef.current;
+    if (!currentTrip.date?.trim() || !currentTrip.line?.trim()) return;
+    editingScopeRef.current = {
+      branchId: branchId?.trim() || resolveBranchBackendIdFromLine(currentTrip.line, branchesRef.current) || '',
+      ledgerDate: currentTrip.date,
+      lineLabel: currentTrip.line,
+    };
+  }, [trip.date, trip.line, activeBranchId, ledgerBranchMode]);
+
+  useEffect(() => {
     if (!canViewAllLedgerEntries) {
       setLedgerBranchMode('single');
       return;
     }
-    setLedgerBranchMode('all');
-    setBranchSearch('كل الفروع');
+    // المدير: افتراضي فرع واحد (حلب) للإدخال والحفظ — «كل الفروع» اختياري من الزر
+    setLedgerBranchMode('single');
   }, [canViewAllLedgerEntries, user?.id]);
 
   const branchChoices = useMemo(() => {
@@ -1457,17 +1532,25 @@ export default function ShipmentQuickLedger() {
     };
   }, []);
 
-  const buildEntrySlotRows = (startId: number, origin: string, count = LEDGER_ENTRY_SLOTS) =>
-    Array.from({ length: count }, (_, idx) =>
-      mergeRowWithAutoTariff(
-        { ...createEmptyRow(startId + idx), origin },
+  const buildEntrySlotRows = (startId: number, origin: string, count = LEDGER_ENTRY_SLOTS) => {
+    const scopeContext = {
+      activeBranchId: activeBranchIdRef.current,
+      trip: tripRef.current,
+      branchList: branchesRef.current,
+      userBranchId: userRef.current?.branchId ?? userRef.current?.allowedBranchIds?.[0] ?? null,
+    };
+    return Array.from({ length: count }, (_, idx) => {
+      const seeded = stampRowLedgerScope({ ...createEmptyRow(startId + idx), origin }, scopeContext);
+      return mergeRowWithAutoTariff(
+        seeded,
         tariffs,
         cities,
         branches,
         goodsTypes,
         tripRef.current.date,
-      ),
-    );
+      );
+    });
+  };
 
   const appendTrailingEntrySlot = (prev: LedgerRow[]) => {
     const hasBlank = prev.some((row) => !row.dbId && !row.loadedAt && !isRowStarted(row));
@@ -1652,7 +1735,9 @@ export default function ShipmentQuickLedger() {
       if (generation !== loadGenerationRef.current) return;
 
       editingScopeRef.current = {
-        branchId: viewAllBranches ? '' : branchId!,
+        branchId: viewAllBranches
+          ? (branchId ?? resolveBranchBackendIdFromLine(currentTrip.line, branchesRef.current) ?? '')
+          : branchId!,
         ledgerDate: currentTrip.date,
         lineLabel: currentTrip.line,
       };
@@ -1775,9 +1860,10 @@ export default function ShipmentQuickLedger() {
         }
         if (cancelled) return;
         setTariffs(tariffsData);
+        const preferredBranch =
+          branchesData.find((b) => normalizeName(b.name).includes('حلب')) ?? branchesData[0] ?? null;
         const preferredLine =
-          branchesData.find((b) => normalizeName(b.name).includes('حلب'))?.name
-          || branchesData[0]?.name
+          preferredBranch?.name
           || citiesData[0]?.name
           || 'فرع حلب';
         setTrip((prev) => {
@@ -1789,6 +1875,13 @@ export default function ShipmentQuickLedger() {
               ?.name ?? '';
           return { ...prev, line: mapped || preferredLine };
         });
+        if (preferredBranch) {
+          const backendId = getBackendIdFromSynthetic(preferredBranch.id);
+          if (backendId && !activeBranchIdRef.current) {
+            void setActiveBranch(backendId);
+            setBranchSearch(preferredBranch.name);
+          }
+        }
 
         if (user?.userType === 'agent' && user.agentId) {
           try {
@@ -1904,7 +1997,12 @@ export default function ShipmentQuickLedger() {
             next = { ...next, collectManual: false };
             next = skipTariff ? next : mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
           }
-          return next;
+          return stampRowLedgerScope(next, {
+            activeBranchId: activeBranchIdRef.current,
+            trip: tripRef.current,
+            branchList: branchesRef.current,
+            userBranchId: userRef.current?.branchId ?? userRef.current?.allowedBranchIds?.[0] ?? null,
+          });
         }
         if (field === 'prepaidAmount') {
           const prepaid = parseUsd(value);
@@ -1915,13 +2013,24 @@ export default function ShipmentQuickLedger() {
             next = { ...next, collectManual: false };
             next = skipTariff ? next : mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
           }
-          return next;
+          return stampRowLedgerScope(next, {
+            activeBranchId: activeBranchIdRef.current,
+            trip: tripRef.current,
+            branchList: branchesRef.current,
+            userBranchId: userRef.current?.branchId ?? userRef.current?.allowedBranchIds?.[0] ?? null,
+          });
         }
         let next: LedgerRow = { ...row, [field]: value };
         if (!skipTariff && (field === 'origin' || field === 'destination' || field === 'weightKg')) {
           next = { ...next, collectManual: false };
           next = mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
         }
+        next = stampRowLedgerScope(next, {
+          activeBranchId: activeBranchIdRef.current,
+          trip: tripRef.current,
+          branchList: branchesRef.current,
+          userBranchId: userRef.current?.branchId ?? userRef.current?.allowedBranchIds?.[0] ?? null,
+        });
         return next;
       });
       const after = mapped.find((row) => row.id === id);
@@ -2070,13 +2179,33 @@ export default function ShipmentQuickLedger() {
     const viewAllBranches = canViewAllLedgerEntriesRef.current && ledgerBranchModeRef.current === 'all';
     const row = rowsRef.current.find((r) => r.id === displayRowId);
     if (!row) return;
-    const rowScope = resolveRowEditingScope(row, viewAllBranches, saveScope, branchId, currentTrip);
+    const userBranchId = userRef.current?.branchId ?? userRef.current?.allowedBranchIds?.[0] ?? null;
+    const stampedRow = stampRowLedgerScope(row, {
+      activeBranchId: branchId,
+      trip: currentTrip,
+      branchList: branchesRef.current,
+      userBranchId,
+    });
+    if (stampedRow !== row) {
+      setRows((prev) => prev.map((entry) => (entry.id === displayRowId ? stampedRow : entry)));
+      rowsRef.current = rowsRef.current.map((entry) => (entry.id === displayRowId ? stampedRow : entry));
+    }
+    const rowScope = resolveRowEditingScope(
+      stampedRow,
+      viewAllBranches,
+      saveScope,
+      branchId,
+      currentTrip,
+      branchesRef.current,
+      userBranchId,
+    );
     if (!rowScope) {
-      if (shouldPersistRow(row)) {
-        showToast('تعذر حفظ السطر — بيانات الفرع أو تاريخ الدفتر غير متوفرة', 'error');
+      if (shouldPersistRow(stampedRow)) {
+        showToast('تعذر حفظ السطر — تأكد من اختيار التاريخ وخط المصدر (الخط)', 'error');
       }
       return;
     }
+    editingScopeRef.current = rowScope;
     if (!options?.force && receiptEditingRowIdRef.current === displayRowId) return;
     if (!shouldPersistRow(row)) return;
     if (isCloudOffline) {
@@ -2804,7 +2933,7 @@ export default function ShipmentQuickLedger() {
     }
 
     const activeBackendBranchId = activeBranchIdRef.current
-      ? getBackendIdFromSynthetic(activeBranchIdRef.current)
+      ? resolveLedgerBranchId(activeBranchIdRef.current)
       : null;
     let targetBranchKey =
       activeBackendBranchId && branchGroups.has(activeBackendBranchId)
