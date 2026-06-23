@@ -45,6 +45,13 @@ export function remoteRowCollectionUsd(row: RemoteDailyLedgerRow): number {
   return parseUsd(String(row.collect_amount_usd ?? '')) + parseUsd(String(row.fees_amount_usd ?? ''));
 }
 
+export function remoteCollectAmountLabel(
+  row: Pick<RemoteDailyLedgerRow, 'collect_amount_usd' | 'fees_amount_usd'>,
+): string {
+  const total = remoteRowCollectionUsd(row as RemoteDailyLedgerRow);
+  return total > 0 ? String(total) : '';
+}
+
 export function remoteRowWeightKg(row: RemoteDailyLedgerRow): number {
   return parseWeightKg(row.weight_kg ?? '') ?? 0;
 }

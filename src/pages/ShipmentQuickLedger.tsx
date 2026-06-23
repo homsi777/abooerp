@@ -77,6 +77,7 @@ import {
 import {
   filterPrintableDailyLedgerRows,
   dedupeDailyLedgerRowsById,
+  remoteCollectAmountLabel,
   remoteRowCollectionUsd,
   sortDailyLedgerRows,
 } from '../lib/shipping/dailyLedgerPrintable';
@@ -139,7 +140,6 @@ type LedgerRow = {
 const LEDGER_ENTRY_SLOTS = 1;
 const LEDGER_ROWS_ADD_INCREMENT = 1;
 const ROW_SAVE_DEBOUNCE_MS = 280;
-const FINANCIAL_SAVE_DEBOUNCE_MS = 120;
 const FINANCIAL_ROW_FIELDS = new Set<keyof LedgerRow>([
   'collectAmount',
   'prepaidAmount',
@@ -148,6 +148,35 @@ const FINANCIAL_ROW_FIELDS = new Set<keyof LedgerRow>([
 ]);
 const SESSION_SCOPE_REQUIRED_MSG =
   'لا يمكن تنفيذ هذا الإجراء من وضع "الكل". اختر إرسالية محددة أولاً.';
+
+type LedgerMoneySnapshot = {
+  collect: number;
+  prepaid: number;
+  hawala: number;
+  fee: number;
+};
+
+function snapshotLedgerMoney(row: Pick<LedgerRow, 'collectAmount' | 'prepaidAmount' | 'receiverCollect' | 'transferServiceFee'>): LedgerMoneySnapshot {
+  return {
+    collect: parseUsd(row.collectAmount),
+    prepaid: parseUsd(row.prepaidAmount),
+    hawala: parseUsd(row.receiverCollect),
+    fee: parseUsd(row.transferServiceFee),
+  };
+}
+
+function ledgerMoneyMatchesSnapshot(
+  row: Pick<LedgerRow, 'collectAmount' | 'prepaidAmount' | 'receiverCollect' | 'transferServiceFee'>,
+  snapshot: LedgerMoneySnapshot,
+): boolean {
+  const current = snapshotLedgerMoney(row);
+  return (
+    current.collect === snapshot.collect &&
+    current.prepaid === snapshot.prepaid &&
+    current.hawala === snapshot.hawala &&
+    current.fee === snapshot.fee
+  );
+}
 
 /** أسطر ضمن نطاق الإرسالية النشطة للحفظ/الترحيل */
 function rowInActiveSessionScope(row: LedgerRow, sessionId: string): boolean {
@@ -1487,7 +1516,7 @@ export default function ShipmentQuickLedger() {
     weightKg: remote.weight_kg == null ? '' : String(remote.weight_kg),
     sender: remote.sender_name ?? '',
     receiver: remote.receiver_name ?? '',
-    collectAmount: String(parseUsd(String(remote.collect_amount_usd ?? '')) + parseUsd(String(remote.fees_amount_usd ?? '')) || ''),
+    collectAmount: remoteCollectAmountLabel(remote),
     prepaidAmount: String(remote.prepaid_amount_usd ?? ''),
     receiverCollect: String(remote.hawala_amount_usd ?? ''),
     transferServiceFee: String(remote.transfer_service_fee_usd ?? ''),
@@ -1985,7 +2014,7 @@ export default function ShipmentQuickLedger() {
       const mapped = prev.map((row) => {
         if (row.id !== id) return row;
         if (field === 'parcelType') {
-          const next = { ...row, parcelType: value, collectManual: false };
+          const next = { ...row, parcelType: value };
           return skipTariff ? next : mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
         }
         if (field === 'collectAmount') {
@@ -2022,7 +2051,6 @@ export default function ShipmentQuickLedger() {
         }
         let next: LedgerRow = { ...row, [field]: value };
         if (!skipTariff && (field === 'origin' || field === 'destination' || field === 'weightKg')) {
-          next = { ...next, collectManual: false };
           next = mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
         }
         next = stampRowLedgerScope(next, {
@@ -2040,12 +2068,8 @@ export default function ShipmentQuickLedger() {
     if (field === 'receiptNo' || field === 'destination' || field === 'sender' || field === 'receiver') {
       clearFailedSaveRow(id);
     }
-    if (field !== 'receiptNo') {
-      if (FINANCIAL_ROW_FIELDS.has(field)) {
-        queueFinancialRowSave(id);
-      } else {
-        queueRowSave(id);
-      }
+    if (field !== 'receiptNo' && !FINANCIAL_ROW_FIELDS.has(field)) {
+      queueRowSave(id);
     }
   };
 
@@ -2250,6 +2274,8 @@ export default function ShipmentQuickLedger() {
         nextServerRowNoForDriver(rowsRef.current, latestDriverId) ??
         latestRow.id;
 
+      const moneySnapshot = snapshotLedgerMoney(latestRow);
+
       try {
         const saved = await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
           branchId: resolveLedgerBranchId(rowScope.branchId),
@@ -2275,33 +2301,34 @@ export default function ShipmentQuickLedger() {
           notes: latestRow.notes || null,
         });
         setRows((prev) => {
-          const mapped = prev.map((r) =>
-            r.id === displayRowId
-              ? {
-                  ...r,
-                  dbId: saved.id,
-                  serverRowNo: saved.row_no,
-                  sessionDriverId: saved.driver_id
-                    ? syntheticEntityId(saved.driver_id)
-                    : latestDriverId || r.sessionDriverId,
-                  sessionId: saved.session_id ?? r.sessionId,
-                  updatedAt: saved.updated_at,
-                  postedShipmentId: saved.posted_shipment_id,
-                  loadedAt: saved.loaded_at,
-                  collectAmount:
-                    String(
-                      parseUsd(String(saved.collect_amount_usd ?? '')) +
-                        parseUsd(String(saved.fees_amount_usd ?? '')) || '',
-                    ) || r.collectAmount,
-                  prepaidAmount: String(saved.prepaid_amount_usd ?? '') || r.prepaidAmount,
-                  receiverCollect: String(saved.hawala_amount_usd ?? '') || r.receiverCollect,
-                  transferServiceFee: String(saved.transfer_service_fee_usd ?? '') || r.transferServiceFee,
-                  branchBackendId: saved.branch_id ?? r.branchBackendId,
-                  sessionLedgerDate: saved.ledger_date ?? r.sessionLedgerDate,
-                  sessionLineLabel: saved.line_label ?? r.sessionLineLabel,
-                }
-              : r,
-          );
+          const mapped = prev.map((r) => {
+            if (r.id !== displayRowId) return r;
+            const moneyStillMatches = ledgerMoneyMatchesSnapshot(r, moneySnapshot);
+            const serverCollectLabel = remoteCollectAmountLabel(saved);
+            return {
+              ...r,
+              dbId: saved.id,
+              serverRowNo: saved.row_no,
+              sessionDriverId: saved.driver_id
+                ? syntheticEntityId(saved.driver_id)
+                : latestDriverId || r.sessionDriverId,
+              sessionId: saved.session_id ?? r.sessionId,
+              updatedAt: saved.updated_at,
+              postedShipmentId: saved.posted_shipment_id,
+              loadedAt: saved.loaded_at,
+              ...(moneyStillMatches
+                ? {
+                    collectAmount: serverCollectLabel || r.collectAmount,
+                    prepaidAmount: String(saved.prepaid_amount_usd ?? '') || r.prepaidAmount,
+                    receiverCollect: String(saved.hawala_amount_usd ?? '') || r.receiverCollect,
+                    transferServiceFee: String(saved.transfer_service_fee_usd ?? '') || r.transferServiceFee,
+                  }
+                : {}),
+              branchBackendId: saved.branch_id ?? r.branchBackendId,
+              sessionLedgerDate: saved.ledger_date ?? r.sessionLedgerDate,
+              sessionLineLabel: saved.line_label ?? r.sessionLineLabel,
+            };
+          });
           const savedRow = mapped.find((r) => r.id === displayRowId);
           if (savedRow?.dbId && isRowSavable(savedRow)) {
             return appendTrailingEntrySlot(mapped);
@@ -2346,15 +2373,6 @@ export default function ShipmentQuickLedger() {
     }, ROW_SAVE_DEBOUNCE_MS);
   };
 
-  const queueFinancialRowSave = (rowNo: number) => {
-    const timer = saveTimersRef.current[rowNo];
-    if (timer) window.clearTimeout(timer);
-    saveTimersRef.current[rowNo] = window.setTimeout(() => {
-      delete saveTimersRef.current[rowNo];
-      void saveRowToServer(rowNo);
-    }, FINANCIAL_SAVE_DEBOUNCE_MS);
-  };
-
   const flushRowSave = (rowNo: number) => {
     const timer = saveTimersRef.current[rowNo];
     if (timer) {
@@ -2381,7 +2399,7 @@ export default function ShipmentQuickLedger() {
     setRows((prev) =>
       prev.map((row) => {
         if (row.dbId || row.postedShipmentId || row.loadedAt) return row;
-        const next = { ...row, origin, collectManual: false };
+        const next = { ...row, origin };
         return mergeRowWithAutoTariff(next, tariffs, cities, branches, goodsTypes, trip.date);
       }),
     );
@@ -2496,7 +2514,7 @@ export default function ShipmentQuickLedger() {
       prev.map((r) => {
         if (r.id !== rowId) return r;
         changed = true;
-        return mergeRowWithAutoTariff({ ...r, collectManual: false }, tariffs, cities, branches, goodsTypes, trip.date);
+        return mergeRowWithAutoTariff(r, tariffs, cities, branches, goodsTypes, trip.date);
       }),
     );
     if (changed) flushRowSave(rowId);
@@ -2654,7 +2672,6 @@ export default function ShipmentQuickLedger() {
               destination: norm || r.destination,
               agentId,
               agentName,
-              collectManual: false,
             };
             return mergeRowWithAutoTariff(merged, tariffs, cities, branches, goodsTypes, trip.date);
           }),
@@ -4689,7 +4706,7 @@ export default function ShipmentQuickLedger() {
                           prev.map((r) =>
                             r.id === row.id
                               ? mergeRowWithAutoTariff(
-                                  { ...r, parcelType: item.name, collectManual: false },
+                                  { ...r, parcelType: item.name },
                                   tariffs,
                                   cities,
                                   branches,
@@ -4716,7 +4733,7 @@ export default function ShipmentQuickLedger() {
                                 prevRows.map((rr) =>
                                   rr.id === row.id
                                     ? mergeRowWithAutoTariff(
-                                        { ...rr, parcelType: normalized, collectManual: false },
+                                        { ...rr, parcelType: normalized },
                                         tariffs,
                                         cities,
                                         branches,
@@ -4748,7 +4765,7 @@ export default function ShipmentQuickLedger() {
                             const matched = goodsTypes.find((x) => normalizeName(x.name) === normalizeName(r.parcelType));
                             if (!matched) return r;
                             return mergeRowWithAutoTariff(
-                              { ...r, parcelType: matched.name, collectManual: false },
+                              { ...r, parcelType: matched.name },
                               tariffs,
                               cities,
                               branches,
