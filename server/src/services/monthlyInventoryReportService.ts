@@ -40,40 +40,116 @@ export type MonthlyInventoryReport = {
   rows: MonthlyInventoryRow[];
 };
 
+export type MonthlyInventoryDetailLine = {
+  id: string;
+  category: 'shipment' | 'transfer' | 'internal_expense' | 'external_expense';
+  categoryLabel: string;
+  eventDate: string;
+  referenceNo: string;
+  description: string;
+  collect: number;
+  prepaid: number;
+  hawala: number;
+  transferFees: number;
+  internalExpenses: number;
+  externalExpenses: number;
+};
+
+export type MonthlyInventoryPartyDetail = {
+  generatedAt: string;
+  filters: MonthlyInventoryFilters & {
+    partyId: string | null;
+    partyType: 'agent' | 'unassigned';
+    partyName: string;
+  };
+  currencyCode: 'USD';
+  totals: MonthlyInventoryColumnTotals;
+  lines: MonthlyInventoryDetailLine[];
+};
+
 function money(value: unknown): number {
   const n = Number(value ?? 0);
   if (!Number.isFinite(n)) return 0;
   return Math.round(n * 100) / 100;
 }
 
+type ScopeFilters = {
+  companyId: string;
+  dateFrom: string;
+  dateTo: string;
+  branchShipmentFilter: string;
+  branchTransferFilter: string;
+  branchExpenseFilter: string;
+  values: unknown[];
+};
+
+function buildScopeFilters(
+  scope: DataScope | undefined,
+  filters: MonthlyInventoryFilters,
+): ScopeFilters {
+  if (!scope?.companyId) {
+    throw new HttpError(400, 'Company context is required.');
+  }
+
+  const values: unknown[] = [scope.companyId, filters.dateFrom, filters.dateTo];
+  let branchShipmentFilter = '';
+  let branchTransferFilter = '';
+  let branchExpenseFilter = '';
+
+  if (filters.branchId) {
+    values.push(filters.branchId);
+    const branchParam = `$${values.length}::uuid`;
+    branchShipmentFilter = `and s.branch_id = ${branchParam}`;
+    branchTransferFilter = `and t.branch_id = ${branchParam}`;
+    branchExpenseFilter = `and coalesce(pv.branch_id, cb.branch_id) = ${branchParam}`;
+  }
+
+  if (scope.branchId && !filters.branchId) {
+    values.push(scope.branchId);
+    const branchParam = `$${values.length}::uuid`;
+    branchShipmentFilter = `and s.branch_id = ${branchParam}`;
+    branchTransferFilter = `and t.branch_id = ${branchParam}`;
+    branchExpenseFilter = `and coalesce(pv.branch_id, cb.branch_id) = ${branchParam}`;
+  }
+
+  return {
+    companyId: scope.companyId,
+    dateFrom: filters.dateFrom,
+    dateTo: filters.dateTo,
+    branchShipmentFilter,
+    branchTransferFilter,
+    branchExpenseFilter,
+    values,
+  };
+}
+
+function agentMatchSql(values: unknown[], agentId: string | null, expression: string): string {
+  if (agentId) {
+    values.push(agentId);
+    return `${expression} = $${values.length}::uuid`;
+  }
+  return `${expression} is null`;
+}
+
+const CATEGORY_LABELS: Record<MonthlyInventoryDetailLine['category'], string> = {
+  shipment: 'شحنة',
+  transfer: 'حوالة مستقلة',
+  internal_expense: 'مصروف داخلي',
+  external_expense: 'مصروف خارجي',
+};
+
 export class MonthlyInventoryReportService {
   async buildReport(scope: DataScope | undefined, filters: MonthlyInventoryFilters): Promise<MonthlyInventoryReport> {
-    if (!scope?.companyId) {
-      throw new HttpError(400, 'Company context is required.');
-    }
-
-    const values: unknown[] = [scope.companyId, filters.dateFrom, filters.dateTo];
-    let branchShipmentFilter = '';
-    let branchTransferFilter = '';
-    let branchExpenseFilter = '';
+    const scoped = buildScopeFilters(scope, filters);
+    const values = [...scoped.values];
     let branchAgentFilter = '';
 
     if (filters.branchId) {
       values.push(filters.branchId);
-      const branchParam = `$${values.length}::uuid`;
-      branchShipmentFilter = `and s.branch_id = ${branchParam}`;
-      branchTransferFilter = `and t.branch_id = ${branchParam}`;
-      branchExpenseFilter = `and coalesce(pv.branch_id, cb.branch_id) = ${branchParam}`;
-      branchAgentFilter = `and ag.branch_id = ${branchParam}`;
-    }
-
-    if (scope.branchId && !filters.branchId) {
+      branchAgentFilter = `and ag.branch_id = $${values.length}::uuid`;
+    } else if (scope?.branchId) {
       values.push(scope.branchId);
-      const branchParam = `$${values.length}::uuid`;
-      branchShipmentFilter = `and s.branch_id = ${branchParam}`;
-      branchTransferFilter = `and t.branch_id = ${branchParam}`;
-      branchExpenseFilter = `and coalesce(pv.branch_id, cb.branch_id) = ${branchParam}`;
-      branchAgentFilter = `and ag.branch_id = ${branchParam}`;
+      branchAgentFilter = `and ag.branch_id = $${values.length}::uuid`;
     }
 
     const result = await pool.query(
@@ -92,7 +168,7 @@ export class MonthlyInventoryReportService {
           and upper(coalesce(s.status, '')) <> 'CANCELLED'
           and coalesce(s.effective_date, s.created_at::date) >= $2::date
           and coalesce(s.effective_date, s.created_at::date) <= $3::date
-          ${branchShipmentFilter}
+          ${scoped.branchShipmentFilter}
         group by s.agent_id
       ),
       standalone_transfer_totals as (
@@ -107,7 +183,7 @@ export class MonthlyInventoryReportService {
           and upper(coalesce(t.status, '')) <> 'CANCELLED'
           and coalesce(t.transfer_date::date, t.created_at::date) >= $2::date
           and coalesce(t.transfer_date::date, t.created_at::date) <= $3::date
-          ${branchTransferFilter}
+          ${scoped.branchTransferFilter}
         group by coalesce(t.agent_id, t.destination_agent_id)
       ),
       internal_expense_totals as (
@@ -121,7 +197,7 @@ export class MonthlyInventoryReportService {
           and pv.related_entity_type = 'expense'
           and pv.created_at >= $2::date::timestamptz
           and pv.created_at <= ($3::date::text || 'T23:59:59.999Z')::timestamptz
-          ${branchExpenseFilter}
+          ${scoped.branchExpenseFilter}
         group by coalesce(pv.agent_id, cb.agent_id)
       ),
       external_expense_totals as (
@@ -135,7 +211,7 @@ export class MonthlyInventoryReportService {
           and pv.related_entity_type = 'manual_party'
           and pv.created_at >= $2::date::timestamptz
           and pv.created_at <= ($3::date::text || 'T23:59:59.999Z')::timestamptz
-          ${branchExpenseFilter}
+          ${scoped.branchExpenseFilter}
         group by coalesce(pv.agent_id, cb.agent_id)
       ),
       party_ids as (
@@ -249,6 +325,228 @@ export class MonthlyInventoryReportService {
       currencyCode: 'USD',
       totals,
       rows,
+    };
+  }
+
+  async buildPartyDetail(
+    scope: DataScope | undefined,
+    filters: MonthlyInventoryFilters & {
+      partyId?: string | null;
+      partyType: 'agent' | 'unassigned';
+      partyName?: string;
+    },
+  ): Promise<MonthlyInventoryPartyDetail> {
+    const scoped = buildScopeFilters(scope, filters);
+    const values = [...scoped.values];
+    const agentId = filters.partyType === 'unassigned' ? null : (filters.partyId ?? null);
+    if (filters.partyType === 'agent' && !agentId) {
+      throw new HttpError(400, 'partyId is required for agent party detail.');
+    }
+
+    const shipmentAgentFilter = agentMatchSql(values, agentId, 's.agent_id');
+    const transferAgentFilter = agentMatchSql(
+      values,
+      agentId,
+      'coalesce(t.agent_id, t.destination_agent_id)',
+    );
+    const expenseAgentFilter = agentMatchSql(
+      values,
+      agentId,
+      'coalesce(pv.agent_id, cb.agent_id)',
+    );
+
+    let partyName = filters.partyName?.trim() || '';
+    if (!partyName && agentId) {
+      const agentResult = await pool.query<{ name: string }>(
+        `
+        select a.name
+        from agents a
+        join branches b on b.id = a.branch_id
+        where a.id = $1::uuid
+          and b.company_id = $2::uuid
+        limit 1
+        `,
+        [agentId, scoped.companyId],
+      );
+      partyName = agentResult.rows[0]?.name ?? 'وكيل';
+    }
+    if (!partyName) partyName = 'غير مُسنَد لوكيل';
+
+    const result = await pool.query(
+      `
+      select *
+      from (
+        select
+          s.id::text as id,
+          'shipment'::text as category,
+          coalesce(s.effective_date, s.created_at::date)::text as event_date,
+          coalesce(s.shipment_no, '') as reference_no,
+          trim(
+            concat_ws(
+              ' — ',
+              nullif(trim(coalesce(s.destination_city, '')), ''),
+              nullif(trim(concat(coalesce(sr_s.full_name, ''), ' → ', coalesce(sr_r.full_name, ''))), ' → ')
+            )
+          ) as description,
+          coalesce(s.transfer_fee, 0)::numeric as collect_amount,
+          coalesce(s.prepaid_amount, 0)::numeric as prepaid_amount,
+          coalesce(s.hawala_amount, 0)::numeric as hawala_amount,
+          coalesce(s.transfer_service_fee, 0)::numeric as transfer_fee_amount,
+          0::numeric as internal_expense_amount,
+          0::numeric as external_expense_amount
+        from shipments s
+        left join senders_receivers sr_s on sr_s.id = s.sender_id
+        left join senders_receivers sr_r on sr_r.id = s.receiver_id
+        where s.company_id = $1::uuid
+          and s.deleted_at is null
+          and upper(coalesce(s.status, '')) <> 'CANCELLED'
+          and coalesce(s.effective_date, s.created_at::date) >= $2::date
+          and coalesce(s.effective_date, s.created_at::date) <= $3::date
+          and ${shipmentAgentFilter}
+          ${scoped.branchShipmentFilter}
+
+        union all
+
+        select
+          t.id::text as id,
+          'transfer'::text as category,
+          coalesce(t.transfer_date::date, t.created_at::date)::text as event_date,
+          coalesce(nullif(trim(t.notes), ''), t.id::text) as reference_no,
+          trim(concat(coalesce(t.sender_name, ''), ' → ', coalesce(t.receiver_name, ''))) as description,
+          0::numeric as collect_amount,
+          0::numeric as prepaid_amount,
+          coalesce(t.amount, 0)::numeric as hawala_amount,
+          coalesce(t.transfer_service_fee, 0)::numeric as transfer_fee_amount,
+          0::numeric as internal_expense_amount,
+          0::numeric as external_expense_amount
+        from transfers t
+        where t.company_id = $1::uuid
+          and t.shipment_id is null
+          and upper(coalesce(t.status, '')) <> 'CANCELLED'
+          and coalesce(t.transfer_date::date, t.created_at::date) >= $2::date
+          and coalesce(t.transfer_date::date, t.created_at::date) <= $3::date
+          and ${transferAgentFilter}
+          ${scoped.branchTransferFilter}
+
+        union all
+
+        select
+          pv.id::text as id,
+          'internal_expense'::text as category,
+          pv.created_at::date::text as event_date,
+          coalesce(pv.voucher_no, '') as reference_no,
+          coalesce(nullif(trim(pv.notes), ''), 'مصروف داخلي') as description,
+          0::numeric as collect_amount,
+          0::numeric as prepaid_amount,
+          0::numeric as hawala_amount,
+          0::numeric as transfer_fee_amount,
+          coalesce(pv.base_amount_usd, 0)::numeric as internal_expense_amount,
+          0::numeric as external_expense_amount
+        from payment_vouchers pv
+        left join cashboxes cb on cb.id = pv.cashbox_id
+        where pv.company_id = $1::uuid
+          and pv.status = 'confirmed'
+          and pv.related_entity_type = 'expense'
+          and pv.created_at >= $2::date::timestamptz
+          and pv.created_at <= ($3::date::text || 'T23:59:59.999Z')::timestamptz
+          and ${expenseAgentFilter}
+          ${scoped.branchExpenseFilter}
+
+        union all
+
+        select
+          pv.id::text as id,
+          'external_expense'::text as category,
+          pv.created_at::date::text as event_date,
+          coalesce(pv.voucher_no, '') as reference_no,
+          coalesce(
+            nullif(
+              trim(split_part(regexp_replace(coalesce(pv.notes, ''), '^\\s*جهة:\\s*', ''), ' - ', 1)),
+              ''
+            ),
+            coalesce(nullif(trim(pv.notes), ''), 'مصروف خارجي')
+          ) as description,
+          0::numeric as collect_amount,
+          0::numeric as prepaid_amount,
+          0::numeric as hawala_amount,
+          0::numeric as transfer_fee_amount,
+          0::numeric as internal_expense_amount,
+          coalesce(pv.base_amount_usd, 0)::numeric as external_expense_amount
+        from payment_vouchers pv
+        left join cashboxes cb on cb.id = pv.cashbox_id
+        where pv.company_id = $1::uuid
+          and pv.status = 'confirmed'
+          and pv.related_entity_type = 'manual_party'
+          and pv.created_at >= $2::date::timestamptz
+          and pv.created_at <= ($3::date::text || 'T23:59:59.999Z')::timestamptz
+          and ${expenseAgentFilter}
+          ${scoped.branchExpenseFilter}
+      ) lines
+      where
+        collect_amount <> 0
+        or prepaid_amount <> 0
+        or hawala_amount <> 0
+        or transfer_fee_amount <> 0
+        or internal_expense_amount <> 0
+        or external_expense_amount <> 0
+      order by event_date asc, category asc, reference_no asc
+      `,
+      values,
+    );
+
+    const lines: MonthlyInventoryDetailLine[] = result.rows.map((row) => {
+      const category = row.category as MonthlyInventoryDetailLine['category'];
+      return {
+        id: String(row.id),
+        category,
+        categoryLabel: CATEGORY_LABELS[category] ?? String(row.category),
+        eventDate: String(row.event_date ?? '').slice(0, 10),
+        referenceNo: String(row.reference_no ?? ''),
+        description: String(row.description ?? ''),
+        collect: money(row.collect_amount),
+        prepaid: money(row.prepaid_amount),
+        hawala: money(row.hawala_amount),
+        transferFees: money(row.transfer_fee_amount),
+        internalExpenses: money(row.internal_expense_amount),
+        externalExpenses: money(row.external_expense_amount),
+      };
+    });
+
+    const totals = lines.reduce<MonthlyInventoryColumnTotals>(
+      (acc, line) => {
+        acc.collect += line.collect;
+        acc.prepaid += line.prepaid;
+        acc.hawala += line.hawala;
+        acc.transferFees += line.transferFees;
+        acc.internalExpenses += line.internalExpenses;
+        acc.externalExpenses += line.externalExpenses;
+        return acc;
+      },
+      {
+        collect: 0,
+        prepaid: 0,
+        hawala: 0,
+        transferFees: 0,
+        internalExpenses: 0,
+        externalExpenses: 0,
+      },
+    );
+
+    for (const key of Object.keys(totals) as Array<keyof MonthlyInventoryColumnTotals>) {
+      totals[key] = money(totals[key]);
+    }
+
+    return {
+      generatedAt: new Date().toISOString(),
+      filters: {
+        ...filters,
+        partyId: agentId,
+        partyType: filters.partyType,
+        partyName,
+      },
+      currencyCode: 'USD',
+      totals,
+      lines,
     };
   }
 }

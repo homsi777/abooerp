@@ -808,6 +808,25 @@ export const phase3FinanceGateway = {
       if (filters.branchId) q.set('branchId', filters.branchId);
       return httpClient.get<MonthlyInventoryReport>(`/financial-reports/monthly-inventory?${q.toString()}`);
     },
+    getPartyDetail: async (filters: {
+      dateFrom: string;
+      dateTo: string;
+      branchId?: string;
+      partyType: 'agent' | 'unassigned';
+      partyId?: string | null;
+      partyName?: string;
+    }): Promise<MonthlyInventoryPartyDetail> => {
+      const q = new URLSearchParams();
+      q.set('dateFrom', filters.dateFrom);
+      q.set('dateTo', filters.dateTo);
+      q.set('partyType', filters.partyType);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      if (filters.partyId) q.set('partyId', filters.partyId);
+      if (filters.partyName) q.set('partyName', filters.partyName);
+      return httpClient.get<MonthlyInventoryPartyDetail>(
+        `/financial-reports/monthly-inventory/party-detail?${q.toString()}`,
+      );
+    },
   },
 
   deliveryReports: {
@@ -1225,4 +1244,34 @@ export type MonthlyInventoryReport = {
   currencyCode: 'USD';
   totals: MonthlyInventoryColumnTotals;
   rows: MonthlyInventoryRow[];
+};
+
+export type MonthlyInventoryDetailLine = {
+  id: string;
+  category: 'shipment' | 'transfer' | 'internal_expense' | 'external_expense';
+  categoryLabel: string;
+  eventDate: string;
+  referenceNo: string;
+  description: string;
+  collect: number;
+  prepaid: number;
+  hawala: number;
+  transferFees: number;
+  internalExpenses: number;
+  externalExpenses: number;
+};
+
+export type MonthlyInventoryPartyDetail = {
+  generatedAt: string;
+  filters: {
+    dateFrom: string;
+    dateTo: string;
+    branchId?: string;
+    partyId: string | null;
+    partyType: 'agent' | 'unassigned';
+    partyName: string;
+  };
+  currencyCode: 'USD';
+  totals: MonthlyInventoryColumnTotals;
+  lines: MonthlyInventoryDetailLine[];
 };

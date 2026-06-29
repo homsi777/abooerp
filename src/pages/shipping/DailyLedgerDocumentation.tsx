@@ -476,7 +476,6 @@ export default function DailyLedgerDocumentation() {
                   <table className="documentation-table documentation-detail-table">
                     <thead>
                       <tr>
-                        <th>الجهة</th>
                         <th>نوع البضاعة</th>
                         <th>عدد</th>
                         <th>وزن</th>
@@ -486,6 +485,7 @@ export default function DailyLedgerDocumentation() {
                         <th>مسبق</th>
                         <th>مرسل</th>
                         <th>مستلم</th>
+                        <th>الجهة</th>
                         <th>إيصال</th>
                         <th>ملاحظات</th>
                       </tr>
@@ -493,7 +493,6 @@ export default function DailyLedgerDocumentation() {
                     <tbody>
                       {(detail.rows_snapshot ?? []).map((row) => (
                         <tr key={row.rowId}>
-                          <td>{row.destination || '—'}</td>
                           <td>{row.parcelType || '—'}</td>
                           <td>{row.parcelCount ?? '—'}</td>
                           <td>{row.weightKg || '—'}</td>
@@ -503,6 +502,7 @@ export default function DailyLedgerDocumentation() {
                           <td>{fmtMoney(row.prepaidAmountUsd)}</td>
                           <td>{row.senderName || '—'}</td>
                           <td>{row.receiverName || '—'}</td>
+                          <td>{row.destination || '—'}</td>
                           <td>{row.receiptNo || '—'}</td>
                           <td>{row.notes || '—'}</td>
                         </tr>

@@ -561,6 +561,30 @@ export class FinanceService {
     return this.monthlyInventoryReportService.buildReport(scope, filters);
   }
 
+  getMonthlyInventoryPartyDetail(
+    scope?: DataScope,
+    filters?: MonthlyInventoryFilters & {
+      partyId?: string | null;
+      partyType?: 'agent' | 'unassigned';
+      partyName?: string;
+    },
+  ) {
+    if (!filters?.dateFrom || !filters?.dateTo) {
+      throw new HttpError(400, 'dateFrom and dateTo are required for monthly inventory detail.');
+    }
+    if (!filters.partyType) {
+      throw new HttpError(400, 'partyType is required for monthly inventory detail.');
+    }
+    return this.monthlyInventoryReportService.buildPartyDetail(scope, {
+      dateFrom: filters.dateFrom,
+      dateTo: filters.dateTo,
+      branchId: filters.branchId,
+      partyId: filters.partyId,
+      partyType: filters.partyType,
+      partyName: filters.partyName,
+    });
+  }
+
   async getPartyStatementPackage(
     scope?: DataScope,
     filters?: PartyStatementFilters & { page?: number; pageSize?: number },

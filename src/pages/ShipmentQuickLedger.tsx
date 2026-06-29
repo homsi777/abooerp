@@ -717,7 +717,6 @@ function buildQuickLedgerPrintHtml(
   const bodyRows = rows
     .map(
       (row) => `<tr>
-<td class="col-dest">${escapePrintHtml(row.destination)}</td>
 <td class="col-type">${escapePrintHtml(row.parcelType)}</td>
 <td class="col-count">${escapePrintHtml(row.parcelCount)}</td>
 <td class="col-weight">${escapePrintHtml(row.weightKg)}</td>
@@ -727,6 +726,7 @@ function buildQuickLedgerPrintHtml(
 <td class="col-money">${escapePrintHtml(row.prepaidAmount)}</td>
 <td class="col-party">${escapePrintHtml(row.sender)}</td>
 <td class="col-party">${escapePrintHtml(row.receiver)}</td>
+<td class="col-dest">${escapePrintHtml(row.destination)}</td>
 <td class="col-receipt">${escapePrintHtml(row.receiptNo)}</td>
 <td class="col-notes">${escapePrintHtml(row.notes)}</td>
 </tr>`,
@@ -735,14 +735,13 @@ function buildQuickLedgerPrintHtml(
 
   const footRow = `<tr class="totals-row">
 <td colspan="1">الإجمالي — ${rows.length} سطر / ${tons} طن</td>
-<td></td>
 <td class="col-count">${fmt(totals.pieces)}</td>
 <td class="col-weight">${fmt(totals.weightKg)}</td>
 <td class="col-money">${fmt(totals.collect)}</td>
 <td class="col-money">${fmt(totals.hawala)}</td>
 <td class="col-money">${fmt(totals.fee)}</td>
 <td class="col-money">${fmt(totals.prepaid)}</td>
-<td colspan="4"></td>
+<td colspan="5"></td>
 </tr>`;
 
   const headerHtml = renderCompanyPrintHeader({
@@ -790,7 +789,6 @@ function buildQuickLedgerPrintHtml(
   <table>
     <thead>
       <tr>
-        <th class="col-dest">الجهة</th>
         <th class="col-type">نوع البضاعة</th>
         <th class="col-count">عدد الطرود</th>
         <th class="col-weight">الوزن كغ</th>
@@ -800,6 +798,7 @@ function buildQuickLedgerPrintHtml(
         <th class="col-money">دفع مسبق $</th>
         <th class="col-party">المرسل</th>
         <th class="col-party">المرسل إليه</th>
+        <th class="col-dest">الجهة</th>
         <th class="col-receipt">رقم الإيصال</th>
         <th class="col-notes">ملاحظات</th>
       </tr>
@@ -4579,6 +4578,15 @@ export default function ShipmentQuickLedger() {
                   )}
                 </th>
               )}
+              <th className="col-parcel-type">نوع البضاعة</th>
+              <th className="col-parcel-count">عدد الطرود</th>
+              <th className="col-weight">الوزن كغ</th>
+              <th className="col-money" title="يُملأ تلقائياً من تعريف الأسعار (مسار + نوع الطرد + وزن)؛ يمكنك التعديل يدوياً">تحصيل $</th>
+              <th className="col-money">حوالة</th>
+              <th className="col-money">أجرة الحوالة</th>
+              <th className="col-money">دفع مسبق $</th>
+              <th className="wide col-sender">المرسل</th>
+              <th className="wide col-receiver">المرسل إليه</th>
               {destinationSort === 'asc' ? (
                 <th
                   className="quick-ledger-sortable-th is-sorted col-dest"
@@ -4616,15 +4624,6 @@ export default function ShipmentQuickLedger() {
                   </span>
                 </th>
               )}
-              <th className="col-parcel-type">نوع البضاعة</th>
-              <th className="col-parcel-count">عدد الطرود</th>
-              <th className="col-weight">الوزن كغ</th>
-              <th className="col-money" title="يُملأ تلقائياً من تعريف الأسعار (مسار + نوع الطرد + وزن)؛ يمكنك التعديل يدوياً">تحصيل $</th>
-              <th className="col-money">حوالة</th>
-              <th className="col-money">أجرة الحوالة</th>
-              <th className="col-money">دفع مسبق $</th>
-              <th className="wide col-sender">المرسل</th>
-              <th className="wide col-receiver">المرسل إليه</th>
               <th className="col-receipt">رقم الإيصال</th>
               <th className="notes col-notes">ملاحظات</th>
             </tr>
@@ -4676,19 +4675,6 @@ export default function ShipmentQuickLedger() {
                       />
                     </td>
                   )}
-                  <td className="quick-ledger-dest-cell col-dest">
-                    <input
-                      list="ledger-destination-options"
-                      data-ledger-field="true"
-                      value={row.destination}
-                      disabled={locked}
-                      placeholder="جهة أو كود (مدينة / فرع / وكيل)"
-                      onFocus={() => setActiveRowId(row.id)}
-                      onKeyDown={(e) => handleSmartFieldKeyDown(e, row, 'destination')}
-                      onBlur={(e) => commitDestinationCell(row, e.target.value)}
-                      onChange={(e) => updateRow(row.id, 'destination', e.target.value, true)}
-                    />
-                  </td>
                   <td className="quick-ledger-parcel-cell col-parcel-type">
                     <AutocompleteInput
                       value={row.parcelType}
@@ -4828,6 +4814,19 @@ export default function ShipmentQuickLedger() {
                       disabled={locked}
                       onFocus={() => setActiveRowId(row.id)}
                       onKeyDown={focusNext}
+                    />
+                  </td>
+                  <td className="quick-ledger-dest-cell col-dest">
+                    <input
+                      list="ledger-destination-options"
+                      data-ledger-field="true"
+                      value={row.destination}
+                      disabled={locked}
+                      placeholder="جهة أو كود (مدينة / فرع / وكيل)"
+                      onFocus={() => setActiveRowId(row.id)}
+                      onKeyDown={(e) => handleSmartFieldKeyDown(e, row, 'destination')}
+                      onBlur={(e) => commitDestinationCell(row, e.target.value)}
+                      onChange={(e) => updateRow(row.id, 'destination', e.target.value, true)}
                     />
                   </td>
                   <td className="col-receipt">

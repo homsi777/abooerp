@@ -32,7 +32,6 @@ function detailRowsTable(detail: PrintDocumentationDetail) {
 
   return {
     headers: [
-      'الجهة',
       'نوع البضاعة',
       'عدد',
       'وزن كغ',
@@ -42,11 +41,11 @@ function detailRowsTable(detail: PrintDocumentationDetail) {
       'دفع مسبق $',
       'المرسل',
       'المستلم',
+      'الجهة',
       'إيصال',
       'ملاحظات',
     ],
     rows: rows.map((row) => [
-      row.destination || '—',
       row.parcelType || '—',
       row.parcelCount == null ? '—' : String(row.parcelCount),
       row.weightKg || '—',
@@ -56,6 +55,7 @@ function detailRowsTable(detail: PrintDocumentationDetail) {
       row.prepaidAmountUsd || '—',
       row.senderName || '—',
       row.receiverName || '—',
+      row.destination || '—',
       row.receiptNo || '—',
       row.notes || '—',
     ]),

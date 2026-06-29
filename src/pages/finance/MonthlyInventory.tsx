@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import ReportControlBar from '../../components/ReportControlBar';
-import { phase3FinanceGateway, type MonthlyInventoryReport } from '../../lib/api/phase3FinanceGateway';
+import {
+  phase3FinanceGateway,
+  type MonthlyInventoryPartyDetail,
+  type MonthlyInventoryReport,
+  type MonthlyInventoryRow,
+} from '../../lib/api/phase3FinanceGateway';
 import { phase15Gateway, getBackendIdFromSynthetic } from '../../lib/api/phase15Gateway';
 import { useToast } from '../../components/Toast';
 import { formatWesternNumber } from '../../lib/format/westernDigits';
@@ -18,6 +24,10 @@ function todayIso(): string {
 
 function fmtMoney(value: number): string {
   return formatWesternNumber(value, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function moneyCell(value: number): string {
+  return value > 0 ? `$${fmtMoney(value)}` : '—';
 }
 
 type ColumnKey =
@@ -55,6 +65,9 @@ export default function MonthlyInventoryReportPage() {
   const [report, setReport] = useState<MonthlyInventoryReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedRow, setSelectedRow] = useState<MonthlyInventoryRow | null>(null);
+  const [partyDetail, setPartyDetail] = useState<MonthlyInventoryPartyDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const initialLoad = useRef(false);
 
   useEffect(() => {
@@ -103,6 +116,34 @@ export default function MonthlyInventoryReportPage() {
     );
   }, [report?.rows, searchTerm]);
 
+  const openPartyDetail = async (row: MonthlyInventoryRow) => {
+    setSelectedRow(row);
+    setPartyDetail(null);
+    setDetailLoading(true);
+    try {
+      const detail = await phase3FinanceGateway.monthlyInventory.getPartyDetail({
+        dateFrom,
+        dateTo,
+        branchId: branchId || undefined,
+        partyType: row.partyType,
+        partyId: row.partyId ?? undefined,
+        partyName: row.partyName,
+      });
+      setPartyDetail(detail);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'تعذر تحميل تفاصيل الجهة', 'error');
+      setSelectedRow(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const closePartyDetail = () => {
+    setSelectedRow(null);
+    setPartyDetail(null);
+    setDetailLoading(false);
+  };
+
   const csvRows = filteredRows.map((row) => ({
     الجهة: row.partyName,
     الفرع: row.branchName ?? '',
@@ -142,7 +183,7 @@ export default function MonthlyInventoryReportPage() {
       <div>
         <h2 className="text-xl font-bold">الجرد الشهري</h2>
         <p className="text-sm text-gray-600 mt-1">
-          ملخص الحركات المالية حسب الجهة (الوكيل) ضمن الفترة المحددة: تحصيل، دفع مسبق، حوالات، أجور، ومصاريف.
+          ملخص الحركات المالية حسب الجهة (الوكيل) ضمن الفترة المحددة. اضغط على أي جهة لعرض تفاصيل حركاتها.
         </p>
       </div>
 
@@ -218,9 +259,14 @@ export default function MonthlyInventoryReportPage() {
             </thead>
             <tbody>
               {filteredRows.map((row) => (
-                <tr key={row.partyId ?? `unassigned-${row.partyName}`}>
+                <tr
+                  key={row.partyId ?? `unassigned-${row.partyName}`}
+                  className="cursor-pointer hover:bg-blue-50/70"
+                  onClick={() => void openPartyDetail(row)}
+                  title="اضغط لعرض تفاصيل الحركات"
+                >
                   <td>
-                    <div className="font-medium">{row.partyName}</div>
+                    <div className="font-medium text-blue-900">{row.partyName}</div>
                     {row.branchName && <div className="text-xs text-gray-500">{row.branchName}</div>}
                     {(row.shipmentCount > 0 || row.transferCount > 0) && (
                       <div className="text-[11px] text-gray-400 mt-0.5">
@@ -258,6 +304,98 @@ export default function MonthlyInventoryReportPage() {
               </tfoot>
             )}
           </table>
+        </div>
+      )}
+
+      {selectedRow && (
+        <div className="quick-ledger-confirm no-print" role="dialog" aria-modal="true" onClick={closePartyDetail}>
+          <div
+            className="quick-ledger-confirm-panel"
+            style={{ width: 'min(96vw, 1100px)', maxHeight: '88vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <h3 className="text-lg font-bold">تفاصيل الجهة — {selectedRow.partyName}</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  من {dateFrom} إلى {dateTo}
+                  {selectedRow.branchName ? ` · ${selectedRow.branchName}` : ''}
+                </p>
+              </div>
+              <button type="button" className="toolbar-btn" onClick={closePartyDetail} aria-label="إغلاق">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {detailLoading && (
+              <div className="py-10 text-center text-gray-500">جاري تحميل التفاصيل...</div>
+            )}
+
+            {!detailLoading && partyDetail && (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-3">
+                  {COLUMNS.map((column) => (
+                    <ColumnTotalCard
+                      key={column.key}
+                      label={column.label}
+                      value={`$${fmtMoney(partyDetail.totals[column.key])}`}
+                    />
+                  ))}
+                </div>
+
+                <div className="overflow-auto flex-1 border border-slate-200 rounded-lg">
+                  <table className="data-grid w-full min-w-[64rem]">
+                    <thead>
+                      <tr>
+                        <th>التاريخ</th>
+                        <th>النوع</th>
+                        <th>المرجع</th>
+                        <th>البيان</th>
+                        {COLUMNS.map((column) => (
+                          <th key={column.key} className="text-center">{column.label}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {partyDetail.lines.map((line) => (
+                        <tr key={`${line.category}-${line.id}`}>
+                          <td className="whitespace-nowrap">{line.eventDate || '—'}</td>
+                          <td>{line.categoryLabel}</td>
+                          <td>{line.referenceNo || '—'}</td>
+                          <td className="text-right max-w-[16rem]">{line.description || '—'}</td>
+                          <td className="text-center tabular-nums">{moneyCell(line.collect)}</td>
+                          <td className="text-center tabular-nums">{moneyCell(line.prepaid)}</td>
+                          <td className="text-center tabular-nums">{moneyCell(line.hawala)}</td>
+                          <td className="text-center tabular-nums">{moneyCell(line.transferFees)}</td>
+                          <td className="text-center tabular-nums">{moneyCell(line.internalExpenses)}</td>
+                          <td className="text-center tabular-nums">{moneyCell(line.externalExpenses)}</td>
+                        </tr>
+                      ))}
+                      {partyDetail.lines.length === 0 && (
+                        <tr>
+                          <td colSpan={10} className="text-center py-8 text-gray-500">
+                            لا توجد حركات تفصيلية لهذه الجهة في الفترة المحددة
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                    {partyDetail.lines.length > 0 && (
+                      <tfoot>
+                        <tr className="font-bold bg-slate-50">
+                          <td colSpan={4}>إجمالي الجهة</td>
+                          {COLUMNS.map((column) => (
+                            <td key={column.key} className="text-center tabular-nums">
+                              ${fmtMoney(partyDetail.totals[column.key])}
+                            </td>
+                          ))}
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
