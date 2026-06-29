@@ -459,6 +459,7 @@ export class DailyLedgerShipmentPostingService {
         hawalaAmount: amounts.hawalaAmount,
         transferServiceFee: amounts.transferServiceFee,
         discountAmount: 0,
+        effectiveDate: row.ledger_date ?? undefined,
       },
       { ...scope, branchId: row.branch_id, companyId: row.company_id },
     );

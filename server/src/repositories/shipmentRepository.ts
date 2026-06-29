@@ -345,6 +345,7 @@ export class ShipmentRepository {
           agent_commission_base_amount = coalesce($29, agent_commission_base_amount),
           agent_commission_percentage_snapshot = coalesce($30, agent_commission_percentage_snapshot),
           agent_commission_amount_snapshot = coalesce($31, agent_commission_amount_snapshot),
+          effective_date = coalesce($33::date, effective_date),
           updated_at = now()
         where id = $1
           and deleted_at is null
@@ -387,6 +388,7 @@ export class ShipmentRepository {
           typeof payload.agentCommissionPercentageSnapshot === 'number' ? payload.agentCommissionPercentageSnapshot : null,
           typeof payload.agentCommissionAmountSnapshot === 'number' ? payload.agentCommissionAmountSnapshot : null,
           payload.shipmentNo ?? null,
+          payload.effectiveDate ?? null,
         ],
       );
 

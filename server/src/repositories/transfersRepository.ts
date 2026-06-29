@@ -280,6 +280,86 @@ export class TransfersRepository {
     return result.rows[0] ?? null;
   }
 
+  async getByShipmentId(shipmentId: string, companyId: string, client?: PoolClient) {
+    const db = client || this.pool;
+    const { rows } = await db.query(
+      `
+      select *
+      from transfers
+      where shipment_id = $1
+        and company_id = $2
+        and upper(coalesce(status, '')) <> 'CANCELLED'
+      order by created_at desc
+      limit 1
+      `,
+      [shipmentId, companyId],
+    );
+    return rows[0] ?? null;
+  }
+
+  async updateShipmentLinkedDetails(
+    id: string,
+    companyId: string,
+    payload: {
+      sender_name: string;
+      receiver_name: string;
+      amount: number;
+      main_amount: number;
+      transfer_service_fee: number;
+      transfer_service_fee_main: number;
+      company_transfer_profit: number;
+      company_transfer_profit_main: number;
+      transfer_date?: Date;
+      agent_id?: string;
+      destination_city?: string;
+      notes?: string;
+    },
+    client?: PoolClient,
+  ) {
+    const db = client || this.pool;
+    const { rows } = await db.query(
+      `
+      update transfers
+      set
+        sender_name = $3,
+        receiver_name = $4,
+        amount = $5,
+        main_amount = $6,
+        transfer_service_fee = $7,
+        transfer_service_fee_main = $8,
+        company_transfer_profit = $9,
+        company_transfer_profit_main = $10,
+        transfer_date = coalesce($11, transfer_date),
+        agent_id = coalesce($12, agent_id),
+        destination_agent_id = coalesce($12, destination_agent_id),
+        destination_city = coalesce($13, destination_city),
+        notes = coalesce($14, notes),
+        updated_at = now()
+      where id = $1
+        and company_id = $2
+        and upper(coalesce(status, '')) not in ('COMPLETED', 'CANCELLED')
+      returning *
+      `,
+      [
+        id,
+        companyId,
+        payload.sender_name,
+        payload.receiver_name,
+        payload.amount,
+        payload.main_amount,
+        payload.transfer_service_fee,
+        payload.transfer_service_fee_main,
+        payload.company_transfer_profit,
+        payload.company_transfer_profit_main,
+        payload.transfer_date ?? null,
+        payload.agent_id ?? null,
+        payload.destination_city ?? null,
+        payload.notes ?? null,
+      ],
+    );
+    return rows[0] ?? null;
+  }
+
   async getByShipmentIdForAgent(shipmentId: string, companyId: string, agentId: string) {
     const result = await this.pool.query(
       `

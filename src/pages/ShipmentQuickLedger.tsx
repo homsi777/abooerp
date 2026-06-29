@@ -2161,9 +2161,12 @@ export default function ShipmentQuickLedger() {
         const receiverResult = await resolveCustomer(row.receiver, 'receiver');
         const goodsResult = await resolveGoodsType(row.parcelType);
 
+        const ledgerDate =
+          saved.ledger_date ?? row.sessionLedgerDate ?? currentTrip.date;
+
         const amounts = shipmentAmountsFromLedgerRow(row);
         await phase15Gateway.shipments.update(shipmentSyntheticId, {
-          date: currentTrip.date,
+          date: ledgerDate,
           branchId: branchForRow.id,
           branchName: branchForRow.name,
           agentId: row.agentId,

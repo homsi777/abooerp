@@ -734,6 +734,7 @@ export const phase15Gateway = {
         prepaidAmount: data.prepaidAmount ?? 0,
         discountAmount: data.discount ?? 0,
         transferServiceFee: data.transferServiceFee ?? 0,
+        ...(data.date ? { effectiveDate: data.date.slice(0, 10) } : {}),
         ...(financial ? { financial } : {}),
       });
       return mapShipment(created);
@@ -771,6 +772,7 @@ export const phase15Gateway = {
         prepaidAmount: data.prepaidAmount,
         discountAmount: data.discount,
         transferServiceFee: data.transferServiceFee,
+        ...(data.date ? { effectiveDate: data.date.slice(0, 10) } : {}),
       });
       return mapShipment(updated);
     },

@@ -6,6 +6,28 @@ import { computeBaseAmountUsd } from '../utils/money.js';
 import { HttpError } from '../utils/errors.js';
 import { TransfersRepository, TransferPayload } from '../repositories/transfersRepository.js';
 
+function toTransferDate(value?: string | null): Date | undefined {
+  const day = String(value ?? '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return undefined;
+  return new Date(`${day}T12:00:00.000Z`);
+}
+
+export type EnsureShipmentLinkedTransferInput = {
+  companyId: string;
+  branchId?: string;
+  agentId?: string;
+  destinationCity?: string;
+  shipmentId: string;
+  shipmentNo: string;
+  senderName: string;
+  receiverName: string;
+  hawalaAmount: number;
+  transferServiceFee: number;
+  currency?: string;
+  exchangeRateToUsd?: number;
+  transferDate?: string;
+};
+
 export class TransfersService {
   private exchangeRateRepository = new ExchangeRateRepository();
 
@@ -42,6 +64,72 @@ export class TransfersService {
 
   async createTransfer(payload: TransferPayload, client?: PoolClient) {
     return this.repo.create(payload, client);
+  }
+
+  async ensureShipmentLinkedTransfer(input: EnsureShipmentLinkedTransferInput) {
+    const hawala = Math.round(Number(input.hawalaAmount ?? 0) * 100) / 100;
+    const fee = Math.round(Number(input.transferServiceFee ?? 0) * 100) / 100;
+    if (hawala <= 0 && fee <= 0) return null;
+    if (!input.agentId) {
+      console.warn('[transfers] skipped shipment-linked transfer: missing agent', input.shipmentId);
+      return null;
+    }
+
+    const currency = String(input.currency || 'USD').toUpperCase();
+    const rate = Number(input.exchangeRateToUsd ?? 1) || 1;
+    const transferMain = computeBaseAmountUsd(hawala, rate);
+    const feeMain = computeBaseAmountUsd(fee, rate);
+    const transferDate = toTransferDate(input.transferDate);
+    const notes = `حوالة مرتبطة بالشحنة ${input.shipmentNo}`;
+
+    const existing = await this.repo.getByShipmentId(input.shipmentId, input.companyId);
+    if (existing) {
+      const status = String(existing.status || '').toUpperCase();
+      if (status === 'COMPLETED' || status === 'CANCELLED') return existing;
+      return this.repo.updateShipmentLinkedDetails(existing.id, input.companyId, {
+        sender_name: input.senderName,
+        receiver_name: input.receiverName,
+        amount: hawala,
+        main_amount: transferMain,
+        transfer_service_fee: fee,
+        transfer_service_fee_main: feeMain,
+        company_transfer_profit: fee,
+        company_transfer_profit_main: feeMain,
+        transfer_date: transferDate,
+        agent_id: input.agentId,
+        destination_city: input.destinationCity,
+        notes,
+      });
+    }
+
+    return this.createTransfer({
+      company_id: input.companyId,
+      branch_id: input.branchId,
+      agent_id: input.agentId,
+      destination_agent_id: input.agentId,
+      destination_city: input.destinationCity,
+      shipment_id: input.shipmentId,
+      sender_name: input.senderName,
+      receiver_name: input.receiverName,
+      amount: hawala,
+      currency,
+      main_amount: transferMain,
+      commission: 0,
+      commission_currency: currency,
+      commission_main: 0,
+      agent_commission: 0,
+      agent_commission_currency: currency,
+      agent_commission_main: 0,
+      transfer_service_fee: fee,
+      transfer_service_fee_currency: currency,
+      transfer_service_fee_main: feeMain,
+      company_transfer_profit: fee,
+      company_transfer_profit_currency: currency,
+      company_transfer_profit_main: feeMain,
+      status: 'PENDING',
+      transfer_date: transferDate,
+      notes,
+    });
   }
 
   private async assertAgentBelongsToCompany(client: PoolClient, agentId: string, companyId: string) {
