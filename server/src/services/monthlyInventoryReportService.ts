@@ -94,6 +94,10 @@ function computeGrossProfit(input: {
   return money(input.collect + input.prepaid + input.transferFees);
 }
 
+/**
+ * صافي الشركة (حلب):
+ * عمولة الوكيل تُخصم من التحصيل+المسبق فقط — أجور الحوالات كاملة للشركة.
+ */
 function computeCompanyFinalNet(input: {
   collect: number;
   prepaid: number;
@@ -102,11 +106,43 @@ function computeCompanyFinalNet(input: {
   internalExpenses: number;
   externalExpenses: number;
 }): number {
-  const grossProfit = computeGrossProfit(input);
+  const shippingAfterCommission = money(money(input.collect) + money(input.prepaid) - money(input.agentShare));
   return money(
-    grossProfit - money(input.agentShare) - money(input.internalExpenses) - money(input.externalExpenses),
+    shippingAfterCommission
+      + money(input.transferFees)
+      - money(input.internalExpenses)
+      - money(input.externalExpenses),
   );
 }
+
+/** عمولة الوكيل — حصراً من تحصيل + دفع مسبق (نفس قاعدة الدفتر). */
+const AGENT_SHARE_FROM_LEDGER_SQL = `
+  case
+    when greatest(coalesce(dlr.collect_amount_usd, 0) + coalesce(dlr.prepaid_amount_usd, 0), 0) <= 0 then 0::numeric
+    when coalesce(s.agent_commission_percentage_snapshot, 0) > 0 then round(
+      (coalesce(dlr.collect_amount_usd, 0) + coalesce(dlr.prepaid_amount_usd, 0))
+      * s.agent_commission_percentage_snapshot / 100,
+      2
+    )
+    else least(
+      coalesce(s.agent_commission_amount_snapshot, 0),
+      greatest(coalesce(dlr.collect_amount_usd, 0) + coalesce(dlr.prepaid_amount_usd, 0), 0)
+    )
+  end::numeric`;
+
+const AGENT_SHARE_FROM_SHIPMENT_SQL = `
+  case
+    when greatest(
+      coalesce(s.transfer_fee, 0) + greatest(coalesce(s.prepaid_amount, 0), coalesce(s.freight_charge, 0)),
+      0
+    ) <= 0 then 0::numeric
+    when coalesce(s.agent_commission_percentage_snapshot, 0) > 0 then round(
+      (coalesce(s.transfer_fee, 0) + greatest(coalesce(s.prepaid_amount, 0), coalesce(s.freight_charge, 0)))
+      * s.agent_commission_percentage_snapshot / 100,
+      2
+    )
+    else coalesce(s.agent_commission_amount_snapshot, 0)
+  end::numeric`;
 
 function emptyTotals(): MonthlyInventoryColumnTotals {
   return {
@@ -237,7 +273,7 @@ function shipmentLedgerMoneyCtes(branchShipmentFilter: string): string {
           coalesce(dlr.prepaid_amount_usd, 0)::numeric as prepaid_amount,
           coalesce(dlr.hawala_amount_usd, 0)::numeric as hawala_amount,
           coalesce(dlr.transfer_service_fee_usd, 0)::numeric as transfer_fee_amount,
-          coalesce(s.agent_commission_amount_snapshot, 0)::numeric as agent_share_amount
+          ${AGENT_SHARE_FROM_LEDGER_SQL} as agent_share_amount
         from daily_ledger_rows dlr
         inner join shipments s on s.id = dlr.posted_shipment_id and s.deleted_at is null
         inner join daily_ledger_sessions dls on dls.id = dlr.session_id and dls.deleted_at is null
@@ -258,7 +294,7 @@ function shipmentLedgerMoneyCtes(branchShipmentFilter: string): string {
           greatest(coalesce(s.prepaid_amount, 0), coalesce(s.freight_charge, 0))::numeric as prepaid_amount,
           coalesce(s.hawala_amount, 0)::numeric as hawala_amount,
           coalesce(s.transfer_service_fee, 0)::numeric as transfer_fee_amount,
-          coalesce(s.agent_commission_amount_snapshot, 0)::numeric as agent_share_amount
+          ${AGENT_SHARE_FROM_SHIPMENT_SQL} as agent_share_amount
         from shipments s
         where s.company_id = $1::uuid
           and s.deleted_at is null
@@ -309,8 +345,7 @@ export class MonthlyInventoryReportService {
           coalesce(t.agent_id, t.destination_agent_id) as agent_id,
           count(*)::int as transfer_count,
           coalesce(sum(coalesce(t.amount, 0)), 0)::numeric as hawala_amount,
-          coalesce(sum(coalesce(t.transfer_service_fee, 0)), 0)::numeric as transfer_fee_amount,
-          coalesce(sum(coalesce(t.agent_commission, 0)), 0)::numeric as agent_share_amount
+          coalesce(sum(coalesce(t.transfer_service_fee, 0)), 0)::numeric as transfer_fee_amount
         from transfers t
         where t.company_id = $1::uuid
           and t.shipment_id is null
@@ -369,7 +404,7 @@ export class MonthlyInventoryReportService {
           coalesce(st.prepaid_amount, 0) as prepaid_amount,
           coalesce(st.hawala_amount, 0) + coalesce(tt.hawala_amount, 0) as hawala_amount,
           coalesce(st.transfer_fee_amount, 0) + coalesce(tt.transfer_fee_amount, 0) as transfer_fee_amount,
-          coalesce(st.agent_share_amount, 0) + coalesce(tt.agent_share_amount, 0) as agent_share_amount,
+          coalesce(st.agent_share_amount, 0) as agent_share_amount,
           coalesce(ie.expense_amount, 0) as internal_expense_amount,
           coalesce(ee.expense_amount, 0) as external_expense_amount
         from party_ids pid
@@ -396,8 +431,7 @@ export class MonthlyInventoryReportService {
             + coalesce((select hawala_amount from standalone_transfer_totals where agent_id is null), 0) as hawala_amount,
           coalesce((select transfer_fee_amount from shipment_totals where agent_id is null), 0)
             + coalesce((select transfer_fee_amount from standalone_transfer_totals where agent_id is null), 0) as transfer_fee_amount,
-          coalesce((select agent_share_amount from shipment_totals where agent_id is null), 0)
-            + coalesce((select agent_share_amount from standalone_transfer_totals where agent_id is null), 0) as agent_share_amount,
+          coalesce((select agent_share_amount from shipment_totals where agent_id is null), 0) as agent_share_amount,
           coalesce((select expense_amount from internal_expense_totals where agent_id is null), 0) as internal_expense_amount,
           coalesce((select expense_amount from external_expense_totals where agent_id is null), 0) as external_expense_amount
       )
@@ -536,7 +570,7 @@ export class MonthlyInventoryReportService {
           coalesce(dlr.transfer_service_fee_usd, 0)::numeric as transfer_fee_amount,
           0::numeric as internal_expense_amount,
           0::numeric as external_expense_amount,
-          coalesce(s.agent_commission_amount_snapshot, 0)::numeric as agent_share_amount
+          ${AGENT_SHARE_FROM_LEDGER_SQL} as agent_share_amount
         from daily_ledger_rows dlr
         inner join shipments s on s.id = dlr.posted_shipment_id and s.deleted_at is null
         inner join daily_ledger_sessions dls on dls.id = dlr.session_id and dls.deleted_at is null
@@ -571,7 +605,7 @@ export class MonthlyInventoryReportService {
           coalesce(s.transfer_service_fee, 0)::numeric as transfer_fee_amount,
           0::numeric as internal_expense_amount,
           0::numeric as external_expense_amount,
-          coalesce(s.agent_commission_amount_snapshot, 0)::numeric as agent_share_amount
+          ${AGENT_SHARE_FROM_SHIPMENT_SQL} as agent_share_amount
         from shipments s
         left join senders_receivers sr_s on sr_s.id = s.sender_id
         left join senders_receivers sr_r on sr_r.id = s.receiver_id
@@ -603,7 +637,7 @@ export class MonthlyInventoryReportService {
           coalesce(t.transfer_service_fee, 0)::numeric as transfer_fee_amount,
           0::numeric as internal_expense_amount,
           0::numeric as external_expense_amount,
-          coalesce(t.agent_commission, 0)::numeric as agent_share_amount
+          0::numeric as agent_share_amount
         from transfers t
         where t.company_id = $1::uuid
           and t.shipment_id is null
