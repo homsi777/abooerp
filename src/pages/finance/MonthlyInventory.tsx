@@ -310,36 +310,36 @@ export default function MonthlyInventoryReportPage() {
 
       {selectedRow && createPortal(
         <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/45 p-4 no-print"
+          className="app-modal-overlay no-print"
           role="dialog"
           aria-modal="true"
           onClick={closePartyDetail}
         >
           <div
-            className="card w-full max-w-[1100px] max-h-[90vh] overflow-hidden flex flex-col shadow-xl"
+            className="app-modal-panel"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="documentation-detail-header px-4 pt-4 shrink-0">
+            <div className="documentation-detail-header" style={{ padding: '16px 16px 0' }}>
               <div>
-                <h3 className="text-lg font-bold">تفاصيل الجهة — {selectedRow.partyName}</h3>
-                <p className="text-sm text-gray-600 mt-1">
+                <h3 style={{ fontSize: '1.125rem', fontWeight: 700 }}>تفاصيل الجهة — {selectedRow.partyName}</h3>
+                <p className="text-sm text-gray-600" style={{ marginTop: '4px' }}>
                   من {dateFrom} إلى {dateTo}
                   {selectedRow.branchName ? ` · ${selectedRow.branchName}` : ''}
                 </p>
               </div>
               <button type="button" className="toolbar-btn" onClick={closePartyDetail} aria-label="إغلاق">
-                <X className="w-4 h-4" />
+                <X size={16} />
               </button>
             </div>
 
-            <div className="px-4 pb-4 flex-1 min-h-0 flex flex-col">
+            <div className="app-modal-body">
               {detailLoading && (
-                <div className="py-10 text-center text-gray-500">جاري تحميل التفاصيل...</div>
+                <div style={{ padding: '40px 0', textAlign: 'center' }} className="text-gray-500">جاري تحميل التفاصيل...</div>
               )}
 
               {!detailLoading && partyDetail && (
                 <>
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-3 shrink-0">
+                  <div className="app-modal-summary-grid">
                     {COLUMNS.map((column) => (
                       <ColumnTotalCard
                         key={column.key}
@@ -349,7 +349,7 @@ export default function MonthlyInventoryReportPage() {
                     ))}
                   </div>
 
-                  <div className="documentation-detail-table-wrap flex-1 min-h-0 border border-slate-200 rounded-lg">
+                  <div className="documentation-detail-table-wrap border rounded-lg">
                     <table className="data-grid w-full min-w-[64rem]">
                       <thead>
                         <tr>
