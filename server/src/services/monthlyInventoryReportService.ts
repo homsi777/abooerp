@@ -94,10 +94,7 @@ function computeGrossProfit(input: {
   return money(input.collect + input.prepaid + input.transferFees);
 }
 
-/**
- * صافي الشركة (حلب):
- * عمولة الوكيل تُخصم من التحصيل+المسبق فقط — أجور الحوالات كاملة للشركة.
- */
+/** صافي الشركة (حلب) = إيراد الشحن + أجور الحوالات − عمولة الوكيل − المصاريف */
 function computeCompanyFinalNet(input: {
   collect: number;
   prepaid: number;
@@ -106,42 +103,66 @@ function computeCompanyFinalNet(input: {
   internalExpenses: number;
   externalExpenses: number;
 }): number {
-  const shippingAfterCommission = money(money(input.collect) + money(input.prepaid) - money(input.agentShare));
+  const grossProfit = computeGrossProfit({
+    collect: input.collect,
+    prepaid: input.prepaid,
+    transferFees: input.transferFees,
+  });
   return money(
-    shippingAfterCommission
-      + money(input.transferFees)
-      - money(input.internalExpenses)
-      - money(input.externalExpenses),
+    grossProfit - money(input.agentShare) - money(input.internalExpenses) - money(input.externalExpenses),
   );
 }
 
-/** عمولة الوكيل — حصراً من تحصيل + دفع مسبق (نفس قاعدة الدفتر). */
+/** تحصيل الدفتر (COD + أجور مدمجة) — ليس أجور الحوالة */
+const LEDGER_COLLECT_SQL = '(coalesce(dlr.collect_amount_usd, 0) + coalesce(dlr.fees_amount_usd, 0))';
+
+/**
+ * أساس عمولة الوكيل: تحصيل + دفع مسبق فقط.
+ * لا أصل الحوالة ولا أجور الحوالة (transfer_service_fee).
+ */
+const LEDGER_SHIPPING_COMMISSION_BASE_SQL = `
+  case
+    when greatest(${LEDGER_COLLECT_SQL}, 0) > 0
+      and greatest(coalesce(dlr.prepaid_amount_usd, 0), 0) > 0
+    then greatest(${LEDGER_COLLECT_SQL}, 0)
+    else greatest(${LEDGER_COLLECT_SQL}, 0) + greatest(coalesce(dlr.prepaid_amount_usd, 0), 0)
+  end`;
+
+/** s.transfer_fee = تحصيل COD — ليس transfer_service_fee (أجور حوالة) */
+const SHIPMENT_SHIPPING_COMMISSION_BASE_SQL = `
+  greatest(
+    case
+      when coalesce(s.prepaid_amount, 0) > 0
+      then coalesce(s.prepaid_amount, 0) + coalesce(s.transfer_fee, 0)
+      else coalesce(s.freight_charge, 0) + coalesce(s.transfer_fee, 0)
+    end,
+    0
+  )`;
+
+const AGENT_COMMISSION_PERCENTAGE_SQL = `
+  coalesce(
+    nullif(s.agent_commission_percentage_snapshot, 0),
+    (select a.commission_percentage from agents a where a.id = s.agent_id limit 1),
+    0
+  )`;
+
+/** عمولة الوكيل — نسبة × (تحصيل + مسبق) فقط، بدون أجور الحوالات */
 const AGENT_SHARE_FROM_LEDGER_SQL = `
   case
-    when greatest(coalesce(dlr.collect_amount_usd, 0) + coalesce(dlr.prepaid_amount_usd, 0), 0) <= 0 then 0::numeric
-    when coalesce(s.agent_commission_percentage_snapshot, 0) > 0 then round(
-      (coalesce(dlr.collect_amount_usd, 0) + coalesce(dlr.prepaid_amount_usd, 0))
-      * s.agent_commission_percentage_snapshot / 100,
+    when (${LEDGER_SHIPPING_COMMISSION_BASE_SQL}) <= 0 then 0::numeric
+    else round(
+      (${LEDGER_SHIPPING_COMMISSION_BASE_SQL}) * (${AGENT_COMMISSION_PERCENTAGE_SQL}) / 100,
       2
-    )
-    else least(
-      coalesce(s.agent_commission_amount_snapshot, 0),
-      greatest(coalesce(dlr.collect_amount_usd, 0) + coalesce(dlr.prepaid_amount_usd, 0), 0)
     )
   end::numeric`;
 
 const AGENT_SHARE_FROM_SHIPMENT_SQL = `
   case
-    when greatest(
-      coalesce(s.transfer_fee, 0) + greatest(coalesce(s.prepaid_amount, 0), coalesce(s.freight_charge, 0)),
-      0
-    ) <= 0 then 0::numeric
-    when coalesce(s.agent_commission_percentage_snapshot, 0) > 0 then round(
-      (coalesce(s.transfer_fee, 0) + greatest(coalesce(s.prepaid_amount, 0), coalesce(s.freight_charge, 0)))
-      * s.agent_commission_percentage_snapshot / 100,
+    when (${SHIPMENT_SHIPPING_COMMISSION_BASE_SQL}) <= 0 then 0::numeric
+    else round(
+      (${SHIPMENT_SHIPPING_COMMISSION_BASE_SQL}) * (${AGENT_COMMISSION_PERCENTAGE_SQL}) / 100,
       2
     )
-    else coalesce(s.agent_commission_amount_snapshot, 0)
   end::numeric`;
 
 function emptyTotals(): MonthlyInventoryColumnTotals {
@@ -269,7 +290,7 @@ function shipmentLedgerMoneyCtes(branchShipmentFilter: string): string {
         select
           s.id as shipment_id,
           s.agent_id,
-          coalesce(dlr.collect_amount_usd, 0)::numeric as collect_amount,
+          ${LEDGER_COLLECT_SQL}::numeric as collect_amount,
           coalesce(dlr.prepaid_amount_usd, 0)::numeric as prepaid_amount,
           coalesce(dlr.hawala_amount_usd, 0)::numeric as hawala_amount,
           coalesce(dlr.transfer_service_fee_usd, 0)::numeric as transfer_fee_amount,
@@ -564,7 +585,7 @@ export class MonthlyInventoryReportService {
               )
             )
           ) as description,
-          coalesce(dlr.collect_amount_usd, 0)::numeric as collect_amount,
+          ${LEDGER_COLLECT_SQL}::numeric as collect_amount,
           coalesce(dlr.prepaid_amount_usd, 0)::numeric as prepaid_amount,
           coalesce(dlr.hawala_amount_usd, 0)::numeric as hawala_amount,
           coalesce(dlr.transfer_service_fee_usd, 0)::numeric as transfer_fee_amount,
