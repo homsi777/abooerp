@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import ReportControlBar from '../../components/ReportControlBar';
 import {
@@ -307,14 +308,18 @@ export default function MonthlyInventoryReportPage() {
         </div>
       )}
 
-      {selectedRow && (
-        <div className="quick-ledger-confirm no-print" role="dialog" aria-modal="true" onClick={closePartyDetail}>
+      {selectedRow && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/45 p-4 no-print"
+          role="dialog"
+          aria-modal="true"
+          onClick={closePartyDetail}
+        >
           <div
-            className="quick-ledger-confirm-panel"
-            style={{ width: 'min(96vw, 1100px)', maxHeight: '88vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+            className="card w-full max-w-[1100px] max-h-[90vh] overflow-hidden flex flex-col shadow-xl"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3 mb-3">
+            <div className="documentation-detail-header px-4 pt-4 shrink-0">
               <div>
                 <h3 className="text-lg font-bold">تفاصيل الجهة — {selectedRow.partyName}</h3>
                 <p className="text-sm text-gray-600 mt-1">
@@ -327,76 +332,79 @@ export default function MonthlyInventoryReportPage() {
               </button>
             </div>
 
-            {detailLoading && (
-              <div className="py-10 text-center text-gray-500">جاري تحميل التفاصيل...</div>
-            )}
+            <div className="px-4 pb-4 flex-1 min-h-0 flex flex-col">
+              {detailLoading && (
+                <div className="py-10 text-center text-gray-500">جاري تحميل التفاصيل...</div>
+              )}
 
-            {!detailLoading && partyDetail && (
-              <>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-3">
-                  {COLUMNS.map((column) => (
-                    <ColumnTotalCard
-                      key={column.key}
-                      label={column.label}
-                      value={`$${fmtMoney(partyDetail.totals[column.key])}`}
-                    />
-                  ))}
-                </div>
+              {!detailLoading && partyDetail && (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-3 shrink-0">
+                    {COLUMNS.map((column) => (
+                      <ColumnTotalCard
+                        key={column.key}
+                        label={column.label}
+                        value={`$${fmtMoney(partyDetail.totals[column.key])}`}
+                      />
+                    ))}
+                  </div>
 
-                <div className="overflow-auto flex-1 border border-slate-200 rounded-lg">
-                  <table className="data-grid w-full min-w-[64rem]">
-                    <thead>
-                      <tr>
-                        <th>التاريخ</th>
-                        <th>النوع</th>
-                        <th>المرجع</th>
-                        <th>البيان</th>
-                        {COLUMNS.map((column) => (
-                          <th key={column.key} className="text-center">{column.label}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {partyDetail.lines.map((line) => (
-                        <tr key={`${line.category}-${line.id}`}>
-                          <td className="whitespace-nowrap">{line.eventDate || '—'}</td>
-                          <td>{line.categoryLabel}</td>
-                          <td>{line.referenceNo || '—'}</td>
-                          <td className="text-right max-w-[16rem]">{line.description || '—'}</td>
-                          <td className="text-center tabular-nums">{moneyCell(line.collect)}</td>
-                          <td className="text-center tabular-nums">{moneyCell(line.prepaid)}</td>
-                          <td className="text-center tabular-nums">{moneyCell(line.hawala)}</td>
-                          <td className="text-center tabular-nums">{moneyCell(line.transferFees)}</td>
-                          <td className="text-center tabular-nums">{moneyCell(line.internalExpenses)}</td>
-                          <td className="text-center tabular-nums">{moneyCell(line.externalExpenses)}</td>
-                        </tr>
-                      ))}
-                      {partyDetail.lines.length === 0 && (
+                  <div className="documentation-detail-table-wrap flex-1 min-h-0 border border-slate-200 rounded-lg">
+                    <table className="data-grid w-full min-w-[64rem]">
+                      <thead>
                         <tr>
-                          <td colSpan={10} className="text-center py-8 text-gray-500">
-                            لا توجد حركات تفصيلية لهذه الجهة في الفترة المحددة
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                    {partyDetail.lines.length > 0 && (
-                      <tfoot>
-                        <tr className="font-bold bg-slate-50">
-                          <td colSpan={4}>إجمالي الجهة</td>
+                          <th>التاريخ</th>
+                          <th>النوع</th>
+                          <th>المرجع</th>
+                          <th>البيان</th>
                           {COLUMNS.map((column) => (
-                            <td key={column.key} className="text-center tabular-nums">
-                              ${fmtMoney(partyDetail.totals[column.key])}
-                            </td>
+                            <th key={column.key} className="text-center">{column.label}</th>
                           ))}
                         </tr>
-                      </tfoot>
-                    )}
-                  </table>
-                </div>
-              </>
-            )}
+                      </thead>
+                      <tbody>
+                        {partyDetail.lines.map((line) => (
+                          <tr key={`${line.category}-${line.id}`}>
+                            <td className="whitespace-nowrap">{line.eventDate || '—'}</td>
+                            <td>{line.categoryLabel}</td>
+                            <td>{line.referenceNo || '—'}</td>
+                            <td className="text-right max-w-[16rem]">{line.description || '—'}</td>
+                            <td className="text-center tabular-nums">{moneyCell(line.collect)}</td>
+                            <td className="text-center tabular-nums">{moneyCell(line.prepaid)}</td>
+                            <td className="text-center tabular-nums">{moneyCell(line.hawala)}</td>
+                            <td className="text-center tabular-nums">{moneyCell(line.transferFees)}</td>
+                            <td className="text-center tabular-nums">{moneyCell(line.internalExpenses)}</td>
+                            <td className="text-center tabular-nums">{moneyCell(line.externalExpenses)}</td>
+                          </tr>
+                        ))}
+                        {partyDetail.lines.length === 0 && (
+                          <tr>
+                            <td colSpan={10} className="text-center py-8 text-gray-500">
+                              لا توجد حركات تفصيلية لهذه الجهة في الفترة المحددة
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                      {partyDetail.lines.length > 0 && (
+                        <tfoot>
+                          <tr className="font-bold bg-slate-50">
+                            <td colSpan={4}>إجمالي الجهة</td>
+                            {COLUMNS.map((column) => (
+                              <td key={column.key} className="text-center tabular-nums">
+                                ${fmtMoney(partyDetail.totals[column.key])}
+                              </td>
+                            ))}
+                          </tr>
+                        </tfoot>
+                      )}
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
