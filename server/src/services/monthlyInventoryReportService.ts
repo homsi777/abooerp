@@ -19,6 +19,12 @@ export type MonthlyInventoryRow = {
   transferFees: number;
   internalExpenses: number;
   externalExpenses: number;
+  /** عمولة الوكيل (نسبة من التحصيل + الدفع المسبق) */
+  agentShare: number;
+  /** إيراد الربح قبل عمولة الوكيل: تحصيل + مسبق + أجور حوالات */
+  grossProfit: number;
+  /** صافي فرع حلب بعد عمولة الوكيل والمصاريف الداخلية والخارجية */
+  companyFinalNet: number;
   shipmentCount: number;
   transferCount: number;
 };
@@ -30,6 +36,9 @@ export type MonthlyInventoryColumnTotals = {
   transferFees: number;
   internalExpenses: number;
   externalExpenses: number;
+  agentShare: number;
+  grossProfit: number;
+  companyFinalNet: number;
 };
 
 export type MonthlyInventoryReport = {
@@ -53,6 +62,9 @@ export type MonthlyInventoryDetailLine = {
   transferFees: number;
   internalExpenses: number;
   externalExpenses: number;
+  agentShare: number;
+  grossProfit: number;
+  companyFinalNet: number;
 };
 
 export type MonthlyInventoryPartyDetail = {
@@ -71,6 +83,78 @@ function money(value: unknown): number {
   const n = Number(value ?? 0);
   if (!Number.isFinite(n)) return 0;
   return Math.round(n * 100) / 100;
+}
+
+/** ربح تشغيلي قبل عمولة الوكيل — بدون أصل الحوالة (عهدة توريد). */
+function computeGrossProfit(input: {
+  collect: number;
+  prepaid: number;
+  transferFees: number;
+}): number {
+  return money(input.collect + input.prepaid + input.transferFees);
+}
+
+function computeCompanyFinalNet(input: {
+  collect: number;
+  prepaid: number;
+  transferFees: number;
+  agentShare: number;
+  internalExpenses: number;
+  externalExpenses: number;
+}): number {
+  const grossProfit = computeGrossProfit(input);
+  return money(
+    grossProfit - money(input.agentShare) - money(input.internalExpenses) - money(input.externalExpenses),
+  );
+}
+
+function emptyTotals(): MonthlyInventoryColumnTotals {
+  return {
+    collect: 0,
+    prepaid: 0,
+    hawala: 0,
+    transferFees: 0,
+    internalExpenses: 0,
+    externalExpenses: 0,
+    agentShare: 0,
+    grossProfit: 0,
+    companyFinalNet: 0,
+  };
+}
+
+function accumulateTotals(
+  acc: MonthlyInventoryColumnTotals,
+  row: Pick<
+    MonthlyInventoryRow,
+    | 'collect'
+    | 'prepaid'
+    | 'hawala'
+    | 'transferFees'
+    | 'internalExpenses'
+    | 'externalExpenses'
+    | 'agentShare'
+    | 'grossProfit'
+    | 'companyFinalNet'
+  >,
+): MonthlyInventoryColumnTotals {
+  acc.collect += row.collect;
+  acc.prepaid += row.prepaid;
+  acc.hawala += row.hawala;
+  acc.transferFees += row.transferFees;
+  acc.internalExpenses += row.internalExpenses;
+  acc.externalExpenses += row.externalExpenses;
+  acc.agentShare += row.agentShare;
+  acc.grossProfit += row.grossProfit;
+  acc.companyFinalNet += row.companyFinalNet;
+  return acc;
+}
+
+function finalizeTotals(totals: MonthlyInventoryColumnTotals): MonthlyInventoryColumnTotals {
+  const next = { ...totals };
+  for (const key of Object.keys(next) as Array<keyof MonthlyInventoryColumnTotals>) {
+    next[key] = money(next[key]);
+  }
+  return next;
 }
 
 type ScopeFilters = {
@@ -138,6 +222,71 @@ const CATEGORY_LABELS: Record<MonthlyInventoryDetailLine['category'], string> = 
   external_expense: 'مصروف خارجي',
 };
 
+/** شروط تاريخ الشحنة — تاريخ الدفتر أولاً ثم effective_date */
+const SHIPMENT_LEDGER_DATE_EXPR =
+  'coalesce(s.effective_date, dls.ledger_date, s.created_at::date)';
+const SHIPMENT_ORPHAN_DATE_EXPR = 'coalesce(s.effective_date, s.created_at::date)';
+
+function shipmentLedgerMoneyCtes(branchShipmentFilter: string): string {
+  return `
+      shipment_money_lines as (
+        select
+          s.id as shipment_id,
+          s.agent_id,
+          coalesce(dlr.collect_amount_usd, 0)::numeric as collect_amount,
+          coalesce(dlr.prepaid_amount_usd, 0)::numeric as prepaid_amount,
+          coalesce(dlr.hawala_amount_usd, 0)::numeric as hawala_amount,
+          coalesce(dlr.transfer_service_fee_usd, 0)::numeric as transfer_fee_amount,
+          coalesce(s.agent_commission_amount_snapshot, 0)::numeric as agent_share_amount
+        from daily_ledger_rows dlr
+        inner join shipments s on s.id = dlr.posted_shipment_id and s.deleted_at is null
+        inner join daily_ledger_sessions dls on dls.id = dlr.session_id and dls.deleted_at is null
+        where dlr.deleted_at is null
+          and dlr.posted_shipment_id is not null
+          and s.company_id = $1::uuid
+          and upper(coalesce(s.status, '')) <> 'CANCELLED'
+          and ${SHIPMENT_LEDGER_DATE_EXPR} >= $2::date
+          and ${SHIPMENT_LEDGER_DATE_EXPR} <= $3::date
+          ${branchShipmentFilter}
+
+        union all
+
+        select
+          s.id as shipment_id,
+          s.agent_id,
+          coalesce(s.transfer_fee, 0)::numeric as collect_amount,
+          greatest(coalesce(s.prepaid_amount, 0), coalesce(s.freight_charge, 0))::numeric as prepaid_amount,
+          coalesce(s.hawala_amount, 0)::numeric as hawala_amount,
+          coalesce(s.transfer_service_fee, 0)::numeric as transfer_fee_amount,
+          coalesce(s.agent_commission_amount_snapshot, 0)::numeric as agent_share_amount
+        from shipments s
+        where s.company_id = $1::uuid
+          and s.deleted_at is null
+          and upper(coalesce(s.status, '')) <> 'CANCELLED'
+          and ${SHIPMENT_ORPHAN_DATE_EXPR} >= $2::date
+          and ${SHIPMENT_ORPHAN_DATE_EXPR} <= $3::date
+          ${branchShipmentFilter}
+          and not exists (
+            select 1
+            from daily_ledger_rows dlr
+            where dlr.posted_shipment_id = s.id
+              and dlr.deleted_at is null
+          )
+      ),
+      shipment_totals as (
+        select
+          agent_id,
+          count(*)::int as shipment_count,
+          coalesce(sum(collect_amount), 0)::numeric as collect_amount,
+          coalesce(sum(prepaid_amount), 0)::numeric as prepaid_amount,
+          coalesce(sum(hawala_amount), 0)::numeric as hawala_amount,
+          coalesce(sum(transfer_fee_amount), 0)::numeric as transfer_fee_amount,
+          coalesce(sum(agent_share_amount), 0)::numeric as agent_share_amount
+        from shipment_money_lines
+        group by agent_id
+      )`;
+}
+
 export class MonthlyInventoryReportService {
   async buildReport(scope: DataScope | undefined, filters: MonthlyInventoryFilters): Promise<MonthlyInventoryReport> {
     const scoped = buildScopeFilters(scope, filters);
@@ -154,29 +303,14 @@ export class MonthlyInventoryReportService {
 
     const result = await pool.query(
       `
-      with shipment_totals as (
-        select
-          s.agent_id,
-          count(*)::int as shipment_count,
-          coalesce(sum(coalesce(s.transfer_fee, 0)), 0)::numeric as collect_amount,
-          coalesce(sum(coalesce(s.prepaid_amount, 0)), 0)::numeric as prepaid_amount,
-          coalesce(sum(coalesce(s.hawala_amount, 0)), 0)::numeric as hawala_amount,
-          coalesce(sum(coalesce(s.transfer_service_fee, 0)), 0)::numeric as transfer_fee_amount
-        from shipments s
-        where s.company_id = $1::uuid
-          and s.deleted_at is null
-          and upper(coalesce(s.status, '')) <> 'CANCELLED'
-          and coalesce(s.effective_date, s.created_at::date) >= $2::date
-          and coalesce(s.effective_date, s.created_at::date) <= $3::date
-          ${scoped.branchShipmentFilter}
-        group by s.agent_id
-      ),
+      with ${shipmentLedgerMoneyCtes(scoped.branchShipmentFilter)},
       standalone_transfer_totals as (
         select
           coalesce(t.agent_id, t.destination_agent_id) as agent_id,
           count(*)::int as transfer_count,
           coalesce(sum(coalesce(t.amount, 0)), 0)::numeric as hawala_amount,
-          coalesce(sum(coalesce(t.transfer_service_fee, 0)), 0)::numeric as transfer_fee_amount
+          coalesce(sum(coalesce(t.transfer_service_fee, 0)), 0)::numeric as transfer_fee_amount,
+          coalesce(sum(coalesce(t.agent_commission, 0)), 0)::numeric as agent_share_amount
         from transfers t
         where t.company_id = $1::uuid
           and t.shipment_id is null
@@ -235,6 +369,7 @@ export class MonthlyInventoryReportService {
           coalesce(st.prepaid_amount, 0) as prepaid_amount,
           coalesce(st.hawala_amount, 0) + coalesce(tt.hawala_amount, 0) as hawala_amount,
           coalesce(st.transfer_fee_amount, 0) + coalesce(tt.transfer_fee_amount, 0) as transfer_fee_amount,
+          coalesce(st.agent_share_amount, 0) + coalesce(tt.agent_share_amount, 0) as agent_share_amount,
           coalesce(ie.expense_amount, 0) as internal_expense_amount,
           coalesce(ee.expense_amount, 0) as external_expense_amount
         from party_ids pid
@@ -261,6 +396,8 @@ export class MonthlyInventoryReportService {
             + coalesce((select hawala_amount from standalone_transfer_totals where agent_id is null), 0) as hawala_amount,
           coalesce((select transfer_fee_amount from shipment_totals where agent_id is null), 0)
             + coalesce((select transfer_fee_amount from standalone_transfer_totals where agent_id is null), 0) as transfer_fee_amount,
+          coalesce((select agent_share_amount from shipment_totals where agent_id is null), 0)
+            + coalesce((select agent_share_amount from standalone_transfer_totals where agent_id is null), 0) as agent_share_amount,
           coalesce((select expense_amount from internal_expense_totals where agent_id is null), 0) as internal_expense_amount,
           coalesce((select expense_amount from external_expense_totals where agent_id is null), 0) as external_expense_amount
       )
@@ -273,6 +410,7 @@ export class MonthlyInventoryReportService {
          or prepaid_amount > 0
          or hawala_amount > 0
          or transfer_fee_amount > 0
+         or agent_share_amount > 0
          or internal_expense_amount > 0
          or external_expense_amount > 0
       order by party_type asc, party_name asc
@@ -280,44 +418,45 @@ export class MonthlyInventoryReportService {
       values,
     );
 
-    const rows: MonthlyInventoryRow[] = result.rows.map((row) => ({
-      partyId: row.party_id ? String(row.party_id) : null,
-      partyType: row.party_type === 'unassigned' ? 'unassigned' : 'agent',
-      partyName: String(row.party_name ?? '—'),
-      branchName: row.branch_name ? String(row.branch_name) : null,
-      collect: money(row.collect_amount),
-      prepaid: money(row.prepaid_amount),
-      hawala: money(row.hawala_amount),
-      transferFees: money(row.transfer_fee_amount),
-      internalExpenses: money(row.internal_expense_amount),
-      externalExpenses: money(row.external_expense_amount),
-      shipmentCount: Number(row.shipment_count ?? 0),
-      transferCount: Number(row.transfer_count ?? 0),
-    }));
+    const rows: MonthlyInventoryRow[] = result.rows.map((row) => {
+      const collect = money(row.collect_amount);
+      const prepaid = money(row.prepaid_amount);
+      const hawala = money(row.hawala_amount);
+      const transferFees = money(row.transfer_fee_amount);
+      const internalExpenses = money(row.internal_expense_amount);
+      const externalExpenses = money(row.external_expense_amount);
+      const agentShare = money(row.agent_share_amount);
+      const grossProfit = computeGrossProfit({ collect, prepaid, transferFees });
+      const companyFinalNet = computeCompanyFinalNet({
+        collect,
+        prepaid,
+        transferFees,
+        agentShare,
+        internalExpenses,
+        externalExpenses,
+      });
+      return {
+        partyId: row.party_id ? String(row.party_id) : null,
+        partyType: row.party_type === 'unassigned' ? 'unassigned' : 'agent',
+        partyName: String(row.party_name ?? '—'),
+        branchName: row.branch_name ? String(row.branch_name) : null,
+        collect,
+        prepaid,
+        hawala,
+        transferFees,
+        internalExpenses,
+        externalExpenses,
+        agentShare,
+        grossProfit,
+        companyFinalNet,
+        shipmentCount: Number(row.shipment_count ?? 0),
+        transferCount: Number(row.transfer_count ?? 0),
+      };
+    });
 
-    const totals = rows.reduce<MonthlyInventoryColumnTotals>(
-      (acc, row) => {
-        acc.collect += row.collect;
-        acc.prepaid += row.prepaid;
-        acc.hawala += row.hawala;
-        acc.transferFees += row.transferFees;
-        acc.internalExpenses += row.internalExpenses;
-        acc.externalExpenses += row.externalExpenses;
-        return acc;
-      },
-      {
-        collect: 0,
-        prepaid: 0,
-        hawala: 0,
-        transferFees: 0,
-        internalExpenses: 0,
-        externalExpenses: 0,
-      },
+    const totals = finalizeTotals(
+      rows.reduce((acc, row) => accumulateTotals(acc, row), emptyTotals()),
     );
-
-    for (const key of Object.keys(totals) as Array<keyof MonthlyInventoryColumnTotals>) {
-      totals[key] = money(totals[key]);
-    }
 
     return {
       generatedAt: new Date().toISOString(),
@@ -377,9 +516,47 @@ export class MonthlyInventoryReportService {
       select *
       from (
         select
+          dlr.id::text as id,
+          'shipment'::text as category,
+          ${SHIPMENT_LEDGER_DATE_EXPR}::text as event_date,
+          coalesce(nullif(trim(dlr.receipt_no), ''), s.shipment_no, '') as reference_no,
+          trim(
+            concat_ws(
+              ' — ',
+              nullif(trim(coalesce(dlr.destination, s.destination_city, '')), ''),
+              nullif(
+                trim(concat(coalesce(dlr.sender_name, sr_s.full_name, ''), ' → ', coalesce(dlr.receiver_name, sr_r.full_name, ''))),
+                ' → '
+              )
+            )
+          ) as description,
+          coalesce(dlr.collect_amount_usd, 0)::numeric as collect_amount,
+          coalesce(dlr.prepaid_amount_usd, 0)::numeric as prepaid_amount,
+          coalesce(dlr.hawala_amount_usd, 0)::numeric as hawala_amount,
+          coalesce(dlr.transfer_service_fee_usd, 0)::numeric as transfer_fee_amount,
+          0::numeric as internal_expense_amount,
+          0::numeric as external_expense_amount,
+          coalesce(s.agent_commission_amount_snapshot, 0)::numeric as agent_share_amount
+        from daily_ledger_rows dlr
+        inner join shipments s on s.id = dlr.posted_shipment_id and s.deleted_at is null
+        inner join daily_ledger_sessions dls on dls.id = dlr.session_id and dls.deleted_at is null
+        left join senders_receivers sr_s on sr_s.id = s.sender_id
+        left join senders_receivers sr_r on sr_r.id = s.receiver_id
+        where dlr.deleted_at is null
+          and dlr.posted_shipment_id is not null
+          and s.company_id = $1::uuid
+          and upper(coalesce(s.status, '')) <> 'CANCELLED'
+          and ${SHIPMENT_LEDGER_DATE_EXPR} >= $2::date
+          and ${SHIPMENT_LEDGER_DATE_EXPR} <= $3::date
+          and ${shipmentAgentFilter}
+          ${scoped.branchShipmentFilter}
+
+        union all
+
+        select
           s.id::text as id,
           'shipment'::text as category,
-          coalesce(s.effective_date, s.created_at::date)::text as event_date,
+          ${SHIPMENT_ORPHAN_DATE_EXPR}::text as event_date,
           coalesce(s.shipment_no, '') as reference_no,
           trim(
             concat_ws(
@@ -389,21 +566,28 @@ export class MonthlyInventoryReportService {
             )
           ) as description,
           coalesce(s.transfer_fee, 0)::numeric as collect_amount,
-          coalesce(s.prepaid_amount, 0)::numeric as prepaid_amount,
+          greatest(coalesce(s.prepaid_amount, 0), coalesce(s.freight_charge, 0))::numeric as prepaid_amount,
           coalesce(s.hawala_amount, 0)::numeric as hawala_amount,
           coalesce(s.transfer_service_fee, 0)::numeric as transfer_fee_amount,
           0::numeric as internal_expense_amount,
-          0::numeric as external_expense_amount
+          0::numeric as external_expense_amount,
+          coalesce(s.agent_commission_amount_snapshot, 0)::numeric as agent_share_amount
         from shipments s
         left join senders_receivers sr_s on sr_s.id = s.sender_id
         left join senders_receivers sr_r on sr_r.id = s.receiver_id
         where s.company_id = $1::uuid
           and s.deleted_at is null
           and upper(coalesce(s.status, '')) <> 'CANCELLED'
-          and coalesce(s.effective_date, s.created_at::date) >= $2::date
-          and coalesce(s.effective_date, s.created_at::date) <= $3::date
+          and ${SHIPMENT_ORPHAN_DATE_EXPR} >= $2::date
+          and ${SHIPMENT_ORPHAN_DATE_EXPR} <= $3::date
           and ${shipmentAgentFilter}
           ${scoped.branchShipmentFilter}
+          and not exists (
+            select 1
+            from daily_ledger_rows dlr
+            where dlr.posted_shipment_id = s.id
+              and dlr.deleted_at is null
+          )
 
         union all
 
@@ -418,7 +602,8 @@ export class MonthlyInventoryReportService {
           coalesce(t.amount, 0)::numeric as hawala_amount,
           coalesce(t.transfer_service_fee, 0)::numeric as transfer_fee_amount,
           0::numeric as internal_expense_amount,
-          0::numeric as external_expense_amount
+          0::numeric as external_expense_amount,
+          coalesce(t.agent_commission, 0)::numeric as agent_share_amount
         from transfers t
         where t.company_id = $1::uuid
           and t.shipment_id is null
@@ -441,7 +626,8 @@ export class MonthlyInventoryReportService {
           0::numeric as hawala_amount,
           0::numeric as transfer_fee_amount,
           coalesce(pv.base_amount_usd, 0)::numeric as internal_expense_amount,
-          0::numeric as external_expense_amount
+          0::numeric as external_expense_amount,
+          0::numeric as agent_share_amount
         from payment_vouchers pv
         left join cashboxes cb on cb.id = pv.cashbox_id
         where pv.company_id = $1::uuid
@@ -471,7 +657,8 @@ export class MonthlyInventoryReportService {
           0::numeric as hawala_amount,
           0::numeric as transfer_fee_amount,
           0::numeric as internal_expense_amount,
-          coalesce(pv.base_amount_usd, 0)::numeric as external_expense_amount
+          coalesce(pv.base_amount_usd, 0)::numeric as external_expense_amount,
+          0::numeric as agent_share_amount
         from payment_vouchers pv
         left join cashboxes cb on cb.id = pv.cashbox_id
         where pv.company_id = $1::uuid
@@ -489,6 +676,7 @@ export class MonthlyInventoryReportService {
         or transfer_fee_amount <> 0
         or internal_expense_amount <> 0
         or external_expense_amount <> 0
+        or agent_share_amount <> 0
       order by event_date asc, category asc, reference_no asc
       `,
       values,
@@ -496,6 +684,22 @@ export class MonthlyInventoryReportService {
 
     const lines: MonthlyInventoryDetailLine[] = result.rows.map((row) => {
       const category = row.category as MonthlyInventoryDetailLine['category'];
+      const collect = money(row.collect_amount);
+      const prepaid = money(row.prepaid_amount);
+      const hawala = money(row.hawala_amount);
+      const transferFees = money(row.transfer_fee_amount);
+      const internalExpenses = money(row.internal_expense_amount);
+      const externalExpenses = money(row.external_expense_amount);
+      const agentShare = money(row.agent_share_amount);
+      const grossProfit = computeGrossProfit({ collect, prepaid, transferFees });
+      const companyFinalNet = computeCompanyFinalNet({
+        collect,
+        prepaid,
+        transferFees,
+        agentShare,
+        internalExpenses,
+        externalExpenses,
+      });
       return {
         id: String(row.id),
         category,
@@ -503,38 +707,21 @@ export class MonthlyInventoryReportService {
         eventDate: String(row.event_date ?? '').slice(0, 10),
         referenceNo: String(row.reference_no ?? ''),
         description: String(row.description ?? ''),
-        collect: money(row.collect_amount),
-        prepaid: money(row.prepaid_amount),
-        hawala: money(row.hawala_amount),
-        transferFees: money(row.transfer_fee_amount),
-        internalExpenses: money(row.internal_expense_amount),
-        externalExpenses: money(row.external_expense_amount),
+        collect,
+        prepaid,
+        hawala,
+        transferFees,
+        internalExpenses,
+        externalExpenses,
+        agentShare,
+        grossProfit,
+        companyFinalNet,
       };
     });
 
-    const totals = lines.reduce<MonthlyInventoryColumnTotals>(
-      (acc, line) => {
-        acc.collect += line.collect;
-        acc.prepaid += line.prepaid;
-        acc.hawala += line.hawala;
-        acc.transferFees += line.transferFees;
-        acc.internalExpenses += line.internalExpenses;
-        acc.externalExpenses += line.externalExpenses;
-        return acc;
-      },
-      {
-        collect: 0,
-        prepaid: 0,
-        hawala: 0,
-        transferFees: 0,
-        internalExpenses: 0,
-        externalExpenses: 0,
-      },
+    const totals = finalizeTotals(
+      lines.reduce((acc, line) => accumulateTotals(acc, line), emptyTotals()),
     );
-
-    for (const key of Object.keys(totals) as Array<keyof MonthlyInventoryColumnTotals>) {
-      totals[key] = money(totals[key]);
-    }
 
     return {
       generatedAt: new Date().toISOString(),

@@ -1221,6 +1221,9 @@ export type MonthlyInventoryRow = {
   transferFees: number;
   internalExpenses: number;
   externalExpenses: number;
+  agentShare: number;
+  grossProfit: number;
+  companyFinalNet: number;
   shipmentCount: number;
   transferCount: number;
 };
@@ -1232,6 +1235,9 @@ export type MonthlyInventoryColumnTotals = {
   transferFees: number;
   internalExpenses: number;
   externalExpenses: number;
+  agentShare: number;
+  grossProfit: number;
+  companyFinalNet: number;
 };
 
 export type MonthlyInventoryReport = {
@@ -1259,6 +1265,9 @@ export type MonthlyInventoryDetailLine = {
   transferFees: number;
   internalExpenses: number;
   externalExpenses: number;
+  agentShare: number;
+  grossProfit: number;
+  companyFinalNet: number;
 };
 
 export type MonthlyInventoryPartyDetail = {

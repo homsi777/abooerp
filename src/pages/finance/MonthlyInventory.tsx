@@ -28,7 +28,8 @@ function fmtMoney(value: number): string {
 }
 
 function moneyCell(value: number): string {
-  return value > 0 ? `$${fmtMoney(value)}` : '—';
+  if (value === 0) return '—';
+  return `$${fmtMoney(value)}`;
 }
 
 type ColumnKey =
@@ -37,7 +38,9 @@ type ColumnKey =
   | 'hawala'
   | 'transferFees'
   | 'internalExpenses'
-  | 'externalExpenses';
+  | 'externalExpenses'
+  | 'agentShare'
+  | 'companyFinalNet';
 
 const COLUMNS: Array<{ key: ColumnKey; label: string }> = [
   { key: 'collect', label: 'التحصيل' },
@@ -46,6 +49,8 @@ const COLUMNS: Array<{ key: ColumnKey; label: string }> = [
   { key: 'transferFees', label: 'أجور حوالات' },
   { key: 'internalExpenses', label: 'مصاريف داخلية' },
   { key: 'externalExpenses', label: 'مصاريف خارجية' },
+  { key: 'agentShare', label: 'حصة الوكيل' },
+  { key: 'companyFinalNet', label: 'صافي الشركة (حلب)' },
 ];
 
 function ColumnTotalCard({ label, value }: { label: string; value: string }) {
@@ -154,6 +159,8 @@ export default function MonthlyInventoryReportPage() {
     'أجور حوالات': row.transferFees,
     'مصاريف داخلية': row.internalExpenses,
     'مصاريف خارجية': row.externalExpenses,
+    'حصة الوكيل': row.agentShare,
+    'صافي الشركة (حلب)': row.companyFinalNet,
     شحنات: row.shipmentCount,
     'حوالات مستقلة': row.transferCount,
   }));
@@ -162,7 +169,7 @@ export default function MonthlyInventoryReportPage() {
     if (!csvRows.length) return;
     downloadCsv(
       `monthly-inventory-${dateFrom}_${dateTo}.csv`,
-      ['الجهة', 'الفرع', 'التحصيل', 'دفع مسبق', 'حوالات', 'أجور حوالات', 'مصاريف داخلية', 'مصاريف خارجية', 'شحنات', 'حوالات مستقلة'],
+      ['الجهة', 'الفرع', 'التحصيل', 'دفع مسبق', 'حوالات', 'أجور حوالات', 'مصاريف داخلية', 'مصاريف خارجية', 'حصة الوكيل', 'صافي الشركة (حلب)', 'شحنات', 'حوالات مستقلة'],
       csvRows.map((row) => [
         row.الجهة,
         row.الفرع,
@@ -172,6 +179,8 @@ export default function MonthlyInventoryReportPage() {
         row['أجور حوالات'],
         row['مصاريف داخلية'],
         row['مصاريف خارجية'],
+        row['حصة الوكيل'],
+        row['صافي الشركة (حلب)'],
         row.شحنات,
         row['حوالات مستقلة'],
       ]),
@@ -184,7 +193,10 @@ export default function MonthlyInventoryReportPage() {
       <div>
         <h2 className="text-xl font-bold">الجرد الشهري</h2>
         <p className="text-sm text-gray-600 mt-1">
-          ملخص الحركات المالية حسب الجهة (الوكيل) ضمن الفترة المحددة. اضغط على أي جهة لعرض تفاصيل حركاتها.
+          ملخص الحركات المالية حسب الجهة (الوكيل) ضمن الفترة المحددة.
+          أعمدة الشحن تُجلب من سطور دفتر الشحن اليومي (تحصيل / مسبق / حوالة / أجور) لضمان التطابق مع الدفتر.
+          صافي الشركة = (تحصيل + مسبق + أجور حوالات) − حصة الوكيل − المصاريف — لصالح فرع حلب.
+          اضغط على أي جهة لعرض تفاصيل حركاتها.
         </p>
       </div>
 
@@ -234,7 +246,7 @@ export default function MonthlyInventoryReportPage() {
 
       {!loading && report && (
         <div className="card flex-1 min-h-0 overflow-auto">
-          <table className="data-grid w-full min-w-[72rem]">
+          <table className="data-grid w-full min-w-[96rem]">
             <thead>
               <tr className="bg-white">
                 <th className="align-bottom bg-white sticky top-0 z-20" />
@@ -278,15 +290,18 @@ export default function MonthlyInventoryReportPage() {
                     )}
                   </td>
                   {COLUMNS.map((column) => (
-                    <td key={column.key} className="text-center tabular-nums">
-                      {row[column.key] > 0 ? `$${fmtMoney(row[column.key])}` : '—'}
+                    <td
+                      key={column.key}
+                      className={`text-center tabular-nums${column.key === 'companyFinalNet' ? ' font-semibold text-primary' : ''}`}
+                    >
+                      {moneyCell(row[column.key])}
                     </td>
                   ))}
                 </tr>
               ))}
               {filteredRows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="text-center py-10 text-gray-500">
+                  <td colSpan={9} className="text-center py-10 text-gray-500">
                     لا توجد حركات في الفترة المحددة
                   </td>
                 </tr>
@@ -350,7 +365,7 @@ export default function MonthlyInventoryReportPage() {
                   </div>
 
                   <div className="documentation-detail-table-wrap border rounded-lg">
-                    <table className="data-grid w-full min-w-[64rem]">
+                    <table className="data-grid w-full min-w-[80rem]">
                       <thead>
                         <tr>
                           <th>التاريخ</th>
@@ -375,11 +390,15 @@ export default function MonthlyInventoryReportPage() {
                             <td className="text-center tabular-nums">{moneyCell(line.transferFees)}</td>
                             <td className="text-center tabular-nums">{moneyCell(line.internalExpenses)}</td>
                             <td className="text-center tabular-nums">{moneyCell(line.externalExpenses)}</td>
+                            <td className="text-center tabular-nums">{moneyCell(line.agentShare)}</td>
+                            <td className="text-center tabular-nums font-semibold text-primary">
+                              {moneyCell(line.companyFinalNet)}
+                            </td>
                           </tr>
                         ))}
                         {partyDetail.lines.length === 0 && (
                           <tr>
-                            <td colSpan={10} className="text-center py-8 text-gray-500">
+                            <td colSpan={12} className="text-center py-8 text-gray-500">
                               لا توجد حركات تفصيلية لهذه الجهة في الفترة المحددة
                             </td>
                           </tr>
