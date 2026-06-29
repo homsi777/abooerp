@@ -43,6 +43,7 @@ import GeneralLedger from './pages/finance/GeneralLedger';
 import TrialBalance from './pages/finance/TrialBalance';
 import BalanceSheet from './pages/finance/BalanceSheet';
 import PeriodClosing from './pages/finance/PeriodClosing';
+import MonthlyInventoryReportPage from './pages/finance/MonthlyInventory';
 import AgentsModule from './pages/agents/AgentsModule';
 import AgentProfile from './pages/agents/AgentProfile';
 import BranchesModule from './pages/branches/BranchesModule';
@@ -439,6 +440,18 @@ export default function App() {
                       ) : (
                         <RequirePermission permission="finance.read">
                           <BalanceSheet />
+                        </RequirePermission>
+                      )
+                    }
+                  />
+                  <Route
+                    path="/finance/monthly-inventory"
+                    element={
+                      user?.userType === 'agent' ? (
+                        <Navigate to="/agent-portal" replace />
+                      ) : (
+                        <RequirePermission permission="finance.read">
+                          <MonthlyInventoryReportPage />
                         </RequirePermission>
                       )
                     }

@@ -1132,6 +1132,21 @@ export function createFinanceRouter(service: FinanceService) {
   );
 
   router.get(
+    '/financial-reports/monthly-inventory',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'الجرد الشهري غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = financeStatementDateRangeSchema.parse(req.query);
+      const data = await service.getMonthlyInventoryReport(parseDataScope(req), {
+        dateFrom: query.dateFrom,
+        dateTo: query.dateTo ?? query.dateFrom,
+        branchId: query.branchId,
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
     '/financial-reports/profit-loss',
     requireAnyPermissions(['finance.read', 'finance.view']),
     forbidUserTypes(['agent'], 'تقرير الأرباح والخسائر غير متاح لمستخدم الوكيل.'),

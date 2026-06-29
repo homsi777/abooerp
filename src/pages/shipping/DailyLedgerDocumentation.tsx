@@ -476,33 +476,35 @@ export default function DailyLedgerDocumentation() {
                   <table className="documentation-table documentation-detail-table">
                     <thead>
                       <tr>
-                        <th>إيصال</th>
                         <th>الجهة</th>
-                        <th>نوع الطرود</th>
+                        <th>نوع البضاعة</th>
                         <th>عدد</th>
                         <th>وزن</th>
-                        <th>مرسل</th>
-                        <th>مستلم</th>
                         <th>تحصيل</th>
-                        <th>مسبق</th>
                         <th>حوالة</th>
                         <th>أجرة</th>
+                        <th>مسبق</th>
+                        <th>مرسل</th>
+                        <th>مستلم</th>
+                        <th>إيصال</th>
+                        <th>ملاحظات</th>
                       </tr>
                     </thead>
                     <tbody>
                       {(detail.rows_snapshot ?? []).map((row) => (
                         <tr key={row.rowId}>
-                          <td>{row.receiptNo || '—'}</td>
                           <td>{row.destination || '—'}</td>
                           <td>{row.parcelType || '—'}</td>
                           <td>{row.parcelCount ?? '—'}</td>
                           <td>{row.weightKg || '—'}</td>
-                          <td>{row.senderName || '—'}</td>
-                          <td>{row.receiverName || '—'}</td>
                           <td>{fmtMoney(row.collectAmountUsd)}</td>
-                          <td>{fmtMoney(row.prepaidAmountUsd)}</td>
                           <td>{fmtMoney(row.hawalaAmountUsd)}</td>
                           <td>{fmtMoney(row.transferServiceFeeUsd)}</td>
+                          <td>{fmtMoney(row.prepaidAmountUsd)}</td>
+                          <td>{row.senderName || '—'}</td>
+                          <td>{row.receiverName || '—'}</td>
+                          <td>{row.receiptNo || '—'}</td>
+                          <td>{row.notes || '—'}</td>
                         </tr>
                       ))}
                     </tbody>

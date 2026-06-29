@@ -1719,7 +1719,7 @@ body {
 
 .quick-ledger-table {
   width: 100%;
-  min-width: 980px;
+  min-width: 1180px;
   border-collapse: collapse;
   table-layout: fixed;
   font-size: 13px;
@@ -1850,8 +1850,15 @@ body {
   padding: 0 2px;
 }
 
-.quick-ledger-table th.notes {
-  width: 180px;
+.quick-ledger-table th.notes,
+.quick-ledger-table th.col-notes,
+.quick-ledger-table td.col-notes {
+  width: 160px;
+  min-width: 140px;
+}
+
+.quick-ledger-table td.col-notes input {
+  text-align: right;
 }
 
 .quick-ledger-table input,
@@ -2946,6 +2953,10 @@ body {
     border: 0 !important;
   }
 
+  .quick-ledger-select-col {
+    display: none !important;
+  }
+
   .quick-ledger-table {
     width: 100% !important;
     min-width: 0 !important;
@@ -2953,34 +2964,42 @@ body {
     table-layout: fixed !important;
   }
 
-  /* طباعة A4 عرضي — نوع الطرود أوسع، عدد الطرود أضيق، أرقام المبالغ/الوزن مضغوطة */
-  .quick-ledger-table th:nth-child(3),
-  .quick-ledger-table td:nth-child(3) {
+  /* طباعة A4 عرضي — أعمدة الدفتر حسب الترتيب الجديد */
+  .quick-ledger-table th.col-parcel-type,
+  .quick-ledger-table td.col-parcel-type {
     width: auto !important;
     min-width: 108px !important;
     max-width: none !important;
   }
 
-  .quick-ledger-table th:nth-child(4),
-  .quick-ledger-table td:nth-child(4) {
+  .quick-ledger-table th.col-parcel-count,
+  .quick-ledger-table td.col-parcel-count {
     width: 26px !important;
     max-width: 26px !important;
     text-align: center !important;
   }
 
-  .quick-ledger-table th:nth-child(5),
-  .quick-ledger-table td:nth-child(5),
-  .quick-ledger-table th:nth-child(n + 8),
-  .quick-ledger-table td:nth-child(n + 8) {
+  .quick-ledger-table th.col-weight,
+  .quick-ledger-table td.col-weight,
+  .quick-ledger-table th.col-money,
+  .quick-ledger-table td.col-money {
     width: 36px !important;
     max-width: 36px !important;
     text-align: center !important;
   }
 
-  .quick-ledger-table th:nth-child(n + 8) {
+  .quick-ledger-table th.col-money {
     font-size: 8px !important;
     line-height: 1.1 !important;
     padding: 1px !important;
+  }
+
+  .quick-ledger-table th.col-notes,
+  .quick-ledger-table td.col-notes {
+    width: auto !important;
+    min-width: 72px !important;
+    white-space: normal !important;
+    word-break: break-word !important;
   }
 
   .quick-ledger-table input,

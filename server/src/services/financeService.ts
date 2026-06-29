@@ -6,6 +6,10 @@ import { env } from '../config/env.js';
 import { ExchangeRateRepository } from '../repositories/exchangeRateRepository.js';
 import { ProfitLossReportService, type ProfitLossReportFilters } from './profitLossReportService.js';
 import {
+  MonthlyInventoryReportService,
+  type MonthlyInventoryFilters,
+} from './monthlyInventoryReportService.js';
+import {
   AccountingReportsService,
   buildAgentMainBranchReconciliationPackage,
   buildHawalaReconciliationPackage,
@@ -69,6 +73,7 @@ interface DashboardCacheResetAuditEntry {
 export class FinanceService {
   private readonly dashboardPackageCache = new Map<string, DashboardCacheEntry>();
   private readonly profitLossReportService = new ProfitLossReportService();
+  private readonly monthlyInventoryReportService = new MonthlyInventoryReportService();
   private readonly accountingReportsService = new AccountingReportsService();
 
   private readonly dashboardPackageInFlight = new Map<string, Promise<any>>();
@@ -547,6 +552,13 @@ export class FinanceService {
       throw new HttpError(400, 'fromAt and toAt are required for profit and loss report.');
     }
     return this.profitLossReportService.buildReport(scope, filters);
+  }
+
+  getMonthlyInventoryReport(scope?: DataScope, filters?: MonthlyInventoryFilters) {
+    if (!filters?.dateFrom || !filters?.dateTo) {
+      throw new HttpError(400, 'dateFrom and dateTo are required for monthly inventory report.');
+    }
+    return this.monthlyInventoryReportService.buildReport(scope, filters);
   }
 
   async getPartyStatementPackage(

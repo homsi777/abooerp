@@ -796,6 +796,20 @@ export const phase3FinanceGateway = {
     },
   },
 
+  monthlyInventory: {
+    getReport: async (filters: {
+      dateFrom: string;
+      dateTo: string;
+      branchId?: string;
+    }): Promise<MonthlyInventoryReport> => {
+      const q = new URLSearchParams();
+      q.set('dateFrom', filters.dateFrom);
+      q.set('dateTo', filters.dateTo);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      return httpClient.get<MonthlyInventoryReport>(`/financial-reports/monthly-inventory?${q.toString()}`);
+    },
+  },
+
   deliveryReports: {
     pendingTransfers: async (filters: {
       dateFrom?: string;
@@ -1175,4 +1189,40 @@ export type ProfitLossReport = {
     currencyCode: string;
   };
   sections: ProfitLossSection[];
+};
+
+export type MonthlyInventoryRow = {
+  partyId: string | null;
+  partyType: 'agent' | 'unassigned';
+  partyName: string;
+  branchName: string | null;
+  collect: number;
+  prepaid: number;
+  hawala: number;
+  transferFees: number;
+  internalExpenses: number;
+  externalExpenses: number;
+  shipmentCount: number;
+  transferCount: number;
+};
+
+export type MonthlyInventoryColumnTotals = {
+  collect: number;
+  prepaid: number;
+  hawala: number;
+  transferFees: number;
+  internalExpenses: number;
+  externalExpenses: number;
+};
+
+export type MonthlyInventoryReport = {
+  generatedAt: string;
+  filters: {
+    dateFrom: string;
+    dateTo: string;
+    branchId?: string;
+  };
+  currencyCode: 'USD';
+  totals: MonthlyInventoryColumnTotals;
+  rows: MonthlyInventoryRow[];
 };

@@ -573,6 +573,7 @@ type QuickLedgerPrintRow = {
   prepaidAmount: string;
   hawalaAmount: string;
   transferServiceFee: string;
+  notes: string;
 };
 
 function localRowToPrint(row: LedgerRow): QuickLedgerPrintRow {
@@ -588,6 +589,7 @@ function localRowToPrint(row: LedgerRow): QuickLedgerPrintRow {
     prepaidAmount: row.prepaidAmount,
     hawalaAmount: row.receiverCollect,
     transferServiceFee: row.transferServiceFee,
+    notes: row.notes,
   };
 }
 
@@ -605,6 +607,7 @@ function remoteRowToPrint(row: RemoteDailyLedgerRow): QuickLedgerPrintRow {
     prepaidAmount: String(row.prepaid_amount_usd ?? ''),
     hawalaAmount: String(row.hawala_amount_usd ?? ''),
     transferServiceFee: String(row.transfer_service_fee_usd ?? ''),
+    notes: row.notes ?? '',
   };
 }
 
@@ -714,30 +717,32 @@ function buildQuickLedgerPrintHtml(
   const bodyRows = rows
     .map(
       (row) => `<tr>
-<td class="col-receipt">${escapePrintHtml(row.receiptNo)}</td>
 <td class="col-dest">${escapePrintHtml(row.destination)}</td>
 <td class="col-type">${escapePrintHtml(row.parcelType)}</td>
 <td class="col-count">${escapePrintHtml(row.parcelCount)}</td>
 <td class="col-weight">${escapePrintHtml(row.weightKg)}</td>
-<td class="col-party">${escapePrintHtml(row.sender)}</td>
-<td class="col-party">${escapePrintHtml(row.receiver)}</td>
 <td class="col-money">${escapePrintHtml(row.collectAmount)}</td>
-<td class="col-money">${escapePrintHtml(row.prepaidAmount)}</td>
 <td class="col-money">${escapePrintHtml(row.hawalaAmount)}</td>
 <td class="col-money">${escapePrintHtml(row.transferServiceFee)}</td>
+<td class="col-money">${escapePrintHtml(row.prepaidAmount)}</td>
+<td class="col-party">${escapePrintHtml(row.sender)}</td>
+<td class="col-party">${escapePrintHtml(row.receiver)}</td>
+<td class="col-receipt">${escapePrintHtml(row.receiptNo)}</td>
+<td class="col-notes">${escapePrintHtml(row.notes)}</td>
 </tr>`,
     )
     .join('');
 
   const footRow = `<tr class="totals-row">
-<td colspan="3">الإجمالي — ${rows.length} سطر / ${tons} طن</td>
+<td colspan="1">الإجمالي — ${rows.length} سطر / ${tons} طن</td>
+<td></td>
 <td class="col-count">${fmt(totals.pieces)}</td>
 <td class="col-weight">${fmt(totals.weightKg)}</td>
-<td colspan="2"></td>
 <td class="col-money">${fmt(totals.collect)}</td>
-<td class="col-money">${fmt(totals.prepaid)}</td>
 <td class="col-money">${fmt(totals.hawala)}</td>
 <td class="col-money">${fmt(totals.fee)}</td>
+<td class="col-money">${fmt(totals.prepaid)}</td>
+<td colspan="4"></td>
 </tr>`;
 
   const headerHtml = renderCompanyPrintHeader({
@@ -767,13 +772,14 @@ function buildQuickLedgerPrintHtml(
     th { background: #dce8e5; font-weight: 800; text-align: center; min-height: 30px; word-break: break-word; }
     td { text-align: center; min-height: 22px; background: #fff; white-space: nowrap; overflow: hidden; }
     .col-receipt { width: 6%; }
-    .col-dest { width: 9%; }
-    .col-type { width: 11%; }
+    .col-dest { width: 8%; }
+    .col-type { width: 10%; }
     .col-count { width: 4%; }
-    .col-weight { width: 9%; min-width: 14mm; direction: ltr; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .col-weight { width: 8%; min-width: 14mm; direction: ltr; font-size: 12px; font-variant-numeric: tabular-nums; }
     td.col-weight, th.col-weight { overflow: visible; padding-inline: 3px; }
-    .col-party { width: 14%; text-align: right; }
-    .col-money { width: 6.5%; direction: ltr; font-size: 12px; }
+    .col-party { width: 11%; text-align: right; }
+    .col-notes { width: 10%; text-align: right; white-space: normal; word-break: break-word; }
+    .col-money { width: 5.5%; direction: ltr; font-size: 12px; }
     th.col-money { font-size: 10px; line-height: 1.1; padding: 2px 1px; }
     tfoot { display: table-footer-group; }
     tr.totals-row td { background: #dce8e5; font-weight: 800; text-align: center; }
@@ -784,17 +790,18 @@ function buildQuickLedgerPrintHtml(
   <table>
     <thead>
       <tr>
-        <th class="col-receipt">رقم الإيصال</th>
         <th class="col-dest">الجهة</th>
-        <th class="col-type">نوع الطرود</th>
+        <th class="col-type">نوع البضاعة</th>
         <th class="col-count">عدد الطرود</th>
         <th class="col-weight">الوزن كغ</th>
-        <th class="col-party">المرسل</th>
-        <th class="col-party">المرسل إليه</th>
         <th class="col-money">تحصيل $</th>
-        <th class="col-money">دفع مسبق $</th>
         <th class="col-money">حوالة</th>
         <th class="col-money">أجرة الحوالة</th>
+        <th class="col-money">دفع مسبق $</th>
+        <th class="col-party">المرسل</th>
+        <th class="col-party">المرسل إليه</th>
+        <th class="col-receipt">رقم الإيصال</th>
+        <th class="col-notes">ملاحظات</th>
       </tr>
     </thead>
     <tbody>
@@ -4572,10 +4579,9 @@ export default function ShipmentQuickLedger() {
                   )}
                 </th>
               )}
-              <th>رقم الإيصال</th>
               {destinationSort === 'asc' ? (
                 <th
-                  className="quick-ledger-sortable-th is-sorted"
+                  className="quick-ledger-sortable-th is-sorted col-dest"
                   onClick={cycleDestinationSort}
                   title="ترتيب تنازلي حسب الجهة"
                   aria-sort="ascending"
@@ -4587,7 +4593,7 @@ export default function ShipmentQuickLedger() {
                 </th>
               ) : destinationSort === 'desc' ? (
                 <th
-                  className="quick-ledger-sortable-th is-sorted"
+                  className="quick-ledger-sortable-th is-sorted col-dest"
                   onClick={cycleDestinationSort}
                   title="إلغاء الترتيب — العودة للترتيب الأصلي"
                   aria-sort="descending"
@@ -4599,7 +4605,7 @@ export default function ShipmentQuickLedger() {
                 </th>
               ) : (
                 <th
-                  className="quick-ledger-sortable-th"
+                  className="quick-ledger-sortable-th col-dest"
                   onClick={cycleDestinationSort}
                   title="ترتيب تصاعدي حسب الجهة"
                   aria-sort="none"
@@ -4610,15 +4616,17 @@ export default function ShipmentQuickLedger() {
                   </span>
                 </th>
               )}
-              <th className="col-parcel-type">نوع الطرود</th>
+              <th className="col-parcel-type">نوع البضاعة</th>
               <th className="col-parcel-count">عدد الطرود</th>
-              <th>الوزن كغ</th>
-              <th className="wide">المرسل</th>
-              <th className="wide">المرسل إليه</th>
-              <th title="يُملأ تلقائياً من تعريف الأسعار (مسار + نوع الطرد + وزن)؛ يمكنك التعديل يدوياً">تحصيل $</th>
-              <th>دفع مسبق $</th>
-              <th>حوالة</th>
-              <th>أجرة الحوالة</th>
+              <th className="col-weight">الوزن كغ</th>
+              <th className="col-money" title="يُملأ تلقائياً من تعريف الأسعار (مسار + نوع الطرد + وزن)؛ يمكنك التعديل يدوياً">تحصيل $</th>
+              <th className="col-money">حوالة</th>
+              <th className="col-money">أجرة الحوالة</th>
+              <th className="col-money">دفع مسبق $</th>
+              <th className="wide col-sender">المرسل</th>
+              <th className="wide col-receiver">المرسل إليه</th>
+              <th className="col-receipt">رقم الإيصال</th>
+              <th className="notes col-notes">ملاحظات</th>
             </tr>
           </thead>
           <tbody>
@@ -4668,27 +4676,7 @@ export default function ShipmentQuickLedger() {
                       />
                     </td>
                   )}
-                  <td>
-                    <input
-                      className={duplicateReceiptRowIds.has(row.id) ? 'ledger-receipt-duplicate' : undefined}
-                      data-ledger-field="true"
-                      type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      autoComplete="off"
-                      value={row.receiptNo}
-                      disabled={locked}
-                      onFocus={() => {
-                        setActiveRowId(row.id);
-                        setReceiptEditingRowId(row.id);
-                      }}
-                      onKeyDown={(e) => handleReceiptKeyDown(e, row.id)}
-                      onBlur={() => commitReceiptNoCell(row.id)}
-                      onChange={(e) => updateRow(row.id, 'receiptNo', e.target.value)}
-                      title={rowIssue ?? (duplicateReceiptRowIds.has(row.id) ? 'رقم الإيصال مكرر' : undefined)}
-                    />
-                  </td>
-                  <td className="quick-ledger-dest-cell">
+                  <td className="quick-ledger-dest-cell col-dest">
                     <input
                       list="ledger-destination-options"
                       data-ledger-field="true"
@@ -4797,7 +4785,7 @@ export default function ShipmentQuickLedger() {
                       onBlur={() => flushRowSave(row.id)}
                     />
                   </td>
-                  <td>
+                  <td className="col-weight">
                     <input
                       data-ledger-field="true"
                       inputMode="decimal"
@@ -4811,7 +4799,11 @@ export default function ShipmentQuickLedger() {
                       onChange={(e) => updateRow(row.id, 'weightKg', e.target.value, true)}
                     />
                   </td>
-                  <td>
+                  <td className="col-money"><input data-ledger-field="true" inputMode="decimal" value={row.collectAmount} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'collectAmount', e.target.value)} /></td>
+                  <td className="col-money"><input data-ledger-field="true" inputMode="decimal" value={row.receiverCollect} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'receiverCollect', e.target.value)} /></td>
+                  <td className="col-money"><input data-ledger-field="true" inputMode="decimal" value={row.transferServiceFee} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'transferServiceFee', e.target.value)} /></td>
+                  <td className="col-money"><input data-ledger-field="true" inputMode="decimal" value={row.prepaidAmount} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'prepaidAmount', e.target.value)} /></td>
+                  <td className="col-sender">
                     <SmartPartyInput
                       data-ledger-field="true"
                       value={row.sender}
@@ -4826,7 +4818,7 @@ export default function ShipmentQuickLedger() {
                       onKeyDown={focusNext}
                     />
                   </td>
-                  <td>
+                  <td className="col-receiver">
                     <SmartPartyInput
                       data-ledger-field="true"
                       value={row.receiver}
@@ -4838,10 +4830,38 @@ export default function ShipmentQuickLedger() {
                       onKeyDown={focusNext}
                     />
                   </td>
-                  <td><input data-ledger-field="true" inputMode="decimal" value={row.collectAmount} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'collectAmount', e.target.value)} /></td>
-                  <td><input data-ledger-field="true" inputMode="decimal" value={row.prepaidAmount} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'prepaidAmount', e.target.value)} /></td>
-                  <td><input data-ledger-field="true" inputMode="decimal" value={row.receiverCollect} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'receiverCollect', e.target.value)} /></td>
-                  <td><input data-ledger-field="true" inputMode="decimal" value={row.transferServiceFee} disabled={locked} onFocus={() => setActiveRowId(row.id)} onKeyDown={focusNext} onBlur={() => flushRowSave(row.id)} onChange={(e) => updateRow(row.id, 'transferServiceFee', e.target.value)} /></td>
+                  <td className="col-receipt">
+                    <input
+                      className={duplicateReceiptRowIds.has(row.id) ? 'ledger-receipt-duplicate' : undefined}
+                      data-ledger-field="true"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      autoComplete="off"
+                      value={row.receiptNo}
+                      disabled={locked}
+                      onFocus={() => {
+                        setActiveRowId(row.id);
+                        setReceiptEditingRowId(row.id);
+                      }}
+                      onKeyDown={(e) => handleReceiptKeyDown(e, row.id)}
+                      onBlur={() => commitReceiptNoCell(row.id)}
+                      onChange={(e) => updateRow(row.id, 'receiptNo', e.target.value)}
+                      title={rowIssue ?? (duplicateReceiptRowIds.has(row.id) ? 'رقم الإيصال مكرر' : undefined)}
+                    />
+                  </td>
+                  <td className="col-notes">
+                    <input
+                      data-ledger-field="true"
+                      value={row.notes}
+                      disabled={locked}
+                      placeholder="ملاحظات"
+                      onFocus={() => setActiveRowId(row.id)}
+                      onKeyDown={focusNext}
+                      onBlur={() => flushRowSave(row.id)}
+                      onChange={(e) => updateRow(row.id, 'notes', e.target.value)}
+                    />
+                  </td>
                 </tr>
               );
             })}
