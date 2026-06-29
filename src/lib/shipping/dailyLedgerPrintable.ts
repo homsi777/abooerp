@@ -33,12 +33,22 @@ export function dedupeDailyLedgerRowsById(rows: RemoteDailyLedgerRow[]): RemoteD
   return [...byId.values()];
 }
 
+/** ترتيب عرض الدفتر: الأقدم أولاً والأحدث (سطر الإدخال الجديد) في الأسفل */
+export function compareDailyLedgerRowsChronological(
+  a: RemoteDailyLedgerRow,
+  b: RemoteDailyLedgerRow,
+): number {
+  const dateCmp = String(a.ledger_date ?? '').localeCompare(String(b.ledger_date ?? ''));
+  if (dateCmp !== 0) return dateCmp;
+  const createdCmp = String(a.created_at ?? '').localeCompare(String(b.created_at ?? ''));
+  if (createdCmp !== 0) return createdCmp;
+  const sessionCmp = String(a.session_id ?? '').localeCompare(String(b.session_id ?? ''));
+  if (sessionCmp !== 0) return sessionCmp;
+  return a.row_no - b.row_no;
+}
+
 export function sortDailyLedgerRows(rows: RemoteDailyLedgerRow[]): RemoteDailyLedgerRow[] {
-  return [...rows].sort((a, b) => {
-    const driverCmp = String(a.driver_label ?? '').localeCompare(String(b.driver_label ?? ''), 'ar');
-    if (driverCmp !== 0) return driverCmp;
-    return a.row_no - b.row_no;
-  });
+  return [...rows].sort(compareDailyLedgerRowsChronological);
 }
 
 export function remoteRowCollectionUsd(row: RemoteDailyLedgerRow): number {

@@ -1,4 +1,4 @@
-import { filterPrintableDailyLedgerRows } from './dailyLedgerPrintable';
+import { compareDailyLedgerRowsChronological, filterPrintableDailyLedgerRows } from './dailyLedgerPrintable';
 import type { RemoteDailyLedgerRow } from './dailyLedgerTypes';
 
 export type LedgerAgentSearchHint = {
@@ -244,15 +244,7 @@ export function filterRemoteRowsByPrintScope(
 
 /** ترتيب زمني تباعاً — بدون تجميع حسب السائق */
 export function sortRemoteRowsChronological(rows: RemoteDailyLedgerRow[]): RemoteDailyLedgerRow[] {
-  return [...rows].sort((a, b) => {
-    const dateCmp = String(a.ledger_date ?? '').localeCompare(String(b.ledger_date ?? ''));
-    if (dateCmp !== 0) return dateCmp;
-    const createdCmp = String(a.created_at ?? '').localeCompare(String(b.created_at ?? ''));
-    if (createdCmp !== 0) return createdCmp;
-    const sessionCmp = String(a.session_id ?? '').localeCompare(String(b.session_id ?? ''));
-    if (sessionCmp !== 0) return sessionCmp;
-    return a.row_no - b.row_no;
-  });
+  return [...rows].sort(compareDailyLedgerRowsChronological);
 }
 
 /** مسار موحّد: نطاق الطباعة → البحث النشط → ترتيب تباعاً */

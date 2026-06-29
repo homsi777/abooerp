@@ -79,6 +79,7 @@ import {
   dedupeDailyLedgerRowsById,
   remoteCollectAmountLabel,
   remoteRowCollectionUsd,
+  compareDailyLedgerRowsChronological,
   sortDailyLedgerRows,
 } from '../lib/shipping/dailyLedgerPrintable';
 import { computeTotalsFromRemoteRows, formatUsdAmount } from '../lib/shipping/dailyLedgerTotals';
@@ -1050,8 +1051,11 @@ export default function ShipmentQuickLedger() {
     }
     const filtered = filterLocalRowsBySearch(displayable, searchQuick, catalogAgents);
     if (destinationSort === 'none') return filtered;
+    const entryRow =
+      trailingBlank && filtered.some((row) => row.id === trailingBlank.id) ? trailingBlank : null;
+    const sortable = entryRow ? filtered.filter((row) => row.id !== entryRow.id) : filtered;
     const factor = destinationSort === 'asc' ? 1 : -1;
-    return [...filtered]
+    const sorted = [...sortable]
       .map((row, index) => ({ row, index }))
       .sort((a, b) => {
         const cmp = String(a.row.destination ?? '')
@@ -1060,6 +1064,7 @@ export default function ShipmentQuickLedger() {
         return cmp !== 0 ? cmp * factor : a.index - b.index;
       })
       .map(({ row }) => row);
+    return entryRow ? [...sorted, entryRow] : sorted;
   }, [rows, searchQuick, activeSessionId, catalogAgents, destinationSort]);
 
   const deletableVisibleRows = useMemo(
@@ -1608,9 +1613,7 @@ export default function ShipmentQuickLedger() {
           'ar',
         );
         if (branchCmp !== 0) return branchCmp;
-        const driverCmp = String(a.driver_label ?? '').localeCompare(String(b.driver_label ?? ''), 'ar');
-        if (driverCmp !== 0) return driverCmp;
-        return a.row_no - b.row_no;
+        return compareDailyLedgerRowsChronological(a, b);
       });
     }
     let displayId = 1;
