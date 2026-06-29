@@ -281,7 +281,7 @@ export default function Transfers() {
           <input
             type="text"
             className="form-input w-64"
-            placeholder="بحث عن اسم مرسل أو مستلم..."
+            placeholder="بحث: رقم إيصال، مرسل، مستلم، وكيل، وجهة، سند..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />

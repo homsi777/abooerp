@@ -1,5 +1,23 @@
 import { Pool, PoolClient } from 'pg';
 
+function buildTransferSearchClause(placeholder: string): string {
+  return `(
+        t.sender_name ILIKE ${placeholder}
+        OR t.receiver_name ILIKE ${placeholder}
+        OR shipment_sender.full_name ILIKE ${placeholder}
+        OR shipment_receiver.full_name ILIKE ${placeholder}
+        OR coalesce(s.shipment_no, '') ILIKE ${placeholder}
+        OR coalesce(s.reference_no, '') ILIKE ${placeholder}
+        OR coalesce(t.destination_city, '') ILIKE ${placeholder}
+        OR coalesce(t.notes, '') ILIKE ${placeholder}
+        OR coalesce(a.name, '') ILIKE ${placeholder}
+        OR coalesce(origin_agent.name, '') ILIKE ${placeholder}
+        OR coalesce(destination_agent.name, '') ILIKE ${placeholder}
+        OR coalesce(rv.voucher_no, '') ILIKE ${placeholder}
+        OR coalesce(b.name, '') ILIKE ${placeholder}
+      )`;
+}
+
 export interface TransferPayload {
   company_id: string;
   branch_id?: string;
@@ -162,14 +180,12 @@ export class TransfersRepository {
     }
 
     if (filters.search) {
-      query += ` AND (
-        t.sender_name ILIKE $${paramIndex}
-        OR t.receiver_name ILIKE $${paramIndex}
-        OR shipment_sender.full_name ILIKE $${paramIndex}
-        OR shipment_receiver.full_name ILIKE $${paramIndex}
-      )`;
-      values.push(`%${filters.search}%`);
-      paramIndex++;
+      const term = String(filters.search).trim();
+      if (term) {
+        query += ` AND ${buildTransferSearchClause(`$${paramIndex}`)}`;
+        values.push(`%${term}%`);
+        paramIndex++;
+      }
     }
 
     query += ` ORDER BY t.created_at DESC LIMIT 500`;
@@ -195,12 +211,11 @@ export class TransfersRepository {
       conditions.push(`upper(t.status) = upper($${values.length}::text)`);
     }
     if (input.search) {
-      values.push(`%${input.search}%`);
-      conditions.push(`(
-        t.sender_name ilike $${values.length}
-        or t.receiver_name ilike $${values.length}
-        or coalesce(s.shipment_no, '') ilike $${values.length}
-      )`);
+      const term = String(input.search).trim();
+      if (term) {
+        values.push(`%${term}%`);
+        conditions.push(buildTransferSearchClause(`$${values.length}`));
+      }
     }
     if (input.type === 'independent') {
       conditions.push('t.shipment_id is null');
@@ -213,6 +228,13 @@ export class TransfersRepository {
       select count(*)::text as count
       from transfers t
       left join shipments s on s.id = t.shipment_id
+      left join senders_receivers shipment_sender on shipment_sender.id = s.sender_id
+      left join senders_receivers shipment_receiver on shipment_receiver.id = s.receiver_id
+      left join branches b on b.id = t.branch_id
+      left join agents a on a.id = t.agent_id
+      left join agents origin_agent on origin_agent.id = t.origin_agent_id
+      left join agents destination_agent on destination_agent.id = t.destination_agent_id
+      left join receipt_vouchers rv on rv.id = t.receipt_voucher_id
       where ${conditions.join(' and ')}
       `,
       values,
@@ -237,8 +259,13 @@ export class TransfersRepository {
         coalesce(destination_agent.area, destination_agent.city, destination_agent.governorate) as destination_agent_city
       from transfers t
       left join shipments s on s.id = t.shipment_id
+      left join senders_receivers shipment_sender on shipment_sender.id = s.sender_id
+      left join senders_receivers shipment_receiver on shipment_receiver.id = s.receiver_id
+      left join branches b on b.id = t.branch_id
+      left join agents a on a.id = t.agent_id
       left join agents origin_agent on origin_agent.id = t.origin_agent_id
       left join agents destination_agent on destination_agent.id = t.destination_agent_id
+      left join receipt_vouchers rv on rv.id = t.receipt_voucher_id
       where ${conditions.join(' and ')}
       order by coalesce(t.transfer_date, t.created_at) desc, t.created_at desc, t.id desc
       limit ${limitParam}
