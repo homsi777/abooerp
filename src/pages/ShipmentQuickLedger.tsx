@@ -2838,6 +2838,394 @@ export default function ShipmentQuickLedger() {
     navigate('/shipments');
   };
 
+  const exitDeleteMode = () => {
+    setDeleteMode(false);
+    setSelectedDeleteRowIds([]);
+    setDeleteConfirmOpen(false);
+  };
+
+  const selectSession = async (sessionId: string | null) => {
+    if (sessionId === activeSessionId || sessionSwitching) return;
+    setSessionSwitching(true);
+    try {
+      // احفظ أسطر الإرسالية الحالية فقط — لا تُعيد حفظ كل أسطر اليوم
+      if (activeSessionId) {
+        await flushPendingRowSaves(activeSessionId);
+      }
+      setActiveSessionId(sessionId);
+      if (sessionId) {
+        const session = daySessions.find((s) => s.id === sessionId);
+        if (session) {
+          const driverSynthetic = session.driverBackendId ? syntheticEntityId(session.driverBackendId) : 0;
+          const vehicleSynthetic = session.vehicleBackendId ? syntheticEntityId(session.vehicleBackendId) : 0;
+          setTrip((prev) => ({
+            ...prev,
+            driverId: driverSynthetic || prev.driverId,
+            driver: session.driverLabel,
+            vehicleId: vehicleSynthetic || prev.vehicleId,
+            vehicle: session.vehicleLabel !== '—' ? session.vehicleLabel : prev.vehicle,
+          }));
+        }
+      }
+    } finally {
+      setSessionSwitching(false);
+    }
+  };
+
+  /** حلّ الإرسالية النشطة: إرجاع الأسطر للعرض العام وإزالة رقم الإرسالية */
+  const requestCancelActiveSession = () => {
+    if (!activeSessionId || sessionSwitching || !canLedgerCancelSession) return;
+    setCancelSessionConfirmOpen(true);
+  };
+
+  const confirmCancelActiveSession = async () => {
+    if (!activeSessionId || sessionSwitching || cancelingSession) return;
+    if (!requireCloudConnection('إلغاء الإرسالية يحتاج اتصالاً بالسحابة.')) return;
+    if (transferMode) exitTransferMode();
+    if (deleteMode) exitDeleteMode();
+
+    const sessionId = activeSessionId;
+    setCancelingSession(true);
+    try {
+      await flushPendingRowSaves(sessionId);
+      const result = await httpClient.post<{ movedRowsCount: number; poolSessionId: string }>(
+        '/daily-ledger/sessions/cancel',
+        { sessionId },
+      );
+      setCancelSessionConfirmOpen(false);
+      setActiveSessionId(null);
+      await loadRemoteRows();
+      showToast(
+        result.movedRowsCount > 0
+          ? `تم إلغاء الإرسالية — عاد ${result.movedRowsCount} سطر إلى العرض العام`
+          : 'تم إلغاء الإرسالية الفارغة',
+        'success',
+      );
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر إلغاء الإرسالية', 'error');
+    } finally {
+      setCancelingSession(false);
+    }
+  };
+
+  const enterTransferMode = () => {
+    setDeleteMode(false);
+    setSelectedDeleteRowIds([]);
+    setTransferMode(true);
+    setSelectedTransferRowIds([]);
+    if (ledgerBranchModeRef.current === 'all') {
+      showToast(
+        'نقل الإرسالية يتم لفرع واحد في كل عملية — حدّد أسطر نفس الفرع فقط (لا تجمع بين حلب والرئيسي مثلاً).',
+        'info',
+      );
+    }
+  };
+
+  const exitTransferMode = () => {
+    setTransferMode(false);
+    setSelectedTransferRowIds([]);
+    setTransferDialogOpen(false);
+    setTransferValidation({ loading: false, warnings: [], errors: [] });
+  };
+
+  const toggleTransferRowSelection = (rowId: number) => {
+    setSelectedTransferRowIds((prev) => {
+      if (prev.includes(rowId)) return prev.filter((id) => id !== rowId);
+      const row = rowsRef.current.find((entry) => entry.id === rowId);
+      if (!row?.branchBackendId) return [...prev, rowId];
+      const selectedBranchIds = uniqueTransferBranchIds(
+        rowsRef.current.filter((entry) => prev.includes(entry.id)),
+      );
+      if (selectedBranchIds.length > 0 && !selectedBranchIds.includes(row.branchBackendId)) {
+        const currentLabel = resolveBranchLabelFromList(branches, selectedBranchIds[0]);
+        const nextLabel = row.branchLabel ?? resolveBranchLabelFromList(branches, row.branchBackendId);
+        showToast(
+          `لا يمكن الجمع بين فروع مختلفة — الأسطر المحددة من «${currentLabel}»، وهذا السطر من «${nextLabel}».`,
+          'error',
+        );
+        return prev;
+      }
+      return [...prev, rowId];
+    });
+  };
+
+  const toggleSelectAllTransferable = () => {
+    const eligible = transferableVisibleRows;
+    if (!eligible.length) return;
+
+    const branchGroups = new Map<string, number[]>();
+    for (const row of eligible) {
+      const branchKey = row.branchBackendId ?? '__unknown__';
+      const bucket = branchGroups.get(branchKey) ?? [];
+      bucket.push(row.id);
+      branchGroups.set(branchKey, bucket);
+    }
+
+    if (branchGroups.size === 1) {
+      const ids = eligible.map((row) => row.id);
+      setSelectedTransferRowIds((prev) => (prev.length === ids.length ? [] : ids));
+      return;
+    }
+
+    const activeBackendBranchId = activeBranchIdRef.current
+      ? resolveLedgerBranchId(activeBranchIdRef.current)
+      : null;
+    let targetBranchKey =
+      activeBackendBranchId && branchGroups.has(activeBackendBranchId)
+        ? activeBackendBranchId
+        : [...branchGroups.entries()].sort((left, right) => right[1].length - left[1].length)[0]?.[0];
+    const targetIds = branchGroups.get(targetBranchKey ?? '') ?? [];
+    const allTargetSelected =
+      targetIds.length > 0 &&
+      targetIds.every((id) => selectedTransferRowIds.includes(id)) &&
+      selectedTransferRowIds.length === targetIds.length;
+
+    if (allTargetSelected) {
+      setSelectedTransferRowIds([]);
+      return;
+    }
+
+    setSelectedTransferRowIds(targetIds);
+    const targetLabel =
+      targetBranchKey && targetBranchKey !== '__unknown__'
+        ? resolveBranchLabelFromList(branches, targetBranchKey)
+        : 'فرع غير محدد';
+    showToast(
+      `تم تحديد ${targetIds.length} سطر من «${targetLabel}» فقط — النقل لا يجمع بين فروع مختلفة.`,
+      'info',
+    );
+  };
+
+  const flushTransferSelectionSaves = async (rowIds: number[]) => {
+    Object.values(saveTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+    saveTimersRef.current = {};
+    receiptEditingRowIdRef.current = null;
+    setReceiptEditingRowId(null);
+    for (const rowId of rowIds) {
+      await saveRowToServerRef.current(rowId, { force: true });
+    }
+  };
+
+  const runTransferValidation = async (dbIds: string[]) => {
+    setTransferValidation({ loading: true, warnings: [], errors: [] });
+    try {
+      const result = await httpClient.post<{
+        valid: boolean;
+        summary: {
+          rowsCount: number;
+          piecesCount: number;
+          weightKg: number;
+          weightTons: number;
+          freightTotal: number;
+          collectionTotal: number;
+          prepaidTotal: number;
+          destinations: string[];
+          postedRowsCount?: number;
+          unpostedRowsCount?: number;
+          sourceLedgerDate?: string | null;
+        };
+        warnings: string[];
+        errors: string[];
+      }>('/daily-ledger/transfer/validate', { rowIds: dbIds });
+      setTransferValidation({
+        loading: false,
+        summary: result.summary,
+        warnings: result.warnings,
+        errors: result.errors,
+      });
+    } catch (error) {
+      setTransferValidation({
+        loading: false,
+        warnings: [],
+        errors: [error instanceof Error ? error.message : 'تعذر التحقق من الأسطر المحددة'],
+      });
+    }
+  };
+
+  const openTransferDialog = async () => {
+    if (!requireCloudConnection('نقل الإرسالية يحتاج اتصالاً بالسحابة.')) return;
+    if (!selectedTransferRowIds.length) {
+      showToast('يجب تحديد سطر واحد على الأقل', 'error');
+      return;
+    }
+    const dbIds = selectedTransferRows.map((row) => row.dbId).filter((id): id is string => Boolean(id));
+    if (dbIds.length !== selectedTransferRows.length) {
+      showToast('بعض الأسطر المحددة غير محفوظة — احفظ الدفتر أولاً قبل النقل', 'error');
+      return;
+    }
+    if (transferSelectionSummary.hasMultipleBranches) {
+      showToast(
+        `لا يمكن نقل أسطر من فروع مختلفة (${transferSelectionSummary.branchLabels.join('، ')}) — حدّد أسطر فرع واحد.`,
+        'error',
+      );
+      return;
+    }
+    setTransferReason('');
+    setTransferDriverId(trip.driverId || 0);
+    setTransferVehicleId(trip.vehicleId || 0);
+    setTransferDate(trip.date);
+    setTransferDialogOpen(true);
+    try {
+      await flushTransferSelectionSaves(selectedTransferRowIds);
+    } catch {
+      showToast('تعذر حفظ بعض التعديلات — راجع الأسطر ثم أعد المحاولة', 'error');
+      return;
+    }
+    await runTransferValidation(dbIds);
+  };
+
+  const confirmTransfer = async () => {
+    if (!requireCloudConnection('تأكيد نقل الإرسالية يحتاج اتصالاً بالسحابة.')) return;
+    const dbIds = selectedTransferRows.map((row) => row.dbId).filter((id): id is string => Boolean(id));
+    if (!dbIds.length) {
+      showToast('لا توجد أسطر محفوظة للنقل', 'error');
+      return;
+    }
+    if (!transferReason.trim()) {
+      showToast('يجب إدخال سبب النقل', 'error');
+      return;
+    }
+    if (!transferDriverId && !transferVehicleId) {
+      showToast('يجب تحديد سائق أو مركبة للإرسالية الجديدة', 'error');
+      return;
+    }
+    const driverBackendId = transferDriverId ? getBackendIdFromSynthetic(transferDriverId) ?? null : null;
+    const vehicleBackendId = transferVehicleId ? getBackendIdFromSynthetic(transferVehicleId) ?? null : null;
+    setTransferring(true);
+    try {
+      await flushTransferSelectionSaves(selectedTransferRowIds);
+      const result = await httpClient.post<{
+        transferNo: string;
+        movedRowsCount: number;
+        targetSessionId: string;
+      }>('/daily-ledger/transfer/confirm', {
+
+        rowIds: dbIds,
+        target: {
+          ledgerDate: transferDate,
+          lineLabel: trip.line || null,
+          driverId: driverBackendId,
+          vehicleId: vehicleBackendId,
+          notes: trip.tripNo || null,
+        },
+        reason: transferReason.trim(),
+      });
+      const movedCount = result.movedRowsCount;
+      const allOperational =
+        (transferValidation.summary?.postedRowsCount ?? 0) > 0 &&
+        (transferValidation.summary?.unpostedRowsCount ?? 0) === 0;
+      showToast(
+        allOperational
+          ? `تم نقل ${movedCount} سطر تشغيلياً (${result.transferNo}) — بدون أثر مالي جديد. أعد طباعة الإرساليات المتأثرة.`
+          : `تم نقل الإرسالية بنجاح — ${movedCount} سطر (${result.transferNo}). يرجى إعادة طباعة الإرساليات المتأثرة.`,
+        'success',
+      );
+      exitTransferMode();
+      // الانتقال إلى الإرسالية الجديدة: نفس التاريخ/الخط مع السائق الجديد
+      const targetDriver = drivers.find((d) => d.id === transferDriverId);
+      const targetSessionId = result.targetSessionId ?? null;
+      setTrip((prev) => ({
+        ...prev,
+        date: transferDate,
+        driverId: transferDriverId || prev.driverId,
+        driver: targetDriver?.name ?? prev.driver,
+        vehicleId: transferVehicleId || prev.vehicleId,
+      }));
+      await loadRemoteRows({ preserveSessionId: targetSessionId });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر نقل الإرسالية', 'error');
+    } finally {
+      setTransferring(false);
+    }
+  };
+
+  const toggleDeleteRowSelection = (rowId: number) => {
+    setSelectedDeleteRowIds((prev) =>
+      prev.includes(rowId) ? prev.filter((id) => id !== rowId) : [...prev, rowId],
+    );
+  };
+
+  const toggleSelectAllDeletable = () => {
+    const ids = deletableVisibleRows.map((row) => row.id);
+    setSelectedDeleteRowIds((prev) => (prev.length === ids.length ? [] : ids));
+  };
+
+  const deleteSelectedRows = async () => {
+    const selected = rows.filter((row) => selectedDeleteRowIds.includes(row.id));
+    if (!selected.length) {
+      showToast('لم تُحدَّد أسطر للحذف', 'info');
+      return;
+    }
+    if (selected.some((row) => row.loadedAt)) {
+      showToast('لا يمكن حذف أسطر محمّلة على بيان', 'error');
+      return;
+    }
+
+    if (isCloudOffline && selected.some((row) => row.dbId)) {
+      showToast('حذف الصفوف المحفوظة على السحابة يحتاج اتصالاً. يمكنك حذف الصفوف المحلية غير المتزامنة فقط أثناء الانقطاع.', 'error');
+      return;
+    }
+
+    setDeletingRows(true);
+    try {
+      await flushPendingRowSaves();
+      const dbIds = selected.map((row) => row.dbId).filter((id): id is string => Boolean(id));
+      if (dbIds.length) {
+        const result = await httpClient.post<{ deletedIds: string[]; blockedIds: string[] }>(
+          '/daily-ledger/rows/delete',
+          { rowIds: dbIds },
+        );
+        if (result.blockedIds.length) {
+          showToast(`تعذر حذف ${result.blockedIds.length} سطر (ربما محمّل على بيان)`, 'error');
+        }
+      }
+
+      const origin = resolveTripOrigin(tripRef.current.line);
+      setRows((prev) => {
+        const remaining = prev.filter((row) => !selectedDeleteRowIds.includes(row.id));
+        if (!remaining.length) return buildEntrySlotRows(1, origin);
+        return appendTrailingEntrySlot(remaining);
+      });
+      exitDeleteMode();
+      showToast(`تم حذف ${selected.length} سطر`, 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر حذف الأسطر المحددة', 'error');
+    } finally {
+      setDeletingRows(false);
+    }
+  };
+
+  const handleDriverSelect = (driverId: number) => {
+    const driver = drivers.find((d) => d.id === driverId);
+    const linkedVehicle = driverId ? vehicles.find((v) => v.driverId === driverId) : undefined;
+    setTrip((prev) => ({
+      ...prev,
+      driverId: driverId || 0,
+      driver: driver?.name ?? '',
+      ...(linkedVehicle
+        ? {
+            vehicleId: linkedVehicle.id,
+            vehicle: `${linkedVehicle.plateNumber}${linkedVehicle.model ? ` — ${linkedVehicle.model}` : ''}`,
+          }
+        : { vehicleId: 0, vehicle: '' }),
+    }));
+  };
+
+  const handleVehicleSelect = (vehicleId: number) => {
+    const vehicle = vehicles.find((v) => v.id === vehicleId);
+    const linkedDriver = vehicle?.driverId ? drivers.find((d) => d.id === vehicle.driverId) : undefined;
+    setTrip((prev) => ({
+      ...prev,
+      vehicleId,
+      vehicle: vehicle ? `${vehicle.plateNumber}${vehicle.model ? ` — ${vehicle.model}` : ''}` : '',
+      ...(linkedDriver
+        ? { driverId: linkedDriver.id, driver: linkedDriver.name }
+        : vehicle?.driverId
+          ? { driverId: vehicle.driverId, driver: vehicle.driverName ?? prev.driver }
+          : {}),
+    }));
+  };
+
   const handlePrintHubPrepare = useCallback(() => {
     setDeleteMode(false);
     setSelectedDeleteRowIds([]);
