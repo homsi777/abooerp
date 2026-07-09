@@ -291,8 +291,6 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
       return vehicleIds;
     };
 
-    const destinationSummaries = useMemo(() => buildDestinationSummaries(baseRows), [baseRows]);
-
     const driverOptions = useMemo(
       () =>
         buildCatalogDriverOptions(
@@ -312,13 +310,6 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
         ),
       [baseRows, canViewAllBranches, dispatchDefinitions, selectedBranchId],
     );
-
-    const filteredDestinationList = useMemo(() => {
-      const query = destinationSearch.trim().toLowerCase();
-      const source = filteredDestinationSummaries;
-      if (!query) return source;
-      return source.filter((item) => item.destination.toLowerCase().includes(query));
-    }, [destinationSearch, filteredDestinationSummaries]);
 
     const selectedDriver = useMemo(() => {
       if (driverKey === ALL_DRIVERS_PRINT_KEY) return undefined;
@@ -369,6 +360,13 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
       () => buildDestinationSummaries(driverScopedRows),
       [driverScopedRows],
     );
+
+    const filteredDestinationList = useMemo(() => {
+      const query = destinationSearch.trim().toLowerCase();
+      const source = filteredDestinationSummaries;
+      if (!query) return source;
+      return source.filter((item) => item.destination.toLowerCase().includes(query));
+    }, [destinationSearch, filteredDestinationSummaries]);
 
     const buildFilteredRows = (input: {
       destinations?: string[];
