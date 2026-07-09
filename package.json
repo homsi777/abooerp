@@ -34,6 +34,7 @@
     "test:daily-ledger-helpers": "tsx src/lib/shipping/dailyLedgerHelpers.selftest.ts",
     "test:daily-ledger-row-filter": "tsx src/lib/shipping/dailyLedgerRowFilter.selftest.ts",
     "test:daily-ledger-access": "tsx server/src/utils/dailyLedgerAccess.selftest.ts",
+    "receipt:calibrate": "tsx scripts/open-mahmoud-receipt-test.ts",
     "server:inspect-driver": "node server/scripts/inspectDriverLedger.cjs",
     "server:assign-driver-session": "node server/scripts/assignDriverToOrphanSession.cjs",
     "dev:free-ports": "node server/scripts/freeDevPorts.cjs",
