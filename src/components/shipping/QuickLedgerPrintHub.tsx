@@ -30,6 +30,7 @@ import {
   buildDestinationSummaries,
   buildDispatchSummaries,
   filterRowsForPrintHub,
+  type PrintHubDriverSelection,
   type PrintHubMode,
 } from '../../lib/shipping/quickLedgerPrintHub';
 import type { Branch, Driver, Vehicle } from '../../types';
@@ -233,11 +234,18 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
         const tripDriverBackendId = currentTripDriverId
           ? getBackendIdFromSynthetic(currentTripDriverId) ?? null
           : null;
-        const preferredKey = tripDriverBackendId ? `id:${tripDriverBackendId}` : ALL_DRIVERS_PRINT_KEY;
-        const catalogOptions = buildCatalogDriverOptions(drivers, printableRows, (id) =>
-          getBackendIdFromSynthetic(id) ?? null,
+        const preferredKey = tripDriverBackendId
+          ? `id:${tripDriverBackendId.toLowerCase()}`
+          : ALL_DRIVERS_PRINT_KEY;
+        const catalogOptions = buildCatalogDriverOptions(
+          drivers,
+          printableRows,
+          (id) => getBackendIdFromSynthetic(id) ?? null,
+          (backendId) => buildVehicleIdsForDriverBackendId(backendId),
         );
-        const hasPreferred = catalogOptions.some((item) => item.key === preferredKey);
+        const hasPreferred = catalogOptions.some(
+          (item) => item.key === preferredKey || item.key === `id:${tripDriverBackendId}`,
+        );
         setDriverKey(hasPreferred ? preferredKey : ALL_DRIVERS_PRINT_KEY);
 
         const dispatchSummaries = buildDispatchSummaries(
@@ -271,11 +279,29 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
       void loadRows();
     }, [open, selectedDate, selectedLine, selectedBranchId, includeLoaded, searchQuick]);
 
+    const buildVehicleIdsForDriverBackendId = (driverBackendId: string) => {
+      const normalizedDriverId = driverBackendId.trim().toLowerCase();
+      const vehicleIds = new Set<string>();
+      for (const vehicle of vehicles) {
+        const vehicleDriverBackendId = vehicle.driverId ? getBackendIdFromSynthetic(vehicle.driverId) : undefined;
+        if (!vehicleDriverBackendId || vehicleDriverBackendId.toLowerCase() !== normalizedDriverId) continue;
+        const vehicleBackendId = getBackendIdFromSynthetic(vehicle.id);
+        if (vehicleBackendId) vehicleIds.add(vehicleBackendId.toLowerCase());
+      }
+      return vehicleIds;
+    };
+
     const destinationSummaries = useMemo(() => buildDestinationSummaries(baseRows), [baseRows]);
+
     const driverOptions = useMemo(
       () =>
-        buildCatalogDriverOptions(drivers, baseRows, (id) => getBackendIdFromSynthetic(id) ?? null),
-      [baseRows, drivers],
+        buildCatalogDriverOptions(
+          drivers,
+          baseRows,
+          (id) => getBackendIdFromSynthetic(id) ?? null,
+          (backendId) => buildVehicleIdsForDriverBackendId(backendId),
+        ),
+      [baseRows, drivers, vehicles],
     );
     const dispatchSummaries = useMemo(
       () =>
@@ -289,15 +315,18 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
 
     const filteredDestinationList = useMemo(() => {
       const query = destinationSearch.trim().toLowerCase();
-      if (!query) return destinationSummaries;
-      return destinationSummaries.filter((item) => item.destination.toLowerCase().includes(query));
-    }, [destinationSearch, destinationSummaries]);
+      const source = filteredDestinationSummaries;
+      if (!query) return source;
+      return source.filter((item) => item.destination.toLowerCase().includes(query));
+    }, [destinationSearch, filteredDestinationSummaries]);
 
     const selectedDriver = useMemo(() => {
       if (driverKey === ALL_DRIVERS_PRINT_KEY) return undefined;
       if (driverKey.startsWith('id:')) {
-        const backendId = driverKey.slice(3);
-        return drivers.find((driver) => getBackendIdFromSynthetic(driver.id) === backendId);
+        const backendId = driverKey.slice(3).trim().toLowerCase();
+        return drivers.find(
+          (driver) => (getBackendIdFromSynthetic(driver.id) ?? '').toLowerCase() === backendId,
+        );
       }
       if (driverKey.startsWith('label:')) {
         const label = driverKey.slice(6);
@@ -306,19 +335,40 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
       return undefined;
     }, [driverKey, drivers]);
 
-    const driverBackendId = selectedDriver ? getBackendIdFromSynthetic(selectedDriver.id) ?? undefined : undefined;
-    const vehicleIdsForDriver = useMemo(() => {
-      if (!driverBackendId) return undefined;
-      const normalizedDriverId = driverBackendId.trim().toLowerCase();
-      const vehicleIds = new Set<string>();
-      for (const vehicle of vehicles) {
-        const vehicleDriverBackendId = vehicle.driverId ? getBackendIdFromSynthetic(vehicle.driverId) : undefined;
-        if (!vehicleDriverBackendId || vehicleDriverBackendId.toLowerCase() !== normalizedDriverId) continue;
-        const vehicleBackendId = getBackendIdFromSynthetic(vehicle.id);
-        if (vehicleBackendId) vehicleIds.add(vehicleBackendId.toLowerCase());
-      }
-      return vehicleIds;
-    }, [driverBackendId, vehicles]);
+    const selectedDriverFilter = useMemo<PrintHubDriverSelection | null>(() => {
+      if (driverKey === ALL_DRIVERS_PRINT_KEY) return null;
+      const backendId = selectedDriver
+        ? getBackendIdFromSynthetic(selectedDriver.id) ?? null
+        : driverKey.startsWith('id:')
+          ? driverKey.slice(3)
+          : null;
+      const vehicleIdsForDriver = backendId
+        ? buildVehicleIdsForDriverBackendId(backendId)
+        : undefined;
+      return {
+        backendId,
+        name: selectedDriver?.name ?? (driverKey.startsWith('label:') ? driverKey.slice(6) : undefined),
+        code: selectedDriver?.code,
+        vehicleIdsForDriver,
+      };
+    }, [driverKey, selectedDriver, vehicles]);
+
+    const driverScopedRows = useMemo(
+      () =>
+        selectedDriverFilter
+          ? filterRowsForPrintHub(baseRows, {
+              searchQuery: searchQuick,
+              agents: catalogAgents,
+              driverSelection: selectedDriverFilter,
+            })
+          : baseRows,
+      [baseRows, catalogAgents, searchQuick, selectedDriverFilter],
+    );
+
+    const filteredDestinationSummaries = useMemo(
+      () => buildDestinationSummaries(driverScopedRows),
+      [driverScopedRows],
+    );
 
     const buildFilteredRows = (input: {
       destinations?: string[];
@@ -328,10 +378,7 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
       filterRowsForPrintHub(baseRows, {
         searchQuery: searchQuick,
         agents: catalogAgents,
-        driverKey: driverBackendId ? undefined : driverKey,
-        driverBackendId,
-        driverName: selectedDriver?.name,
-        vehicleIdsForDriver,
+        driverSelection: selectedDriverFilter,
         selectedDestinations: input.destinations,
         selectedDispatchIds: input.dispatchIds,
         sessionId: input.forceSession || sessionOnly ? activeSessionId : null,
@@ -346,8 +393,7 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
       [
         baseRows,
         driverKey,
-        driverBackendId,
-        selectedDriver,
+        selectedDriverFilter,
         selectedDestinations,
         sessionOnly,
         activeSessionId,
@@ -361,7 +407,7 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
           dispatchIds: selectedDispatchIds,
           forceSession: sessionOnly,
         }),
-      [baseRows, driverKey, driverBackendId, selectedDispatchIds, sessionOnly, activeSessionId, searchQuick],
+      [baseRows, driverKey, selectedDriverFilter, selectedDispatchIds, sessionOnly, activeSessionId, searchQuick],
     );
 
     const previewReceiptRows = useMemo(
@@ -373,7 +419,7 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
       [
         baseRows,
         driverKey,
-        driverBackendId,
+        selectedDriverFilter,
         selectedDestinations,
         sessionOnly,
         activeSessionId,
@@ -435,7 +481,13 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
           ? previewDispatchRows
           : previewDestinationRows;
       if (!rows.length) {
-        onToast('لا توجد أسطر مطابقة لمعايير الطباعة', 'info');
+        const driverLabel = selectedDriverFilter?.name || selectedDriverFilter?.code;
+        onToast(
+          driverLabel
+            ? `لا توجد أسطر للسائق «${driverLabel}» ضمن الوجهات المحددة — جرّب «كل السائقين» أو وجهات أخرى`
+            : 'لا توجد أسطر مطابقة لمعايير الطباعة',
+          'info',
+        );
         return;
       }
       if (mode === 'dispatch' && !selectedDispatchIds.length) {
@@ -560,8 +612,8 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
           <div className="quick-ledger-print-hub-panel-actions">
             <button
               type="button"
-              disabled={!destinationSummaries.length || busy || loading}
-              onClick={() => setSelectedDestinations(destinationSummaries.map((item) => item.destination))}
+              disabled={!filteredDestinationSummaries.length || busy || loading}
+              onClick={() => setSelectedDestinations(filteredDestinationSummaries.map((item) => item.destination))}
             >
               تحديد الكل
             </button>
@@ -584,18 +636,22 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
           <span>تصفية السائق (اختياري)</span>
           <select
             className="quick-ledger-print-hub-input"
-            value={driverKey}
+            value={driverOptions.some((item) => item.key === driverKey) ? driverKey : ALL_DRIVERS_PRINT_KEY}
             disabled={busy || loading || !drivers.length}
             onChange={(e) => setDriverKey(e.target.value)}
           >
             <option value={ALL_DRIVERS_PRINT_KEY}>كل السائقين</option>
             {driverOptions.map((option) => (
               <option key={option.key} value={option.key}>
-                {option.label}
-                {option.rowsCount > 0 ? ` (${option.rowsCount})` : ''}
+                {option.label} ({option.rowsCount})
               </option>
             ))}
           </select>
+          {selectedDriverFilter && driverScopedRows.length === 0 ? (
+            <p className="quick-ledger-print-hub-driver-empty-hint" role="status">
+              لا توجد أسطر لهذا السائق في النطاق الحالي — اختر «كل السائقين» أو غيّر التاريخ/الفرع.
+            </p>
+          ) : null}
         </label>
 
         <input

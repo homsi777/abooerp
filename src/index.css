@@ -2243,6 +2243,17 @@ body {
   font-weight: 700;
 }
 
+.quick-ledger-print-hub-driver-empty-hint {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .quick-ledger-print-hub-receipts-hint {
   margin: 0 0 12px;
   font-size: 13px;
