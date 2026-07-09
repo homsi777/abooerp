@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowDown,
@@ -66,6 +66,11 @@ import {
 import QuickLedgerSaveProgressDialog from '../components/shipping/QuickLedgerSaveProgressDialog';
 import QuickLedgerAgentHelpDialog from '../components/shipping/QuickLedgerAgentHelpDialog';
 import QuickLedgerDispatchPanel from '../components/shipping/QuickLedgerDispatchPanel';
+import QuickLedgerPrintHub, {
+  type QuickLedgerPrintHubHandle,
+  type QuickLedgerPrintHubMeta,
+} from '../components/shipping/QuickLedgerPrintHub';
+import { filterRowsByDriverKey } from '../lib/shipping/quickLedgerPrintHub';
 import LedgerDispatchCombobox from '../components/shipping/LedgerDispatchCombobox';
 import type { DailyLedgerDispatchDefinition } from '../lib/shipping/dailyLedgerDispatchGateway';
 import { dailyLedgerDispatchGateway } from '../lib/shipping/dailyLedgerDispatchGateway';
@@ -89,11 +94,9 @@ import {
 import { computeTotalsFromRemoteRows, formatUsdAmount } from '../lib/shipping/dailyLedgerTotals';
 import {
   filterLocalRowsBySearch,
-  prepareLedgerOutputRows,
   filterRemoteRowsBySearch,
   resolveDocumentationLedgerDates,
   sortRemoteRowsChronological,
-  uniqueDestinationsFromRows,
 } from '../lib/shipping/dailyLedgerRowFilter';
 import type { DailyLedgerEditingScope, RemoteDailyLedgerRow } from '../lib/shipping/dailyLedgerTypes';
 import {
@@ -211,19 +214,7 @@ function resolveSessionLedgerScope(
 
 type SuggestedAgent = { id: number; code: string; name: string; governorate?: string; city?: string; area?: string };
 
-type DestinationExportSummary = {
-  destination: string;
-  rowsCount: number;
-};
-
-type DestinationPdfDriverOption = {
-  key: string;
-  backendId: string | null;
-  label: string;
-  rowsCount: number;
-};
-
-const ALL_DRIVERS_PDF_OPTION = '__ALL_DRIVERS__';
+type LedgerPrintScope = 'driver' | 'date' | 'agent' | 'session' | 'destination' | 'dispatch' | 'receipts';
 
 function resolveBranchLabelFromList(branches: Branch[], branchBackendId?: string | null): string {
   if (!branchBackendId) return '—';
@@ -653,7 +644,7 @@ function escapePrintHtml(value: string) {
 function resolvePrintDestinationLabel(
   rows: Array<{ destination: string }>,
   activeSearch: string,
-  scope: 'driver' | 'date' | 'agent' | 'session',
+  scope: LedgerPrintScope,
   agentFilter: string,
 ): string {
   if (activeSearch.trim()) return activeSearch.trim();
@@ -701,7 +692,7 @@ function buildPrintRowsSnapshot(rows: RemoteDailyLedgerRow[]): PrintDocumentatio
 function resolvePrintDriverLabel(
   rows: RemoteDailyLedgerRow[],
   activeSearch: string,
-  scope: 'driver' | 'date' | 'agent' | 'session',
+  scope: LedgerPrintScope,
   selectedDriverName: string,
   scopeFallback: string,
 ): string {
@@ -934,23 +925,7 @@ export default function ShipmentQuickLedger() {
   /** أسطر أكّد فيها المستخدم رقم الإيصال بـ Enter — قبلها لا تظهر تحذيرات التكرار */
   const [confirmedReceiptRowIds, setConfirmedReceiptRowIds] = useState<Set<number>>(() => new Set());
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
-  const [printDialogOpen, setPrintDialogOpen] = useState(false);
-  const [destinationPdfDialogOpen, setDestinationPdfDialogOpen] = useState(false);
-  const [printDriverId, setPrintDriverId] = useState(0);
-  const [printDateFrom, setPrintDateFrom] = useState(new Date().toISOString().split('T')[0]);
-  const [printDateTo, setPrintDateTo] = useState(new Date().toISOString().split('T')[0]);
-  const [printLoading, setPrintLoading] = useState(false);
-  const [destinationPdfDate, setDestinationPdfDate] = useState(new Date().toISOString().split('T')[0]);
-  const [destinationPdfLoading, setDestinationPdfLoading] = useState(false);
-  const [destinationPdfExporting, setDestinationPdfExporting] = useState(false);
-  const [destinationPdfRows, setDestinationPdfRows] = useState<RemoteDailyLedgerRow[]>([]);
-  const [destinationPdfSelected, setDestinationPdfSelected] = useState<string[]>([]);
-  const [destinationPdfDriverKey, setDestinationPdfDriverKey] = useState<string>(ALL_DRIVERS_PDF_OPTION);
-  const [printScope, setPrintScope] = useState<'driver' | 'date' | 'agent' | 'session'>('date');
-  const [printDestinationFilter, setPrintDestinationFilter] = useState('');
-  /** افتراضي: الطباعة تمثل نطاق التاريخ+الخط كاملاً وليس نتائج البحث */
-  /** افتراضي: نفس خط الشاشة — عند التفعيل فقط تُطبَع كل خطوط الفرع */
-  const [printAllLines, setPrintAllLines] = useState(false);
+  const printHubRef = useRef<QuickLedgerPrintHubHandle>(null);
   const [reprintRequired, setReprintRequired] = useState(false);
   const [remoteRowsRaw, setRemoteRowsRaw] = useState<RemoteDailyLedgerRow[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -1237,30 +1212,10 @@ export default function ShipmentQuickLedger() {
     [daySessions, activeSessionId],
   );
 
-  const destinationPdfSummaries = useMemo<DestinationExportSummary[]>(() => {
-    const grouped = new Map<string, number>();
-    for (const row of destinationPdfRows) {
-      const destination = normalizeName(row.destination ?? '');
-      if (!destination) continue;
-      grouped.set(destination, (grouped.get(destination) ?? 0) + 1);
-    }
-    return [...grouped.entries()]
-      .map(([destination, rowsCount]) => ({ destination, rowsCount }))
-      .sort((a, b) => a.destination.localeCompare(b.destination, 'ar'));
-  }, [destinationPdfRows]);
-
-  const destinationPdfDriverOptions = useMemo<DestinationPdfDriverOption[]>(() => {
-    const grouped = new Map<string, DestinationPdfDriverOption>();
-    for (const row of destinationPdfRows) {
-      const backendId = row.driver_id ?? null;
-      const label = normalizeName(row.driver_label ?? '') || 'بدون سائق';
-      const key = backendId ? `id:${backendId}` : `label:${label}`;
-      const existing = grouped.get(key) ?? { key, backendId, label, rowsCount: 0 };
-      existing.rowsCount += 1;
-      grouped.set(key, existing);
-    }
-    return [...grouped.values()].sort((a, b) => a.label.localeCompare(b.label, 'ar'));
-  }, [destinationPdfRows]);
+  const activeSessionPrintLabel = useMemo(() => {
+    if (!activeSession) return undefined;
+    return `الإرسالية #${activeSession.displayNo} — ${activeSession.driverLabel}`;
+  }, [activeSession]);
 
   // إن اختفت الجلسة النشطة (تغيّر التاريخ مثلاً) أعِد للعرض الكامل
   useEffect(() => {
@@ -2883,600 +2838,12 @@ export default function ShipmentQuickLedger() {
     navigate('/shipments');
   };
 
-  const openPrintDialog = (scope?: 'driver' | 'date' | 'agent' | 'session') => {
+  const handlePrintHubPrepare = useCallback(() => {
     setDeleteMode(false);
     setSelectedDeleteRowIds([]);
-    setPrintDriverId(tripRef.current.driverId || 0);
-    setPrintDateFrom(tripRef.current.date);
-    setPrintDateTo(tripRef.current.date);
-    if (normalizeName(searchQuick) && !printDestinationFilter) {
-      setPrintDestinationFilter(searchQuick.trim());
-    }
-    const managerWideView =
-      canViewAllLedgerEntriesRef.current &&
-      (ledgerBranchModeRef.current === 'all' || !activeBranchIdRef.current);
-    setPrintAllLines(managerWideView || canViewAllLedgerEntriesRef.current);
-    setPrintScope(scope ?? 'date');
-    setPrintDialogOpen(true);
     void resolveCompanyLogoDataUrlForPrint();
-  };
+  }, []);
 
-  const loadDestinationPdfRows = async (ledgerDate: string) => {
-    const branchId = activeBranchIdRef.current;
-    const viewAllBranches =
-      canViewAllLedgerEntriesRef.current && ledgerBranchModeRef.current === 'all';
-    const lineLabel = normalizeName(tripRef.current.line);
-    if (!viewAllBranches && !branchId) {
-      showToast('يرجى اختيار الفرع قبل تصدير PDF', 'error');
-      return;
-    }
-    if (!ledgerDate) {
-      showToast('يرجى اختيار التاريخ', 'error');
-      return;
-    }
-    if (!viewAllBranches && !lineLabel) {
-      showToast('يرجى اختيار خط المصدر قبل التصدير', 'error');
-      return;
-    }
-
-    setDestinationPdfLoading(true);
-    try {
-      const queryScope = buildLedgerRowsQueryScope(
-        branchId || '',
-        ledgerDate,
-        tripRef.current.line || '',
-        includeLoaded,
-        {
-          managerViewAllBranches: viewAllBranches,
-          allLines: viewAllBranches || !lineLabel,
-        },
-      );
-      const fetched = await fetchAllDailyLedgerRows(queryScope);
-      const searchFiltered = filterRemoteRowsBySearch(fetched, searchQuick, catalogAgents);
-      const printableRows = sortRemoteRowsChronological(searchFiltered);
-      setDestinationPdfRows(printableRows);
-      const nextDestinations = uniqueDestinationsFromRows(printableRows);
-      setDestinationPdfSelected(nextDestinations);
-      const groupedDrivers = new Map<string, { backendId: string | null; label: string; rowsCount: number }>();
-      for (const row of printableRows) {
-        const backendId = row.driver_id ?? null;
-        const label = normalizeName(row.driver_label ?? '') || 'بدون سائق';
-        const key = backendId ? `id:${backendId}` : `label:${label}`;
-        const existing = groupedDrivers.get(key) ?? { backendId, label, rowsCount: 0 };
-        existing.rowsCount += 1;
-        groupedDrivers.set(key, existing);
-      }
-      const driverKeys = [...groupedDrivers.keys()];
-      if (driverKeys.length === 1) {
-        setDestinationPdfDriverKey(driverKeys[0]);
-      } else {
-        const currentTripDriverBackendId = tripRef.current.driverId
-          ? getBackendIdFromSynthetic(tripRef.current.driverId) ?? null
-          : null;
-        const preferredKey = currentTripDriverBackendId ? `id:${currentTripDriverBackendId}` : '';
-        setDestinationPdfDriverKey(preferredKey && groupedDrivers.has(preferredKey) ? preferredKey : ALL_DRIVERS_PDF_OPTION);
-      }
-    } catch (error) {
-      setDestinationPdfRows([]);
-      setDestinationPdfSelected([]);
-      setDestinationPdfDriverKey(ALL_DRIVERS_PDF_OPTION);
-      showToast(error instanceof Error ? error.message : 'تعذر تحميل وجهات دفتر الشحن', 'error');
-    } finally {
-      setDestinationPdfLoading(false);
-    }
-  };
-
-  const openDestinationPdfDialog = () => {
-    setDeleteMode(false);
-    setSelectedDeleteRowIds([]);
-    setDestinationPdfDate(trip.date);
-    setDestinationPdfDialogOpen(true);
-    void loadDestinationPdfRows(trip.date);
-  };
-
-  const toggleDestinationPdfSelection = (destination: string) => {
-    setDestinationPdfSelected((prev) =>
-      prev.includes(destination)
-        ? prev.filter((item) => item !== destination)
-        : [...prev, destination].sort((a, b) => a.localeCompare(b, 'ar')),
-    );
-  };
-
-  const exitDeleteMode = () => {
-    setDeleteMode(false);
-    setSelectedDeleteRowIds([]);
-    setDeleteConfirmOpen(false);
-  };
-
-  const selectSession = async (sessionId: string | null) => {
-    if (sessionId === activeSessionId || sessionSwitching) return;
-    setSessionSwitching(true);
-    try {
-      // احفظ أسطر الإرسالية الحالية فقط — لا تُعيد حفظ كل أسطر اليوم
-      if (activeSessionId) {
-        await flushPendingRowSaves(activeSessionId);
-      }
-      setActiveSessionId(sessionId);
-      if (sessionId) {
-        const session = daySessions.find((s) => s.id === sessionId);
-        if (session) {
-          const driverSynthetic = session.driverBackendId ? syntheticEntityId(session.driverBackendId) : 0;
-          const vehicleSynthetic = session.vehicleBackendId ? syntheticEntityId(session.vehicleBackendId) : 0;
-          setTrip((prev) => ({
-            ...prev,
-            driverId: driverSynthetic || prev.driverId,
-            driver: session.driverLabel,
-            vehicleId: vehicleSynthetic || prev.vehicleId,
-            vehicle: session.vehicleLabel !== '—' ? session.vehicleLabel : prev.vehicle,
-          }));
-        }
-      }
-    } finally {
-      setSessionSwitching(false);
-    }
-  };
-
-  /** حلّ الإرسالية النشطة: إرجاع الأسطر للعرض العام وإزالة رقم الإرسالية */
-  const requestCancelActiveSession = () => {
-    if (!activeSessionId || sessionSwitching || !canLedgerCancelSession) return;
-    setCancelSessionConfirmOpen(true);
-  };
-
-  const confirmCancelActiveSession = async () => {
-    if (!activeSessionId || sessionSwitching || cancelingSession) return;
-    if (!requireCloudConnection('إلغاء الإرسالية يحتاج اتصالاً بالسحابة.')) return;
-    if (transferMode) exitTransferMode();
-    if (deleteMode) exitDeleteMode();
-
-    const sessionId = activeSessionId;
-    setCancelingSession(true);
-    try {
-      await flushPendingRowSaves(sessionId);
-      const result = await httpClient.post<{ movedRowsCount: number; poolSessionId: string }>(
-        '/daily-ledger/sessions/cancel',
-        { sessionId },
-      );
-      setCancelSessionConfirmOpen(false);
-      setActiveSessionId(null);
-      await loadRemoteRows();
-      showToast(
-        result.movedRowsCount > 0
-          ? `تم إلغاء الإرسالية — عاد ${result.movedRowsCount} سطر إلى العرض العام`
-          : 'تم إلغاء الإرسالية الفارغة',
-        'success',
-      );
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'تعذر إلغاء الإرسالية', 'error');
-    } finally {
-      setCancelingSession(false);
-    }
-  };
-
-  const enterTransferMode = () => {
-    setDeleteMode(false);
-    setSelectedDeleteRowIds([]);
-    setTransferMode(true);
-    setSelectedTransferRowIds([]);
-    if (ledgerBranchModeRef.current === 'all') {
-      showToast(
-        'نقل الإرسالية يتم لفرع واحد في كل عملية — حدّد أسطر نفس الفرع فقط (لا تجمع بين حلب والرئيسي مثلاً).',
-        'info',
-      );
-    }
-  };
-
-  const exitTransferMode = () => {
-    setTransferMode(false);
-    setSelectedTransferRowIds([]);
-    setTransferDialogOpen(false);
-    setTransferValidation({ loading: false, warnings: [], errors: [] });
-  };
-
-  const toggleTransferRowSelection = (rowId: number) => {
-    setSelectedTransferRowIds((prev) => {
-      if (prev.includes(rowId)) return prev.filter((id) => id !== rowId);
-      const row = rowsRef.current.find((entry) => entry.id === rowId);
-      if (!row?.branchBackendId) return [...prev, rowId];
-      const selectedBranchIds = uniqueTransferBranchIds(
-        rowsRef.current.filter((entry) => prev.includes(entry.id)),
-      );
-      if (selectedBranchIds.length > 0 && !selectedBranchIds.includes(row.branchBackendId)) {
-        const currentLabel = resolveBranchLabelFromList(branches, selectedBranchIds[0]);
-        const nextLabel = row.branchLabel ?? resolveBranchLabelFromList(branches, row.branchBackendId);
-        showToast(
-          `لا يمكن الجمع بين فروع مختلفة — الأسطر المحددة من «${currentLabel}»، وهذا السطر من «${nextLabel}».`,
-          'error',
-        );
-        return prev;
-      }
-      return [...prev, rowId];
-    });
-  };
-
-  const toggleSelectAllTransferable = () => {
-    const eligible = transferableVisibleRows;
-    if (!eligible.length) return;
-
-    const branchGroups = new Map<string, number[]>();
-    for (const row of eligible) {
-      const branchKey = row.branchBackendId ?? '__unknown__';
-      const bucket = branchGroups.get(branchKey) ?? [];
-      bucket.push(row.id);
-      branchGroups.set(branchKey, bucket);
-    }
-
-    if (branchGroups.size === 1) {
-      const ids = eligible.map((row) => row.id);
-      setSelectedTransferRowIds((prev) => (prev.length === ids.length ? [] : ids));
-      return;
-    }
-
-    const activeBackendBranchId = activeBranchIdRef.current
-      ? resolveLedgerBranchId(activeBranchIdRef.current)
-      : null;
-    let targetBranchKey =
-      activeBackendBranchId && branchGroups.has(activeBackendBranchId)
-        ? activeBackendBranchId
-        : [...branchGroups.entries()].sort((left, right) => right[1].length - left[1].length)[0]?.[0];
-    const targetIds = branchGroups.get(targetBranchKey ?? '') ?? [];
-    const allTargetSelected =
-      targetIds.length > 0 &&
-      targetIds.every((id) => selectedTransferRowIds.includes(id)) &&
-      selectedTransferRowIds.length === targetIds.length;
-
-    if (allTargetSelected) {
-      setSelectedTransferRowIds([]);
-      return;
-    }
-
-    setSelectedTransferRowIds(targetIds);
-    const targetLabel =
-      targetBranchKey && targetBranchKey !== '__unknown__'
-        ? resolveBranchLabelFromList(branches, targetBranchKey)
-        : 'فرع غير محدد';
-    showToast(
-      `تم تحديد ${targetIds.length} سطر من «${targetLabel}» فقط — النقل لا يجمع بين فروع مختلفة.`,
-      'info',
-    );
-  };
-
-  const flushTransferSelectionSaves = async (rowIds: number[]) => {
-    Object.values(saveTimersRef.current).forEach((timer) => window.clearTimeout(timer));
-    saveTimersRef.current = {};
-    receiptEditingRowIdRef.current = null;
-    setReceiptEditingRowId(null);
-    for (const rowId of rowIds) {
-      await saveRowToServerRef.current(rowId, { force: true });
-    }
-  };
-
-  const runTransferValidation = async (dbIds: string[]) => {
-    setTransferValidation({ loading: true, warnings: [], errors: [] });
-    try {
-      const result = await httpClient.post<{
-        valid: boolean;
-        summary: {
-          rowsCount: number;
-          piecesCount: number;
-          weightKg: number;
-          weightTons: number;
-          freightTotal: number;
-          collectionTotal: number;
-          prepaidTotal: number;
-          destinations: string[];
-          postedRowsCount?: number;
-          unpostedRowsCount?: number;
-          sourceLedgerDate?: string | null;
-        };
-        warnings: string[];
-        errors: string[];
-      }>('/daily-ledger/transfer/validate', { rowIds: dbIds });
-      setTransferValidation({
-        loading: false,
-        summary: result.summary,
-        warnings: result.warnings,
-        errors: result.errors,
-      });
-    } catch (error) {
-      setTransferValidation({
-        loading: false,
-        warnings: [],
-        errors: [error instanceof Error ? error.message : 'تعذر التحقق من الأسطر المحددة'],
-      });
-    }
-  };
-
-  const openTransferDialog = async () => {
-    if (!requireCloudConnection('نقل الإرسالية يحتاج اتصالاً بالسحابة.')) return;
-    if (!selectedTransferRowIds.length) {
-      showToast('يجب تحديد سطر واحد على الأقل', 'error');
-      return;
-    }
-    const dbIds = selectedTransferRows.map((row) => row.dbId).filter((id): id is string => Boolean(id));
-    if (dbIds.length !== selectedTransferRows.length) {
-      showToast('بعض الأسطر المحددة غير محفوظة — احفظ الدفتر أولاً قبل النقل', 'error');
-      return;
-    }
-    if (transferSelectionSummary.hasMultipleBranches) {
-      showToast(
-        `لا يمكن نقل أسطر من فروع مختلفة (${transferSelectionSummary.branchLabels.join('، ')}) — حدّد أسطر فرع واحد.`,
-        'error',
-      );
-      return;
-    }
-    setTransferReason('');
-    setTransferDriverId(trip.driverId || 0);
-    setTransferVehicleId(trip.vehicleId || 0);
-    setTransferDate(trip.date);
-    setTransferDialogOpen(true);
-    try {
-      await flushTransferSelectionSaves(selectedTransferRowIds);
-    } catch {
-      showToast('تعذر حفظ بعض التعديلات — راجع الأسطر ثم أعد المحاولة', 'error');
-      return;
-    }
-    await runTransferValidation(dbIds);
-  };
-
-  const confirmTransfer = async () => {
-    if (!requireCloudConnection('تأكيد نقل الإرسالية يحتاج اتصالاً بالسحابة.')) return;
-    const dbIds = selectedTransferRows.map((row) => row.dbId).filter((id): id is string => Boolean(id));
-    if (!dbIds.length) {
-      showToast('لا توجد أسطر محفوظة للنقل', 'error');
-      return;
-    }
-    if (!transferReason.trim()) {
-      showToast('يجب إدخال سبب النقل', 'error');
-      return;
-    }
-    if (!transferDriverId && !transferVehicleId) {
-      showToast('يجب تحديد سائق أو مركبة للإرسالية الجديدة', 'error');
-      return;
-    }
-    const driverBackendId = transferDriverId ? getBackendIdFromSynthetic(transferDriverId) ?? null : null;
-    const vehicleBackendId = transferVehicleId ? getBackendIdFromSynthetic(transferVehicleId) ?? null : null;
-    setTransferring(true);
-    try {
-      await flushTransferSelectionSaves(selectedTransferRowIds);
-      const result = await httpClient.post<{
-        transferNo: string;
-        movedRowsCount: number;
-        targetSessionId: string;
-      }>('/daily-ledger/transfer/confirm', {
-
-        rowIds: dbIds,
-        target: {
-          ledgerDate: transferDate,
-          lineLabel: trip.line || null,
-          driverId: driverBackendId,
-          vehicleId: vehicleBackendId,
-          notes: trip.tripNo || null,
-        },
-        reason: transferReason.trim(),
-      });
-      const movedCount = result.movedRowsCount;
-      const allOperational =
-        (transferValidation.summary?.postedRowsCount ?? 0) > 0 &&
-        (transferValidation.summary?.unpostedRowsCount ?? 0) === 0;
-      showToast(
-        allOperational
-          ? `تم نقل ${movedCount} سطر تشغيلياً (${result.transferNo}) — بدون أثر مالي جديد. أعد طباعة الإرساليات المتأثرة.`
-          : `تم نقل الإرسالية بنجاح — ${movedCount} سطر (${result.transferNo}). يرجى إعادة طباعة الإرساليات المتأثرة.`,
-        'success',
-      );
-      exitTransferMode();
-      // الانتقال إلى الإرسالية الجديدة: نفس التاريخ/الخط مع السائق الجديد
-      const targetDriver = drivers.find((d) => d.id === transferDriverId);
-      const targetSessionId = result.targetSessionId ?? null;
-      setTrip((prev) => ({
-        ...prev,
-        date: transferDate,
-        driverId: transferDriverId || prev.driverId,
-        driver: targetDriver?.name ?? prev.driver,
-        vehicleId: transferVehicleId || prev.vehicleId,
-      }));
-      await loadRemoteRows({ preserveSessionId: targetSessionId });
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'تعذر نقل الإرسالية', 'error');
-    } finally {
-      setTransferring(false);
-    }
-  };
-
-  const toggleDeleteRowSelection = (rowId: number) => {
-    setSelectedDeleteRowIds((prev) =>
-      prev.includes(rowId) ? prev.filter((id) => id !== rowId) : [...prev, rowId],
-    );
-  };
-
-  const toggleSelectAllDeletable = () => {
-    const ids = deletableVisibleRows.map((row) => row.id);
-    setSelectedDeleteRowIds((prev) => (prev.length === ids.length ? [] : ids));
-  };
-
-  const deleteSelectedRows = async () => {
-    const selected = rows.filter((row) => selectedDeleteRowIds.includes(row.id));
-    if (!selected.length) {
-      showToast('لم تُحدَّد أسطر للحذف', 'info');
-      return;
-    }
-    if (selected.some((row) => row.loadedAt)) {
-      showToast('لا يمكن حذف أسطر محمّلة على بيان', 'error');
-      return;
-    }
-
-    if (isCloudOffline && selected.some((row) => row.dbId)) {
-      showToast('حذف الصفوف المحفوظة على السحابة يحتاج اتصالاً. يمكنك حذف الصفوف المحلية غير المتزامنة فقط أثناء الانقطاع.', 'error');
-      return;
-    }
-
-    setDeletingRows(true);
-    try {
-      await flushPendingRowSaves();
-      const dbIds = selected.map((row) => row.dbId).filter((id): id is string => Boolean(id));
-      if (dbIds.length) {
-        const result = await httpClient.post<{ deletedIds: string[]; blockedIds: string[] }>(
-          '/daily-ledger/rows/delete',
-          { rowIds: dbIds },
-        );
-        if (result.blockedIds.length) {
-          showToast(`تعذر حذف ${result.blockedIds.length} سطر (ربما محمّل على بيان)`, 'error');
-        }
-      }
-
-      const origin = resolveTripOrigin(tripRef.current.line);
-      setRows((prev) => {
-        const remaining = prev.filter((row) => !selectedDeleteRowIds.includes(row.id));
-        if (!remaining.length) return buildEntrySlotRows(1, origin);
-        return appendTrailingEntrySlot(remaining);
-      });
-      exitDeleteMode();
-      showToast(`تم حذف ${selected.length} سطر`, 'success');
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'تعذر حذف الأسطر المحددة', 'error');
-    } finally {
-      setDeletingRows(false);
-    }
-  };
-
-  const handleDriverSelect = (driverId: number) => {
-    const driver = drivers.find((d) => d.id === driverId);
-    const linkedVehicle = driverId ? vehicles.find((v) => v.driverId === driverId) : undefined;
-    setTrip((prev) => ({
-      ...prev,
-      driverId: driverId || 0,
-      driver: driver?.name ?? '',
-      ...(linkedVehicle
-        ? {
-            vehicleId: linkedVehicle.id,
-            vehicle: `${linkedVehicle.plateNumber}${linkedVehicle.model ? ` — ${linkedVehicle.model}` : ''}`,
-          }
-        : { vehicleId: 0, vehicle: '' }),
-    }));
-  };
-
-  const handleVehicleSelect = (vehicleId: number) => {
-    const vehicle = vehicles.find((v) => v.id === vehicleId);
-    const linkedDriver = vehicle?.driverId ? drivers.find((d) => d.id === vehicle.driverId) : undefined;
-    setTrip((prev) => ({
-      ...prev,
-      vehicleId,
-      vehicle: vehicle ? `${vehicle.plateNumber}${vehicle.model ? ` — ${vehicle.model}` : ''}` : '',
-      ...(linkedDriver
-        ? { driverId: linkedDriver.id, driver: linkedDriver.name }
-        : vehicle?.driverId
-          ? { driverId: vehicle.driverId, driver: vehicle.driverName ?? prev.driver }
-          : {}),
-    }));
-  };
-
-  const prepareDriverPrintRows = async (): Promise<{
-    rows: RemoteDailyLedgerRow[];
-    activeSearch: string;
-    selectedDriver: Driver | undefined;
-    scope: 'driver' | 'date' | 'agent' | 'session';
-  } | null> => {
-    const branchId = activeBranchIdRef.current;
-    const viewAllBranches = canViewAllLedgerEntriesRef.current && ledgerBranchModeRef.current === 'all';
-    if (!viewAllBranches && !branchId) {
-      showToast('يرجى اختيار الفرع قبل الطباعة', 'error');
-      return null;
-    }
-    if (!printDateFrom || !printDateTo) {
-      showToast('يرجى اختيار فترة التاريخ', 'error');
-      return null;
-    }
-    if (printDateFrom > printDateTo) {
-      showToast('تاريخ البداية يجب أن يكون قبل تاريخ النهاية', 'error');
-      return null;
-    }
-
-    let driverBackendId: string | undefined;
-    let selectedDriver: Driver | undefined;
-    if (printScope === 'driver') {
-      if (!printDriverId) {
-        showToast('يرجى اختيار السائق قبل الطباعة', 'error');
-        return null;
-      }
-      driverBackendId = getBackendIdFromSynthetic(printDriverId) ?? undefined;
-      if (!driverBackendId) {
-        showToast('تعذر تحديد السائق', 'error');
-        return null;
-      }
-      selectedDriver = drivers.find((d) => d.id === printDriverId);
-    }
-
-    const destinationFilter = normalizeName(printDestinationFilter).toLowerCase();
-    if (printScope === 'agent' && !destinationFilter) {
-      showToast('يرجى إدخال الجهة/الوكيل للطباعة بالوكيل', 'error');
-      return null;
-    }
-
-    if (printScope === 'session' && !activeSessionId) {
-      showToast('لا توجد إرسالية محددة للطباعة', 'error');
-      return null;
-    }
-
-    const screenLine = normalizeName(tripRef.current.line);
-    const allowAllLines = printAllLines || viewAllBranches;
-    if (!allowAllLines && !screenLine) {
-      showToast('يرجى اختيار خط المصدر قبل الطباعة', 'error');
-      return null;
-    }
-
-    const singleDay = printDateFrom === printDateTo;
-    const queryScope = buildLedgerRowsQueryScope(
-      branchId || '',
-      printDateFrom,
-      tripRef.current.line || screenLine,
-      includeLoaded,
-      {
-        managerViewAllBranches: viewAllBranches,
-        allLines: allowAllLines,
-        ...(singleDay ? {} : { dateFrom: printDateFrom, dateTo: printDateTo }),
-      },
-    );
-    const activeSearch = searchQuick.trim();
-    const vehicleIdsForDriver =
-      printScope === 'driver' && driverBackendId
-        ? buildVehicleBackendIdsForDriver(driverBackendId, vehicles)
-        : undefined;
-    const fetched = await fetchAllDailyLedgerRows(queryScope);
-    const sameDayAsScreen =
-      printDateFrom === tripRef.current.date &&
-      printDateTo === tripRef.current.date;
-    const data =
-      activeSearch && sameDayAsScreen
-        ? dedupeDailyLedgerRowsById([...remoteRowsRaw, ...fetched])
-        : fetched;
-    const rows = prepareLedgerOutputRows(data, {
-      printScope,
-      searchQuery: activeSearch,
-      agents: catalogAgents,
-      activeSessionId: printScope === 'session' ? activeSessionId : null,
-      destinationFilter: printScope === 'agent' ? printDestinationFilter : undefined,
-      driverBackendId,
-      driverName: selectedDriver?.name,
-      vehicleIdsForDriver,
-      assignOrphanRowsToSelectedDriver: printScope === 'driver' && Boolean(activeSearch),
-    });
-
-    if (!rows.length) {
-      showToast(
-        activeSearch && printScope === 'driver' && selectedDriver?.name
-          ? `لا توجد أسطر مطابقة للسائق «${selectedDriver.name}» مع البحث «${activeSearch}» — تأكد أن الإرسالية مرتبطة بهذا السائق`
-          : 'لا توجد أسطر مطابقة لمعايير الطباعة',
-        'info',
-      );
-      return null;
-    }
-
-    showToast(`تم جلب ${rows.length} سطر للطباعة`, 'info');
-
-    return { rows, activeSearch, selectedDriver, scope: printScope };
-  };
-
-  /** تسجيل حدث الطباعة للجلسات المطبوعة لمسح علامة "أعد الطباعة" وتتبّع الطباعة */
   const recordPrintForRows = async (
     printedRows: RemoteDailyLedgerRow[],
     printScopeLabel: string,
@@ -3514,7 +2881,8 @@ export default function ShipmentQuickLedger() {
     destinationLabel: string;
     activeSearch: string;
     selectedDriver?: Driver;
-    scope: 'driver' | 'date' | 'agent' | 'session';
+    scope: LedgerPrintScope;
+    ledgerDate: string;
   }) => {
     if (isCloudOffline || !input.rows.length) return;
     const totals = computeTotalsFromRemoteRows(input.rows);
@@ -3522,12 +2890,12 @@ export default function ShipmentQuickLedger() {
       ? resolveLedgerBranchId(activeBranchIdRef.current)
       : input.rows[0]?.branch_id ?? null;
     const driverBackendId =
-      input.scope === 'driver' && input.selectedDriver
+      input.selectedDriver
         ? getBackendIdFromSynthetic(input.selectedDriver.id) ?? null
         : input.rows[0]?.driver_id ?? null;
     const { ledgerDate, ledgerDateTo } = resolveDocumentationLedgerDates(input.rows, {
-      dateFrom: printDateFrom,
-      dateTo: printDateTo,
+      dateFrom: input.ledgerDate,
+      dateTo: input.ledgerDate,
       screenDate: tripRef.current.date,
     });
     try {
@@ -3590,159 +2958,73 @@ export default function ShipmentQuickLedger() {
     showToast('تم فتح معاينة الطباعة', 'success');
   };
 
-  const executeShipmentsPrint = async () => {
-    setPrintLoading(true);
-    try {
-      const prepared = await prepareDriverPrintRows();
-      if (!prepared) return;
-
-      const { rows, activeSearch, selectedDriver, scope } = prepared;
-      const scopeName =
-        scope === 'driver'
-          ? selectedDriver?.name ?? ''
-          : scope === 'agent'
-            ? printDestinationFilter
-            : scope === 'session'
-              ? `الإرسالية #${activeSession?.displayNo ?? ''} — ${activeSession?.driverLabel ?? ''}`
-              : 'كل السائقين (اليوم)';
-
+  const handlePrintHubShipments = useCallback(
+    async (rows: RemoteDailyLedgerRow[], meta: QuickLedgerPrintHubMeta) => {
       const printRows = rows.map(remoteRowToPrint);
-      const destinationLabel = resolvePrintDestinationLabel(
-        printRows,
-        activeSearch,
-        scope,
-        printDestinationFilter,
-      );
-      const driverLabel = resolvePrintDriverLabel(
-        rows,
-        activeSearch,
-        scope,
-        selectedDriver?.name ?? '',
-        scope === 'driver' ? selectedDriver?.name ?? '—' : scopeName,
-      );
       const html = buildQuickLedgerPrintHtml(printRows, {
-        title: activeSearch ? `دفتر الشحن — ${activeSearch}` : `دفتر الشحن — ${scopeName}`,
-        destinationLabel,
-        driverName: driverLabel,
+        title: meta.title,
+        destinationLabel: meta.destinationLabel,
+        driverName: meta.driverLabel,
       });
-
-      setPrintDialogOpen(false);
       await dispatchHtmlPrint(html, 'quick_ledger');
-      await recordPrintForRows(rows, `shipments_${scope}`);
+      await recordPrintForRows(rows, `shipments_${meta.scope}`);
       await recordPrintDocumentation({
         rows,
         printType: 'shipments',
-        printScopeLabel: `shipments_${scope}`,
-        title: activeSearch ? `دفتر الشحن — ${activeSearch}` : `دفتر الشحن — ${scopeName}`,
-        driverLabel,
-        destinationLabel,
-        activeSearch,
-        selectedDriver,
-        scope,
+        printScopeLabel: `shipments_${meta.scope}`,
+        title: meta.title,
+        driverLabel: meta.driverLabel,
+        destinationLabel: meta.destinationLabel,
+        activeSearch: meta.activeSearch,
+        selectedDriver: meta.selectedDriver,
+        scope: meta.scope,
+        ledgerDate: meta.ledgerDate,
       });
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'تعذر تنفيذ طباعة الشحنات', 'error');
-    } finally {
-      setPrintLoading(false);
-    }
-  };
+      showToast(`تمت طباعة ${rows.length} سطر`, 'success');
+    },
+    [isCloudOffline],
+  );
 
-  const executeReceiptsPrint = async () => {
-    setPrintLoading(true);
-    try {
-      const prepared = await prepareDriverPrintRows();
-      if (!prepared) return;
-
-      const { rows, activeSearch, selectedDriver, scope } = prepared;
-      const scopeName =
-        scope === 'driver'
-          ? selectedDriver?.name ?? ''
-          : scope === 'agent'
-            ? `وكيل/جهة: ${printDestinationFilter}`
-            : scope === 'session'
-              ? `الإرسالية #${activeSession?.displayNo ?? ''} — ${activeSession?.driverLabel ?? ''}`
-              : 'كل السائقين (اليوم)';
-      const title = activeSearch ? `إيصالات — ${scopeName} — ${activeSearch}` : `إيصالات — ${scopeName}`;
-
+  const handlePrintHubReceipts = useCallback(
+    async (rows: RemoteDailyLedgerRow[], meta: QuickLedgerPrintHubMeta) => {
       const html = buildMahmoudPreprintedReceiptHtml(rows.map(mapRemoteLedgerRowToMahmoudReceipt), {
-        title,
+        title: meta.title,
         applyPrintTransform: false,
       });
-
-      setPrintDialogOpen(false);
       await dispatchHtmlPrint(html, 'mahmoud_receipt');
-      await recordPrintForRows(rows, `receipts_${scope}`);
+      await recordPrintForRows(rows, `receipts_${meta.scope}`);
       await recordPrintDocumentation({
         rows,
         printType: 'receipts',
-        printScopeLabel: `receipts_${scope}`,
-        title,
-        driverLabel: resolvePrintDriverLabel(
-          rows,
-          activeSearch,
-          scope,
-          selectedDriver?.name ?? '',
-          scope === 'driver' ? selectedDriver?.name ?? '—' : scopeName,
-        ),
-        destinationLabel: resolvePrintDestinationLabel(
-          rows.map(remoteRowToPrint),
-          activeSearch,
-          scope,
-          printDestinationFilter,
-        ),
-        activeSearch,
-        selectedDriver,
-        scope,
+        printScopeLabel: `receipts_${meta.scope}`,
+        title: meta.title,
+        driverLabel: meta.driverLabel,
+        destinationLabel: meta.destinationLabel,
+        activeSearch: meta.activeSearch,
+        selectedDriver: meta.selectedDriver,
+        scope: meta.scope,
+        ledgerDate: meta.ledgerDate,
       });
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'تعذر تنفيذ طباعة الإيصالات', 'error');
-    } finally {
-      setPrintLoading(false);
-    }
-  };
+      showToast(`تمت طباعة ${rows.length} إيصال`, 'success');
+    },
+    [isCloudOffline],
+  );
 
-  const executeDestinationPdfExport = async () => {
-    const viewAllBranchesPdf = canViewAllLedgerEntries && ledgerBranchMode === 'all';
-    const lineLabel = viewAllBranchesPdf ? 'كل الفروع' : normalizeName(trip.line);
-    if (!destinationPdfDate) {
-      showToast('يرجى اختيار التاريخ', 'error');
-      return;
-    }
-    if (!viewAllBranchesPdf && !lineLabel) {
-      showToast('يرجى اختيار خط المصدر قبل التصدير', 'error');
-      return;
-    }
-    if (!destinationPdfSelected.length) {
-      showToast('يرجى تحديد وجهة واحدة على الأقل', 'error');
-      return;
-    }
-    if (!destinationPdfRows.length) {
-      showToast('لا توجد أسطر متاحة للتصدير في هذا التاريخ', 'info');
-      return;
-    }
-
-    if (
-      destinationPdfDriverKey !== ALL_DRIVERS_PDF_OPTION &&
-      !destinationPdfDriverOptions.some((option) => option.key === destinationPdfDriverKey)
-    ) {
-      showToast('يرجى اختيار سائق صالح للتصدير', 'error');
-      return;
-    }
-
-    setDestinationPdfExporting(true);
-    try {
-      const rowsForSelectedDriver = destinationPdfRows.filter((row) => {
-        if (destinationPdfDriverKey === ALL_DRIVERS_PDF_OPTION) return true;
-        if (destinationPdfDriverKey.startsWith('id:')) return `id:${row.driver_id ?? ''}` === destinationPdfDriverKey;
-        const label = normalizeName(row.driver_label ?? '') || 'بدون سائق';
-        return `label:${label}` === destinationPdfDriverKey;
-      });
+  const handlePrintHubDestinationPdf = useCallback(
+    async (input: {
+      rows: RemoteDailyLedgerRow[];
+      destinations: string[];
+      driverKey: string;
+      ledgerDate: string;
+      lineLabel: string;
+    }) => {
+      const rowsForSelectedDriver = filterRowsByDriverKey(input.rows, input.driverKey);
       if (!rowsForSelectedDriver.length) {
         showToast('لا توجد أسطر مطابقة للسائق المحدد', 'info');
         return;
       }
 
-      for (const destination of destinationPdfSelected) {
+      for (const destination of input.destinations) {
         const rowsForDestination = rowsForSelectedDriver.filter(
           (row) => normalizeName(row.destination ?? '') === destination,
         );
@@ -3755,8 +3037,8 @@ export default function ShipmentQuickLedger() {
         )];
 
         const html = buildDailyLedgerDestinationPrintHtml({
-          reportDate: destinationPdfDate,
-          lineLabel,
+          reportDate: input.ledgerDate,
+          lineLabel: input.lineLabel,
           destination,
           driverNames,
           rows: rowsForDestination.map((row) => {
@@ -3780,23 +3062,19 @@ export default function ShipmentQuickLedger() {
         });
 
         const safeDestination = destination.replace(/[\\/:*?"<>|]+/g, '-');
-        const safeLine = lineLabel.replace(/[\\/:*?"<>|]+/g, '-');
+        const safeLine = input.lineLabel.replace(/[\\/:*?"<>|]+/g, '-');
         await exportLedgerStylePdf({
-          title: `دفتر الشحن اليومي — ${destination} — ${destinationPdfDate}`,
+          title: `دفتر الشحن اليومي — ${destination} — ${input.ledgerDate}`,
           html,
-          defaultFileName: `daily-ledger-${safeLine}-${safeDestination}-${destinationPdfDate}.pdf`,
+          defaultFileName: `daily-ledger-${safeLine}-${safeDestination}-${input.ledgerDate}.pdf`,
           landscape: true,
         });
       }
 
-      setDestinationPdfDialogOpen(false);
-      showToast(`تم تصدير ${destinationPdfSelected.length} ملف PDF`, 'success');
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'تعذر تصدير ملفات PDF', 'error');
-    } finally {
-      setDestinationPdfExporting(false);
-    }
-  };
+      showToast(`تم تصدير ${input.destinations.length} ملف PDF`, 'success');
+    },
+    [showToast],
+  );
 
   const logRowContext = (row: LedgerRow) => ({
     rowLabel: rowProgressLabel(row),
@@ -4382,16 +3660,37 @@ export default function ShipmentQuickLedger() {
               إظهار المحمّلة
             </label>
           ) : null}
-          <button type="button" onClick={() => openPrintDialog()}>
-            <Printer size={16} />
-            طباعة
-          </button>
-          {canLedgerExportPdf ? (
-            <button type="button" onClick={openDestinationPdfDialog}>
-              <Printer size={16} />
-              تصدير PDF
-            </button>
-          ) : null}
+          <QuickLedgerPrintHub
+            ref={printHubRef}
+            ledgerDate={trip.date}
+            lineLabel={trip.line}
+            lineOptions={lineOptions}
+            branches={branches}
+            canPickBranch={canPickDispatchBranch}
+            preferredBranchId={dispatchPreferredBranchId}
+            lockedBranchId={dispatchLockedBranchId}
+            canViewAllBranches={canViewAllLedgerEntries && ledgerBranchMode === 'all'}
+            includeLoaded={includeLoaded}
+            searchQuick={searchQuick}
+            catalogAgents={catalogAgents}
+            remoteRowsRaw={remoteRowsRaw}
+            drivers={drivers}
+            vehicles={vehicles}
+            dispatchDefinitions={dispatchDefinitions}
+            activeSessionId={activeSessionId}
+            activeSessionLabel={activeSessionPrintLabel}
+            canExportPdf={canLedgerExportPdf}
+            canPickFutureDate={canPickFutureDate}
+            canPickHistoricalDate={canPickHistoricalDate}
+            todayIso={todayIso}
+            currentTripDriverId={trip.driverId}
+            disabled={isCloudOffline}
+            onPrintShipments={handlePrintHubShipments}
+            onPrintReceipts={handlePrintHubReceipts}
+            onExportDestinationPdf={canLedgerExportPdf ? handlePrintHubDestinationPdf : undefined}
+            onToast={showToast}
+            onPreparePrint={handlePrintHubPrepare}
+          />
           {activeSessionId && canLedgerCancelSession && !transferMode && !deleteMode ? (
             <button
               type="button"
@@ -4636,7 +3935,7 @@ export default function ShipmentQuickLedger() {
             <button
               type="button"
               className="quick-ledger-session-print-btn"
-              onClick={() => openPrintDialog('session')}
+              onClick={() => printHubRef.current?.open({ sessionOnly: true })}
               title="طباعة الإرسالية الحالية فقط"
             >
               <Printer size={14} /> طباعة الإرسالية الحالية
@@ -5133,243 +4432,6 @@ export default function ShipmentQuickLedger() {
                 disabled={cancelingSession || isCloudOffline}
               >
                 {cancelingSession ? 'جاري الإلغاء...' : 'تأكيد إلغاء الإرسالية'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {printDialogOpen && (
-        <div className="quick-ledger-confirm" role="dialog" aria-modal="true">
-          <div className="quick-ledger-confirm-panel">
-            <h3>طباعة</h3>
-            <p>
-              {canViewAllLedgerEntries && ledgerBranchMode === 'all' ? (
-                <>
-                  الافتراضي: <strong>كل الفروع</strong> و<strong>كل السائقين</strong> للتاريخ المحدد
-                  ({remoteSyncedCount} سطر محمّل على الشاشة).
-                </>
-              ) : (
-                <>
-                  الطباعة الافتراضية: التاريخ + {printAllLines ? 'كل الخطوط' : `خط المصدر (${trip.line || '—'})`}.
-                </>
-              )}
-              {searchQuick.trim() ? (
-                <>
-                  {' '}
-                  البحث النشط <strong>«{searchQuick.trim()}»</strong> — يُطبَّع مع نطاق الطباعة المختار (مثلاً سائق + وجهة معاً).
-                </>
-              ) : (
-                ' يمكنك اختيار نطاق السائق أو الجهة عند الحاجة.'
-              )}
-            </p>
-            <div className="quick-ledger-print-form space-y-3 mb-3">
-              <label className="form-group block">
-                <span className="form-label">نطاق الطباعة</span>
-                <select
-                  className="form-select w-full"
-                  value={printScope}
-                  onChange={(e) => setPrintScope(e.target.value as 'driver' | 'date' | 'agent' | 'session')}
-                >
-                  <option value="date">باليوم كامل (كل السائقين) — موصى به</option>
-                  <option value="driver">بالسائق المحدد فقط</option>
-                  <option value="agent">بالوكيل / الجهة</option>
-                  {activeSessionId && <option value="session">الإرسالية الحالية فقط</option>}
-                </select>
-                {searchQuick.trim() && printScope === 'driver' ? (
-                  <p className="text-xs text-amber-800 mt-1">
-                    البحث + السائق: تُطبع أسطر البحث للسائق المختار فقط، ويظهر اسمه في رأس الطباعة.
-                  </p>
-                ) : null}
-              </label>
-              {printScope === 'driver' && (
-                <label className="form-group block">
-                  <span className="form-label">السائق *</span>
-                  <select
-                    className="form-select w-full"
-                    value={printDriverId || ''}
-                    onChange={(e) => setPrintDriverId(Number(e.target.value))}
-                  >
-                    <option value="">— اختر السائق —</option>
-                    {drivers.map((driver) => (
-                      <option key={driver.id} value={driver.id}>
-                        {driver.code ? `${driver.code} — ` : ''}{driver.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              {printScope === 'agent' && (
-                <label className="form-group block">
-                  <span className="form-label">الجهة / الوكيل *</span>
-                  <input
-                    className="form-input w-full"
-                    value={printDestinationFilter}
-                    placeholder="مثال: الرقة"
-                    onChange={(e) => setPrintDestinationFilter(e.target.value)}
-                  />
-                </label>
-              )}
-              <div className="grid grid-cols-2 gap-2">
-                <label className="form-group block">
-                  <span className="form-label">من تاريخ</span>
-                  <input
-                    className="form-input w-full"
-                    type="date"
-                    value={printDateFrom}
-                    onChange={(e) => setPrintDateFrom(e.target.value)}
-                  />
-                </label>
-                <label className="form-group block">
-                  <span className="form-label">إلى تاريخ</span>
-                  <input
-                    className="form-input w-full"
-                    type="date"
-                    value={printDateTo}
-                    onChange={(e) => setPrintDateTo(e.target.value)}
-                  />
-                </label>
-              </div>
-              <label className="quick-ledger-print-toggle block">
-                <input
-                  type="checkbox"
-                  checked={printAllLines}
-                  onChange={(e) => setPrintAllLines(e.target.checked)}
-                />
-                طباعة كل خطوط الفرع (بدون تقييد خط المصدر)
-              </label>
-            </div>
-            <div className="quick-ledger-print-actions">
-              <button type="button" onClick={() => setPrintDialogOpen(false)} disabled={printLoading}>
-                إلغاء
-              </button>
-              <button
-                type="button"
-                className="primary"
-                onClick={() => void executeShipmentsPrint()}
-                disabled={printLoading}
-              >
-                {printLoading ? 'جاري التحضير...' : 'طباعة شحنات'}
-              </button>
-              <button
-                type="button"
-                className="primary"
-                onClick={() => void executeReceiptsPrint()}
-                disabled={printLoading}
-              >
-                {printLoading ? 'جاري التحضير...' : 'طباعة إيصالات'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {destinationPdfDialogOpen && (
-        <div className="quick-ledger-confirm" role="dialog" aria-modal="true">
-          <div className="quick-ledger-confirm-panel quick-ledger-destination-pdf-panel" dir="rtl">
-            <h3>تصدير PDF حسب الوجهة</h3>
-            <p>
-              يعرض نفس الوجهات الموجودة في دفتر الشحن للتاريخ المحدد، ويصدر ملف PDF مستقل لكل وجهة محددة.
-              {searchQuick.trim() ? (
-                <>
-                  {' '}
-                  البحث النشط <strong>«{searchQuick.trim()}»</strong> — تُعرض وجهاته وأسطره فقط.
-                </>
-              ) : null}
-            </p>
-            <div className="quick-ledger-print-form space-y-3 mb-3">
-              <label className="form-group block">
-                <span className="form-label">التاريخ</span>
-                <input
-                  className="form-input w-full"
-                  type="date"
-                  value={destinationPdfDate}
-                  max={canPickFutureDate ? undefined : todayIso}
-                  min={canPickHistoricalDate ? undefined : todayIso}
-                  onChange={(e) => {
-                    const nextDate = e.target.value;
-                    setDestinationPdfDate(nextDate);
-                    void loadDestinationPdfRows(nextDate);
-                  }}
-                />
-              </label>
-              <label className="form-group block">
-                <span className="form-label">السائق</span>
-                <select
-                  className="form-select w-full"
-                  value={destinationPdfDriverKey}
-                  onChange={(e) => setDestinationPdfDriverKey(e.target.value)}
-                  disabled={destinationPdfLoading || destinationPdfExporting}
-                >
-                  <option value={ALL_DRIVERS_PDF_OPTION}>كل السائقين</option>
-                  {destinationPdfDriverOptions.map((option) => (
-                    <option key={option.key} value={option.key}>
-                      {option.label} ({option.rowsCount})
-                    </option>
-                  ))}
-                </select>
-                {searchQuick.trim() ? (
-                  <p className="text-xs text-amber-800 mt-1">
-                    البحث نشط «{searchQuick.trim()}» — يمكنك أيضاً تقييد التصدير بسائق محدد.
-                  </p>
-                ) : null}
-              </label>
-              <div className="quick-ledger-destination-pdf-meta">
-                <span>خط المصدر: <strong>{trip.line || '—'}</strong></span>
-                <span>الوجهات: <strong>{destinationPdfSummaries.length}</strong></span>
-                <span>المحدد: <strong>{destinationPdfSelected.length}</strong></span>
-              </div>
-              <div className="quick-ledger-destination-pdf-actions">
-                <button type="button" onClick={() => void loadDestinationPdfRows(destinationPdfDate)} disabled={destinationPdfLoading || destinationPdfExporting}>
-                  {destinationPdfLoading ? 'جاري التحديث...' : 'تحديث'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDestinationPdfSelected(destinationPdfSummaries.map((item) => item.destination))}
-                  disabled={!destinationPdfSummaries.length || destinationPdfExporting}
-                >
-                  تحديد الكل
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDestinationPdfSelected([])}
-                  disabled={!destinationPdfSelected.length || destinationPdfExporting}
-                >
-                  إلغاء التحديد
-                </button>
-              </div>
-              <div className="quick-ledger-destination-pdf-list">
-                {destinationPdfLoading ? (
-                  <p>جاري تحميل الوجهات...</p>
-                ) : destinationPdfSummaries.length === 0 ? (
-                  <p>لا توجد وجهات محفوظة في دفتر الشحن لهذا التاريخ.</p>
-                ) : (
-                  destinationPdfSummaries.map((item) => (
-                    <label key={item.destination} className="quick-ledger-destination-pdf-item">
-                      <input
-                        type="checkbox"
-                        checked={destinationPdfSelected.includes(item.destination)}
-                        onChange={() => toggleDestinationPdfSelection(item.destination)}
-                        disabled={destinationPdfExporting}
-                      />
-                      <span>{item.destination}</span>
-                      <strong>{item.rowsCount} سطر</strong>
-                    </label>
-                  ))
-                )}
-              </div>
-            </div>
-            <div className="quick-ledger-print-actions">
-              <button type="button" onClick={() => setDestinationPdfDialogOpen(false)} disabled={destinationPdfExporting}>
-                إلغاء
-              </button>
-              <button
-                type="button"
-                className="primary"
-                onClick={() => void executeDestinationPdfExport()}
-                disabled={destinationPdfExporting || destinationPdfLoading || !destinationPdfSelected.length}
-              >
-                {destinationPdfExporting ? 'جاري التصدير...' : `تصدير ${destinationPdfSelected.length} PDF`}
               </button>
             </div>
           </div>
