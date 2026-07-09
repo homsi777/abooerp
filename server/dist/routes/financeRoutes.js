@@ -251,6 +251,11 @@ const financeStatementDateRangeSchema = z.object({
     currencyCode: z.string().min(3).max(3).optional(),
     status: z.string().optional(),
 });
+const monthlyInventoryDetailQuerySchema = financeStatementDateRangeSchema.extend({
+    partyType: z.enum(['agent', 'unassigned']),
+    partyId: z.string().uuid().optional(),
+    partyName: z.string().optional(),
+});
 const closePeriodSchema = z.object({
     periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -849,6 +854,27 @@ export function createFinanceRouter(service) {
             branchId: query.branchId,
             agentId: query.agentId,
             currencyCode: query.currencyCode,
+        });
+        res.json({ success: true, data });
+    }));
+    router.get('/financial-reports/monthly-inventory/party-detail', requireAnyPermissions(['finance.read', 'finance.view']), forbidUserTypes(['agent'], 'تفاصيل الجرد الشهري غير متاحة لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
+        const query = monthlyInventoryDetailQuerySchema.parse(req.query);
+        const data = await service.getMonthlyInventoryPartyDetail(parseDataScope(req), {
+            dateFrom: query.dateFrom,
+            dateTo: query.dateTo ?? query.dateFrom,
+            branchId: query.branchId,
+            partyType: query.partyType,
+            partyId: query.partyId,
+            partyName: query.partyName,
+        });
+        res.json({ success: true, data });
+    }));
+    router.get('/financial-reports/monthly-inventory', requireAnyPermissions(['finance.read', 'finance.view']), forbidUserTypes(['agent'], 'الجرد الشهري غير متاح لمستخدم الوكيل.'), asyncHandler(async (req, res) => {
+        const query = financeStatementDateRangeSchema.parse(req.query);
+        const data = await service.getMonthlyInventoryReport(parseDataScope(req), {
+            dateFrom: query.dateFrom,
+            dateTo: query.dateTo ?? query.dateFrom,
+            branchId: query.branchId,
         });
         res.json({ success: true, data });
     }));

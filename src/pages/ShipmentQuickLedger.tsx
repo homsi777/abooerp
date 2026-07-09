@@ -65,6 +65,9 @@ import {
 } from '../lib/shipping/quickLedgerLog';
 import QuickLedgerSaveProgressDialog from '../components/shipping/QuickLedgerSaveProgressDialog';
 import QuickLedgerAgentHelpDialog from '../components/shipping/QuickLedgerAgentHelpDialog';
+import QuickLedgerDispatchPanel from '../components/shipping/QuickLedgerDispatchPanel';
+import LedgerDispatchCombobox from '../components/shipping/LedgerDispatchCombobox';
+import type { DailyLedgerDispatchDefinition } from '../lib/shipping/dailyLedgerDispatchGateway';
 import {
   buildQuickCodesFromAgents,
   resolveGovernorateFromQuickCode,
@@ -136,6 +139,9 @@ type LedgerRow = {
   /** من جلسة الدفتر — مطلوب للحفظ في وضع «كل الفروع» */
   sessionLedgerDate?: string;
   sessionLineLabel?: string;
+  /** تعريف الإرسالية (النظام الجديد) */
+  dispatchId?: string;
+  dispatchNo?: string;
 };
 
 const LEDGER_ENTRY_SLOTS = 1;
@@ -534,7 +540,29 @@ function resolveFleetForLedgerRow(
   trip: { driver: string; vehicle: string; driverId: number; vehicleId: number },
   driverList: Driver[],
   vehicleList: Vehicle[],
+  dispatchDefinitions: DailyLedgerDispatchDefinition[] = [],
 ) {
+  if (row.dispatchId) {
+    const definition = dispatchDefinitions.find((item) => item.id === row.dispatchId);
+    if (definition) {
+      const driverSyntheticId = definition.driver_id ? syntheticEntityId(definition.driver_id) : 0;
+      const driver = driverSyntheticId ? driverList.find((d) => d.id === driverSyntheticId) : undefined;
+      const vehicle = definition.vehicle_id
+        ? vehicleList.find((v) => v.id === syntheticEntityId(definition.vehicle_id))
+        : vehicleList.find((v) => v.driverId === driverSyntheticId);
+      return {
+        driverLabel: definition.driver_label ?? driver?.name ?? null,
+        vehicleLabel:
+          definition.vehicle_label ??
+          (vehicle ? `${vehicle.plateNumber}${vehicle.model ? ` — ${vehicle.model}` : ''}` : null),
+        driverId: definition.driver_id ?? (driverSyntheticId ? getBackendIdFromSynthetic(driverSyntheticId) : null),
+        vehicleId:
+          definition.vehicle_id ??
+          (vehicle?.id ? getBackendIdFromSynthetic(vehicle.id) : null),
+      };
+    }
+  }
+
   const driverId = row.sessionDriverId ?? trip.driverId;
   const driver = driverList.find((d) => d.id === driverId);
   const vehicle =
@@ -925,6 +953,8 @@ export default function ShipmentQuickLedger() {
   const [reprintRequired, setReprintRequired] = useState(false);
   const [remoteRowsRaw, setRemoteRowsRaw] = useState<RemoteDailyLedgerRow[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [dispatchDefinitions, setDispatchDefinitions] = useState<DailyLedgerDispatchDefinition[]>([]);
+  const dispatchDefinitionsRef = useRef(dispatchDefinitions);
   const [sessionSwitching, setSessionSwitching] = useState(false);
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedDeleteRowIds, setSelectedDeleteRowIds] = useState<number[]>([]);
@@ -1339,6 +1369,10 @@ export default function ShipmentQuickLedger() {
   }, [vehicles]);
 
   useEffect(() => {
+    dispatchDefinitionsRef.current = dispatchDefinitions;
+  }, [dispatchDefinitions]);
+
+  useEffect(() => {
     branchesRef.current = branches;
   }, [branches]);
 
@@ -1482,6 +1516,16 @@ export default function ShipmentQuickLedger() {
     };
   }, [activeBranchId, activeSessionId, canViewAllLedgerEntries, ledgerBranchMode, trip.date, trip.line]);
 
+  const dispatchScope = useMemo(() => {
+    if (canViewAllLedgerEntries && ledgerBranchMode === 'all') return null;
+    if (!activeBranchId || !trip.date || !trip.line) return null;
+    return {
+      branchId: activeBranchId,
+      ledgerDate: trip.date,
+      lineLabel: trip.line,
+    };
+  }, [activeBranchId, canViewAllLedgerEntries, ledgerBranchMode, trip.date, trip.line]);
+
   const draftScopeKey = useMemo(() => {
     if (!activeDraftContext) return '';
     return [
@@ -1541,6 +1585,8 @@ export default function ShipmentQuickLedger() {
     branchLabel: resolveBranchLabelFromList(branches, remote.branch_id),
     sessionLedgerDate: remote.ledger_date,
     sessionLineLabel: remote.line_label,
+    dispatchId: remote.dispatch_id ?? undefined,
+    dispatchNo: remote.dispatch_no != null ? String(remote.dispatch_no) : undefined,
   });
 
   const flushPendingRowSaves = async (scopeSessionId?: string | null) => {
@@ -1641,6 +1687,8 @@ export default function ShipmentQuickLedger() {
     notes: row.notes,
     branchBackendId: row.branchBackendId,
     branchLabel: row.branchLabel,
+    dispatchId: row.dispatchId,
+    dispatchNo: row.dispatchNo,
   });
 
   const draftToLocalRow = (draft: DailyLedgerDraftRecord, displayId: number): LedgerRow => {
@@ -1669,6 +1717,8 @@ export default function ShipmentQuickLedger() {
       notes: String(payload.notes ?? ''),
       branchBackendId: typeof payload.branchBackendId === 'string' ? payload.branchBackendId : draft.branchId,
       branchLabel: typeof payload.branchLabel === 'string' ? payload.branchLabel : resolveBranchLabelFromList(branches, draft.branchId),
+      dispatchId: typeof payload.dispatchId === 'string' ? payload.dispatchId : undefined,
+      dispatchNo: typeof payload.dispatchNo === 'string' ? payload.dispatchNo : undefined,
     };
   };
 
@@ -2280,7 +2330,13 @@ export default function ShipmentQuickLedger() {
         return;
       }
 
-      const latestFleet = resolveFleetForLedgerRow(latestRow, currentTrip, driversRef.current, vehiclesRef.current);
+      const latestFleet = resolveFleetForLedgerRow(
+        latestRow,
+        currentTrip,
+        driversRef.current,
+        vehiclesRef.current,
+        dispatchDefinitionsRef.current,
+      );
       const latestDriverId = latestRow.sessionDriverId ?? currentTrip.driverId;
       const latestRowNo =
         latestRow.serverRowNo ??
@@ -2312,6 +2368,7 @@ export default function ShipmentQuickLedger() {
           feesAmountUsd: 0,
           transferServiceFeeUsd: parseUsd(latestRow.transferServiceFee),
           notes: latestRow.notes || null,
+          dispatchId: latestRow.dispatchId ?? null,
         });
         setRows((prev) => {
           const mapped = prev.map((r) => {
@@ -2340,6 +2397,8 @@ export default function ShipmentQuickLedger() {
               branchBackendId: saved.branch_id ?? r.branchBackendId,
               sessionLedgerDate: saved.ledger_date ?? r.sessionLedgerDate,
               sessionLineLabel: saved.line_label ?? r.sessionLineLabel,
+              dispatchId: saved.dispatch_id ?? r.dispatchId,
+              dispatchNo: saved.dispatch_no != null ? String(saved.dispatch_no) : r.dispatchNo,
             };
           });
           const savedRow = mapped.find((r) => r.id === displayRowId);
@@ -2393,6 +2452,31 @@ export default function ShipmentQuickLedger() {
       delete saveTimersRef.current[rowNo];
     }
     void saveRowToServer(rowNo);
+  };
+
+  const commitDispatchForRow = (rowId: number, dispatchId: string | undefined, dispatchNo: string) => {
+    const definition = dispatchId
+      ? dispatchDefinitionsRef.current.find((item) => item.id === dispatchId)
+      : undefined;
+    if (dispatchNo && !definition) {
+      showToast(`الإرسالية ${dispatchNo} غير معرّفة — أنشئها من لوحة «تعريف إرساليات اليوم»`, 'error');
+      return;
+    }
+    setRows((prev) =>
+      prev.map((row) =>
+        row.id === rowId
+          ? {
+              ...row,
+              dispatchId,
+              dispatchNo,
+              sessionDriverId: definition?.driver_id
+                ? syntheticEntityId(definition.driver_id)
+                : row.sessionDriverId,
+            }
+          : row,
+      ),
+    );
+    flushRowSave(rowId);
   };
 
   const resolveTripOrigin = (lineValue: string) => {
@@ -3815,12 +3899,12 @@ export default function ShipmentQuickLedger() {
       }
 
       const rowsMissingDriver = rowsToPost.filter((row) => {
-        const fleet = resolveFleetForLedgerRow(row, trip, drivers, vehicles);
+        const fleet = resolveFleetForLedgerRow(row, trip, drivers, vehicles, dispatchDefinitions);
         return !fleet.driverId;
       });
       if (rowsMissingDriver.length) {
         const message =
-          'يرجى اختيار السائق (من أعلى الدفتر) أو التأكد أن السطر مرتبط بسائق — مطلوب لحفظ الشحنات الجديدة.';
+          'يرجى اختيار السائق (من أعلى الدفتر أو عمود الإرسالية) أو التأكد أن السطر مرتبط بسائق — مطلوب لحفظ الشحنات الجديدة.';
         const items = progressItems.map((item) =>
           rowsMissingDriver.some((row) => String(row.id) === item.key)
             ? { ...item, status: 'error' as const, message: 'السائق مطلوب' }
@@ -3856,7 +3940,7 @@ export default function ShipmentQuickLedger() {
             : `حفظ الأسطر في الدفتر (${index + 1} / ${rowsToPost.length})...`,
         }));
 
-        const fleet = resolveFleetForLedgerRow(row, trip, drivers, vehicles);
+        const fleet = resolveFleetForLedgerRow(row, trip, drivers, vehicles, dispatchDefinitions);
         const effectiveDriverId = row.sessionDriverId ?? trip.driverId;
         const rowNo =
           row.serverRowNo ?? nextServerRowNoForDriver(workingRows, effectiveDriverId) ?? row.id;
@@ -3883,6 +3967,7 @@ export default function ShipmentQuickLedger() {
             feesAmountUsd: 0,
             transferServiceFeeUsd: parseUsd(row.transferServiceFee),
             notes: row.notes || null,
+            dispatchId: row.dispatchId ?? null,
           });
           upsertedRowIds.push(saved.id);
           savedDbIdByDisplayId.set(row.id, saved.id);
@@ -3901,6 +3986,8 @@ export default function ShipmentQuickLedger() {
                     ? syntheticEntityId(saved.driver_id)
                     : trip.driverId || r.sessionDriverId,
                   sessionId: saved.session_id ?? activeSessionId ?? r.sessionId,
+                  dispatchId: saved.dispatch_id ?? r.dispatchId,
+                  dispatchNo: saved.dispatch_no != null ? String(saved.dispatch_no) : r.dispatchNo,
                 }
               : r,
           );
@@ -4383,6 +4470,16 @@ export default function ShipmentQuickLedger() {
         )}
       </section>
 
+      <QuickLedgerDispatchPanel
+        scope={dispatchScope}
+        drivers={drivers}
+        vehicles={vehicles}
+        definitions={dispatchDefinitions}
+        onDefinitionsChange={setDispatchDefinitions}
+        onToast={showToast}
+        disabled={isCloudOffline}
+      />
+
       <section className="quick-ledger-stats">
         {stats.searchActive && (
           <div className="quick-ledger-stat-filter">
@@ -4581,6 +4678,7 @@ export default function ShipmentQuickLedger() {
                   )}
                 </th>
               )}
+              <th className="col-dispatch" title="رقم الإرسالية المعرفة لهذا التاريخ">إرسالية</th>
               <th className="col-parcel-type">نوع البضاعة</th>
               <th className="col-parcel-count">عدد الطرود</th>
               <th className="col-weight">الوزن كغ</th>
@@ -4678,6 +4776,18 @@ export default function ShipmentQuickLedger() {
                       />
                     </td>
                   )}
+                  <td className="col-dispatch">
+                    <LedgerDispatchCombobox
+                      value={row.dispatchNo ?? ''}
+                      dispatchId={row.dispatchId}
+                      definitions={dispatchDefinitions}
+                      disabled={locked}
+                      rowId={row.id}
+                      inputId={`ledger-dispatch-${row.id}`}
+                      onFocusRow={() => setActiveRowId(row.id)}
+                      onCommit={(dispatchId, dispatchNo) => commitDispatchForRow(row.id, dispatchId, dispatchNo)}
+                    />
+                  </td>
                   <td className="quick-ledger-parcel-cell col-parcel-type">
                     <AutocompleteInput
                       value={row.parcelType}

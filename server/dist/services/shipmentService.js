@@ -27,6 +27,62 @@ export class ShipmentService {
         }
         return shipment;
     }
+    async resolveSenderReceiverNames(senderId, receiverId) {
+        let senderDisplay = 'غير معروف';
+        let receiverDisplay = 'غير معروف';
+        try {
+            const partyResult = await pool.query(`select id, full_name from senders_receivers where id = any($1::uuid[])`, [[senderId, receiverId]]);
+            for (const row of partyResult.rows) {
+                if (String(row.id) === String(senderId))
+                    senderDisplay = row.full_name;
+                if (String(row.id) === String(receiverId))
+                    receiverDisplay = row.full_name;
+            }
+        }
+        catch {
+            /* optional */
+        }
+        return { senderDisplay, receiverDisplay };
+    }
+    async syncShipmentLinkedTransfer(shipment, input, transferDate) {
+        if (!this.transfersService)
+            return;
+        const companyId = String(shipment.company_id ?? input.companyId ?? '');
+        if (!companyId)
+            return;
+        const hawalaAmount = Number(typeof input.hawalaAmount === 'number' ? input.hawalaAmount : shipment.hawala_amount ?? 0);
+        const transferServiceFee = Number(typeof input.transferServiceFee === 'number'
+            ? input.transferServiceFee
+            : shipment.transfer_service_fee ?? 0);
+        if (hawalaAmount <= 0 && transferServiceFee <= 0)
+            return;
+        const agentId = String(input.agentId ?? shipment.agent_id ?? '');
+        if (!agentId)
+            return;
+        const senderId = String(input.senderId ?? shipment.sender_id ?? '');
+        const receiverId = String(input.receiverId ?? shipment.receiver_id ?? '');
+        const names = senderId && receiverId
+            ? await this.resolveSenderReceiverNames(senderId, receiverId)
+            : { senderDisplay: 'غير معروف', receiverDisplay: 'غير معروف' };
+        const payload = {
+            companyId,
+            branchId: String(input.branchId ?? shipment.branch_id ?? '') || undefined,
+            agentId,
+            destinationCity: String(input.destinationCity ?? shipment.destination_city ?? '') || undefined,
+            shipmentId: String(shipment.id),
+            shipmentNo: String(shipment.shipment_no ?? input.shipmentNo ?? ''),
+            senderName: names.senderDisplay,
+            receiverName: names.receiverDisplay,
+            hawalaAmount,
+            transferServiceFee,
+            currency: String(input.originalCurrency ?? shipment.original_currency ?? 'USD'),
+            exchangeRateToUsd: Number(input.exchangeRateToUsd ?? shipment.exchange_rate_to_usd ?? 1) || 1,
+            transferDate: transferDate ??
+                (typeof input.effectiveDate === 'string' ? input.effectiveDate : undefined) ??
+                (shipment.effective_date ? String(shipment.effective_date).slice(0, 10) : undefined),
+        };
+        await this.transfersService.ensureShipmentLinkedTransfer(payload);
+    }
     async create(input, scope, options) {
         if (scope?.branchId && input.branchId !== scope.branchId) {
             throw new HttpError(403, 'Cannot create shipment outside scoped branch.');
@@ -119,53 +175,13 @@ export class ShipmentService {
         }
         if (this.transfersService
             && effectiveCompanyId
-            && typeof payload.hawalaAmount === 'number'
-            && payload.hawalaAmount > 0) {
+            && (Number(payload.hawalaAmount ?? 0) > 0 || Number(payload.transferServiceFee ?? 0) > 0)) {
             try {
-                let senderDisplay = 'غير معروف';
-                let receiverDisplay = 'غير معروف';
-                try {
-                    const partyResult = await pool.query(`select id, full_name from senders_receivers where id = any($1::uuid[])`, [[payload.senderId, payload.receiverId]]);
-                    for (const row of partyResult.rows) {
-                        if (String(row.id) === String(payload.senderId))
-                            senderDisplay = row.full_name;
-                        if (String(row.id) === String(payload.receiverId))
-                            receiverDisplay = row.full_name;
-                    }
-                }
-                catch { }
-                const currency = payload.originalCurrency || 'USD';
-                const transferAmount = Number(payload.hawalaAmount ?? 0);
-                const transferMain = computeBaseAmountUsd(transferAmount, payload.exchangeRateToUsd || 1);
-                const fee = Number(payload.transferServiceFee ?? 0);
-                const feeMain = computeBaseAmountUsd(fee, payload.exchangeRateToUsd || 1);
-                await this.transfersService.createTransfer({
-                    company_id: effectiveCompanyId,
-                    branch_id: payload.branchId,
-                    agent_id: payload.agentId,
-                    shipment_id: created.id,
-                    sender_name: senderDisplay,
-                    receiver_name: receiverDisplay,
-                    amount: transferAmount,
-                    currency,
-                    main_amount: transferMain,
-                    commission: 0,
-                    commission_currency: currency,
-                    commission_main: 0,
-                    agent_commission: 0,
-                    agent_commission_currency: currency,
-                    agent_commission_main: 0,
-                    transfer_service_fee: fee,
-                    transfer_service_fee_currency: currency,
-                    transfer_service_fee_main: feeMain,
-                    company_transfer_profit: fee,
-                    company_transfer_profit_currency: currency,
-                    company_transfer_profit_main: feeMain,
-                    status: 'PENDING',
-                    notes: `حوالة مرتبطة بالشحنة ${created.shipment_no}`,
-                });
+                await this.syncShipmentLinkedTransfer(created, payload, options?.effectiveDate ?? input.effectiveDate);
             }
-            catch { }
+            catch (error) {
+                console.error('[ShipmentService] failed to ensure shipment-linked transfer', error);
+            }
         }
         return created;
     }
@@ -248,6 +264,17 @@ export class ShipmentService {
             if (prevStatus !== nextStatus &&
                 (nextStatus === 'DELIVERED' || nextStatus === 'CONFIRMED')) {
                 await this.financialPosting.ensurePostedFromLifecycle(id, scope, scope?.userId);
+            }
+        }
+        if (updated &&
+            (typeof input.hawalaAmount === 'number' ||
+                typeof input.transferServiceFee === 'number' ||
+                Number(updated.hawala_amount ?? 0) > 0)) {
+            try {
+                await this.syncShipmentLinkedTransfer(updated, payload, payload.effectiveDate);
+            }
+            catch (error) {
+                console.error('[ShipmentService] failed to sync shipment-linked transfer on update', error);
             }
         }
         return updated;

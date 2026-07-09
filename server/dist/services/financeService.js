@@ -4,6 +4,7 @@ import { computeBaseAmountUsd } from '../utils/money.js';
 import { env } from '../config/env.js';
 import { ExchangeRateRepository } from '../repositories/exchangeRateRepository.js';
 import { ProfitLossReportService } from './profitLossReportService.js';
+import { MonthlyInventoryReportService, } from './monthlyInventoryReportService.js';
 import { AccountingReportsService, buildAgentMainBranchReconciliationPackage, buildHawalaReconciliationPackage, enrichAgentSettlementSummary, } from './accountingReportsService.js';
 import { BilateralReconciliationService } from './bilateralReconciliationService.js';
 const allowedVoucherTransitions = {
@@ -17,6 +18,7 @@ export class FinanceService {
     agentRepository;
     dashboardPackageCache = new Map();
     profitLossReportService = new ProfitLossReportService();
+    monthlyInventoryReportService = new MonthlyInventoryReportService();
     accountingReportsService = new AccountingReportsService();
     dashboardPackageInFlight = new Map();
     dashboardCacheMetrics = {
@@ -407,6 +409,28 @@ export class FinanceService {
             throw new HttpError(400, 'fromAt and toAt are required for profit and loss report.');
         }
         return this.profitLossReportService.buildReport(scope, filters);
+    }
+    getMonthlyInventoryReport(scope, filters) {
+        if (!filters?.dateFrom || !filters?.dateTo) {
+            throw new HttpError(400, 'dateFrom and dateTo are required for monthly inventory report.');
+        }
+        return this.monthlyInventoryReportService.buildReport(scope, filters);
+    }
+    getMonthlyInventoryPartyDetail(scope, filters) {
+        if (!filters?.dateFrom || !filters?.dateTo) {
+            throw new HttpError(400, 'dateFrom and dateTo are required for monthly inventory detail.');
+        }
+        if (!filters.partyType) {
+            throw new HttpError(400, 'partyType is required for monthly inventory detail.');
+        }
+        return this.monthlyInventoryReportService.buildPartyDetail(scope, {
+            dateFrom: filters.dateFrom,
+            dateTo: filters.dateTo,
+            branchId: filters.branchId,
+            partyId: filters.partyId,
+            partyType: filters.partyType,
+            partyName: filters.partyName,
+        });
     }
     async getPartyStatementPackage(scope, filters) {
         const [summary, currencySummary, ledger] = await Promise.all([

@@ -2,6 +2,7 @@ import { pool } from '../db/pool.js';
 import { resolveDriverIdByLabel } from '../utils/dailyLedgerDriverMatch.js';
 import { HttpError } from '../utils/errors.js';
 import { appendAgentPrintDocumentScope } from '../utils/agentDocumentationScope.js';
+import { resolveFleetFromDispatchDefinition } from './dailyLedgerDispatchRepository.js';
 function normalizeLedgerReceiptNo(value) {
     return String(value ?? '').trim().replace(/\s+/g, ' ');
 }
@@ -275,9 +276,12 @@ export class DailyLedgerRepository {
         s.vehicle_id,
         s.printed_at as session_printed_at,
         s.reprint_required as session_reprint_required,
-        s.reprint_reason as session_reprint_reason
+        s.reprint_reason as session_reprint_reason,
+        d.dispatch_no
       from daily_ledger_rows r
       join daily_ledger_sessions s on s.id = r.session_id
+      left join daily_ledger_dispatch_definitions d
+        on d.id = r.dispatch_id and d.deleted_at is null
       where ${conditions.join(' and ')}
       order by s.ledger_date desc, s.created_at desc, r.row_no asc
       limit ${limitParam}
@@ -365,6 +369,17 @@ export class DailyLedgerRepository {
                 ledgerDate: input.ledgerDate,
                 lineLabel: input.lineLabel,
             };
+            if (input.dispatchId) {
+                const fleet = await resolveFleetFromDispatchDefinition(client, scope.companyId, input.dispatchId, ledgerScope);
+                input = {
+                    ...input,
+                    driverId: fleet.driverId ?? input.driverId ?? null,
+                    vehicleId: fleet.vehicleId ?? input.vehicleId ?? null,
+                    driverLabel: fleet.driverLabel ?? input.driverLabel ?? null,
+                    vehicleLabel: fleet.vehicleLabel ?? input.vehicleLabel ?? null,
+                    tripNo: fleet.tripNo ?? input.tripNo ?? null,
+                };
+            }
             let effectiveRowId = input.rowId ?? null;
             if (!effectiveRowId) {
                 effectiveRowId = await resolveExistingLedgerRowIdByReceipt(client, scope.companyId, ledgerScope, input.receiptNo);
@@ -402,7 +417,8 @@ export class DailyLedgerRepository {
             fees_amount_usd = $13,
             transfer_service_fee_usd = $14,
             notes = $15,
-            updated_by = $16,
+            dispatch_id = $16,
+            updated_by = $17,
             updated_at = now()
           from daily_ledger_sessions s
           join branches b on b.id = s.branch_id
@@ -411,9 +427,9 @@ export class DailyLedgerRepository {
             and r.deleted_at is null
             and s.deleted_at is null
             and b.company_id = $2
-            and s.branch_id = $17
+            and s.branch_id = $18
             and r.loaded_at is null
-            and ($18::uuid is null or r.created_by = $18::uuid)
+            and ($19::uuid is null or r.created_by = $19::uuid)
           returning
             r.*,
             s.branch_id,
@@ -424,7 +440,13 @@ export class DailyLedgerRepository {
             s.vehicle_label,
             s.driver_label,
             s.driver_id,
-            s.vehicle_id
+            s.vehicle_id,
+            (
+              select d.dispatch_no
+              from daily_ledger_dispatch_definitions d
+              where d.id = r.dispatch_id and d.deleted_at is null
+              limit 1
+            ) as dispatch_no
           `, [
                     effectiveRowId,
                     scope.companyId,
@@ -441,6 +463,7 @@ export class DailyLedgerRepository {
                     input.feesAmountUsd ?? 0,
                     input.transferServiceFeeUsd ?? 0,
                     input.notes ?? null,
+                    input.dispatchId ?? null,
                     input.userId ?? scope.userId ?? null,
                     input.branchId,
                     input.restrictToCreatedByUserId ?? null,
@@ -475,10 +498,11 @@ export class DailyLedgerRepository {
           fees_amount_usd,
           transfer_service_fee_usd,
           notes,
+          dispatch_id,
           created_by,
           updated_by
         )
-        values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16)
+        values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17)
         on conflict (session_id, row_no) where deleted_at is null
         do update set
           receipt_no = excluded.receipt_no,
@@ -494,20 +518,27 @@ export class DailyLedgerRepository {
           fees_amount_usd = excluded.fees_amount_usd,
           transfer_service_fee_usd = excluded.transfer_service_fee_usd,
           notes = excluded.notes,
+          dispatch_id = excluded.dispatch_id,
           updated_by = excluded.updated_by,
           updated_at = now()
-        where $26::uuid is null or daily_ledger_rows.created_by = $26::uuid
+        where $27::uuid is null or daily_ledger_rows.created_by = $27::uuid
         returning
           daily_ledger_rows.*,
-          $17::uuid as branch_id,
-          $18::date as ledger_date,
-          $19::text as line_label,
-          $20::text as origin_label,
-          $21::text as trip_no,
-          $22::text as vehicle_label,
-          $23::text as driver_label,
-          $24::uuid as driver_id,
-          $25::uuid as vehicle_id
+          $18::uuid as branch_id,
+          $19::date as ledger_date,
+          $20::text as line_label,
+          $21::text as origin_label,
+          $22::text as trip_no,
+          $23::text as vehicle_label,
+          $24::text as driver_label,
+          $25::uuid as driver_id,
+          $26::uuid as vehicle_id,
+          (
+            select d.dispatch_no
+            from daily_ledger_dispatch_definitions d
+            where d.id = daily_ledger_rows.dispatch_id and d.deleted_at is null
+            limit 1
+          ) as dispatch_no
         `, [
                 sessionId,
                 input.rowNo,
@@ -524,6 +555,7 @@ export class DailyLedgerRepository {
                 input.feesAmountUsd ?? 0,
                 input.transferServiceFeeUsd ?? 0,
                 input.notes ?? null,
+                input.dispatchId ?? null,
                 input.userId ?? scope.userId ?? null,
                 session.branch_id,
                 session.ledger_date,
@@ -747,6 +779,31 @@ export class DailyLedgerRepository {
         const deletedIds = result.rows.map((row) => row.id);
         const blockedIds = input.rowIds.filter((id) => !deletedIds.includes(id));
         return { deletedIds, blockedIds };
+    }
+    async fetchRowAuditSnapshots(scope, rowIds) {
+        if (!scope.companyId || !rowIds.length)
+            return [];
+        const result = await pool.query(`
+      select
+        r.*,
+        s.branch_id,
+        s.ledger_date,
+        s.line_label,
+        s.origin_label,
+        s.trip_no,
+        s.vehicle_label,
+        s.driver_label,
+        s.driver_id,
+        s.vehicle_id
+      from daily_ledger_rows r
+      join daily_ledger_sessions s on s.id = r.session_id
+      join branches b on b.id = s.branch_id
+      where b.company_id = $1
+        and r.id = any($2::uuid[])
+        and r.deleted_at is null
+        and s.deleted_at is null
+      `, [scope.companyId, rowIds]);
+        return result.rows;
     }
     async createPrintDocument(scope, input) {
         if (!scope.companyId)

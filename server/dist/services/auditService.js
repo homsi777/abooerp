@@ -100,6 +100,12 @@ export class AuditService {
     listEnriched(companyId, filters, scope) {
         return this.repository.listAuditLogsEnriched(companyId, filters, scope);
     }
+    listSummaryByUser(companyId, filters, scope) {
+        return this.repository.listActivitySummaryByUser(companyId, filters, scope);
+    }
+    getEnrichedById(companyId, id, scope) {
+        return this.repository.getAuditLogEnrichedById(companyId, id, scope);
+    }
     getById(id) {
         return this.repository.getAuditLogById(id);
     }

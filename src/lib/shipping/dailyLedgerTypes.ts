@@ -34,6 +34,8 @@ export type RemoteDailyLedgerRow = {
   session_printed_at?: string | null;
   session_reprint_required?: boolean | null;
   session_reprint_reason?: string | null;
+  dispatch_id?: string | null;
+  dispatch_no?: number | null;
 };
 
 export type DailyLedgerEditingScope = {

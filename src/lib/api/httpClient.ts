@@ -43,7 +43,7 @@ export function getLanState(): { mode: string; serverIp: string; apiBaseUrl: str
   };
 }
 
-type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 type UnauthorizedHandler = (message?: string) => 'retry' | void | Promise<'retry' | void>;
 type ForbiddenHandler = (message?: string) => void | Promise<void>;
 type ConflictHandler = (message?: string) => void | Promise<void>;
@@ -143,7 +143,7 @@ async function buildRequestHeaders(path: string, method: HttpMethod, idempotency
   if (!skipBranchHeaderForPath && activeBranchId && uuidRegex.test(activeBranchId)) {
     headers['x-branch-id'] = activeBranchId;
   }
-  const writeMethod = method === 'POST' || method === 'PUT' || method === 'DELETE';
+  const writeMethod = method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE';
   if (writeMethod && !skipAuthHeader) {
     headers['x-idempotency-key'] = idempotencyKey ?? createIdempotencyKey();
   }
@@ -208,7 +208,7 @@ async function request<T>(path: string, method: HttpMethod, body?: unknown, retr
         : '';
     throw new Error(`${base}${detailSuffix}`);
   }
-  if ((method === 'POST' || method === 'PUT' || method === 'DELETE') && response.ok) {
+  if ((method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') && response.ok) {
     rememberOwnCorrelationFromFetchResponse(response);
   }
   return payload.data as T;
@@ -277,6 +277,7 @@ export const httpClient = {
   post: <T>(path: string, body: unknown) => request<T>(path, 'POST', body),
   postBlob: (path: string, body: unknown) => requestBlob(path, 'POST', body),
   put: <T>(path: string, body: unknown) => request<T>(path, 'PUT', body),
+  patch: <T>(path: string, body: unknown) => request<T>(path, 'PATCH', body),
   delete: <T>(path: string) => request<T>(path, 'DELETE'),
 };
 

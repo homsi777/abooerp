@@ -20,14 +20,29 @@ function requireCompanyId(req) {
     }
     return companyId;
 }
-/** سجل أحداث تفصيلي — صلاحية admin.events.read (مدير النظام فقط افتراضياً). */
+/** سجل أحداث تفصيلي — صلاحية admin.events.read */
 export function createAdminActivityRouter(service) {
     const router = Router();
+    router.get('/summary', requirePermissions(['admin.events.read']), asyncHandler(async (req, res) => {
+        const companyId = requireCompanyId(req);
+        const filters = filtersSchema.parse(req.query);
+        const rows = await service.listSummaryByUser(companyId, filters, parseDataScope(req));
+        res.json({ success: true, data: rows });
+    }));
     router.get('/', requirePermissions(['admin.events.read']), asyncHandler(async (req, res) => {
         const companyId = requireCompanyId(req);
         const filters = filtersSchema.parse(req.query);
         const logs = await service.listEnriched(companyId, filters, parseDataScope(req));
         res.json({ success: true, data: logs });
+    }));
+    router.get('/:id', requirePermissions(['admin.events.read']), asyncHandler(async (req, res) => {
+        const companyId = requireCompanyId(req);
+        const id = z.string().uuid().parse(req.params.id);
+        const row = await service.getEnrichedById(companyId, id, parseDataScope(req));
+        if (!row) {
+            throw new HttpError(404, 'الحدث غير موجود.');
+        }
+        res.json({ success: true, data: row });
     }));
     return router;
 }

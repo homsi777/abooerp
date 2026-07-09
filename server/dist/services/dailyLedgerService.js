@@ -1,14 +1,32 @@
 import { HttpError } from '../utils/errors.js';
 import { agentDestinationHints, computeAgentTransitStatus, destinationMatchesAgentHints, filterRowsForAgent, } from '../utils/agentDocumentationScope.js';
+import { DailyLedgerDispatchRepository } from '../repositories/dailyLedgerDispatchRepository.js';
 export class DailyLedgerService {
     repo;
     shipmentPosting;
-    constructor(repo, shipmentPosting) {
+    dispatchRepo;
+    constructor(repo, shipmentPosting, dispatchRepo = new DailyLedgerDispatchRepository()) {
         this.repo = repo;
         this.shipmentPosting = shipmentPosting;
+        this.dispatchRepo = dispatchRepo;
     }
     listRows(scope, filters) {
         return this.repo.listRows(scope, filters);
+    }
+    listDispatchDefinitions(scope, filters) {
+        return this.dispatchRepo.listDefinitions(scope, filters);
+    }
+    suggestNextDispatchNo(scope, filters) {
+        return this.dispatchRepo.suggestNextDispatchNo(scope, filters);
+    }
+    createDispatchDefinition(scope, input) {
+        return this.dispatchRepo.createDefinition(scope, input);
+    }
+    updateDispatchDefinition(scope, id, input) {
+        return this.dispatchRepo.updateDefinition(scope, id, input);
+    }
+    deleteDispatchDefinition(scope, id) {
+        return this.dispatchRepo.deleteDefinition(scope, id, scope.userId);
     }
     async upsertRow(scope, input) {
         const row = await this.repo.upsertRow(scope, input);
@@ -36,6 +54,9 @@ export class DailyLedgerService {
     }
     deleteRows(scope, rowIds, allowedBranchIds, createdByUserId) {
         return this.repo.deleteRows(scope, { rowIds, userId: scope.userId, createdByUserId }, allowedBranchIds);
+    }
+    fetchRowAuditSnapshots(scope, rowIds) {
+        return this.repo.fetchRowAuditSnapshots(scope, rowIds);
     }
     cancelSession(scope, sessionId, allowedBranchIds, createdByUserId) {
         return this.repo.cancelSession(scope, { sessionId, userId: scope.userId, createdByUserId }, allowedBranchIds);

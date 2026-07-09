@@ -1,3 +1,20 @@
+function buildTransferSearchClause(placeholder) {
+    return `(
+        t.sender_name ILIKE ${placeholder}
+        OR t.receiver_name ILIKE ${placeholder}
+        OR shipment_sender.full_name ILIKE ${placeholder}
+        OR shipment_receiver.full_name ILIKE ${placeholder}
+        OR coalesce(s.shipment_no, '') ILIKE ${placeholder}
+        OR coalesce(s.reference_no, '') ILIKE ${placeholder}
+        OR coalesce(t.destination_city, '') ILIKE ${placeholder}
+        OR coalesce(t.notes, '') ILIKE ${placeholder}
+        OR coalesce(a.name, '') ILIKE ${placeholder}
+        OR coalesce(origin_agent.name, '') ILIKE ${placeholder}
+        OR coalesce(destination_agent.name, '') ILIKE ${placeholder}
+        OR coalesce(rv.voucher_no, '') ILIKE ${placeholder}
+        OR coalesce(b.name, '') ILIKE ${placeholder}
+      )`;
+}
 export class TransfersRepository {
     pool;
     constructor(pool) {
@@ -108,14 +125,12 @@ export class TransfersRepository {
             values.push(filters.status);
         }
         if (filters.search) {
-            query += ` AND (
-        t.sender_name ILIKE $${paramIndex}
-        OR t.receiver_name ILIKE $${paramIndex}
-        OR shipment_sender.full_name ILIKE $${paramIndex}
-        OR shipment_receiver.full_name ILIKE $${paramIndex}
-      )`;
-            values.push(`%${filters.search}%`);
-            paramIndex++;
+            const term = String(filters.search).trim();
+            if (term) {
+                query += ` AND ${buildTransferSearchClause(`$${paramIndex}`)}`;
+                values.push(`%${term}%`);
+                paramIndex++;
+            }
         }
         query += ` ORDER BY t.created_at DESC LIMIT 500`;
         const { rows } = await this.pool.query(query, values);
@@ -129,12 +144,11 @@ export class TransfersRepository {
             conditions.push(`upper(t.status) = upper($${values.length}::text)`);
         }
         if (input.search) {
-            values.push(`%${input.search}%`);
-            conditions.push(`(
-        t.sender_name ilike $${values.length}
-        or t.receiver_name ilike $${values.length}
-        or coalesce(s.shipment_no, '') ilike $${values.length}
-      )`);
+            const term = String(input.search).trim();
+            if (term) {
+                values.push(`%${term}%`);
+                conditions.push(buildTransferSearchClause(`$${values.length}`));
+            }
         }
         if (input.type === 'independent') {
             conditions.push('t.shipment_id is null');
@@ -146,6 +160,13 @@ export class TransfersRepository {
       select count(*)::text as count
       from transfers t
       left join shipments s on s.id = t.shipment_id
+      left join senders_receivers shipment_sender on shipment_sender.id = s.sender_id
+      left join senders_receivers shipment_receiver on shipment_receiver.id = s.receiver_id
+      left join branches b on b.id = t.branch_id
+      left join agents a on a.id = t.agent_id
+      left join agents origin_agent on origin_agent.id = t.origin_agent_id
+      left join agents destination_agent on destination_agent.id = t.destination_agent_id
+      left join receipt_vouchers rv on rv.id = t.receipt_voucher_id
       where ${conditions.join(' and ')}
       `, values);
         values.push(input.limit);
@@ -165,8 +186,13 @@ export class TransfersRepository {
         coalesce(destination_agent.area, destination_agent.city, destination_agent.governorate) as destination_agent_city
       from transfers t
       left join shipments s on s.id = t.shipment_id
+      left join senders_receivers shipment_sender on shipment_sender.id = s.sender_id
+      left join senders_receivers shipment_receiver on shipment_receiver.id = s.receiver_id
+      left join branches b on b.id = t.branch_id
+      left join agents a on a.id = t.agent_id
       left join agents origin_agent on origin_agent.id = t.origin_agent_id
       left join agents destination_agent on destination_agent.id = t.destination_agent_id
+      left join receipt_vouchers rv on rv.id = t.receipt_voucher_id
       where ${conditions.join(' and ')}
       order by coalesce(t.transfer_date, t.created_at) desc, t.created_at desc, t.id desc
       limit ${limitParam}
@@ -199,6 +225,60 @@ export class TransfersRepository {
       limit 1
       `, [id, companyId, agentId]);
         return result.rows[0] ?? null;
+    }
+    async getByShipmentId(shipmentId, companyId, client) {
+        const db = client || this.pool;
+        const { rows } = await db.query(`
+      select *
+      from transfers
+      where shipment_id = $1
+        and company_id = $2
+        and upper(coalesce(status, '')) <> 'CANCELLED'
+      order by created_at desc
+      limit 1
+      `, [shipmentId, companyId]);
+        return rows[0] ?? null;
+    }
+    async updateShipmentLinkedDetails(id, companyId, payload, client) {
+        const db = client || this.pool;
+        const { rows } = await db.query(`
+      update transfers
+      set
+        sender_name = $3,
+        receiver_name = $4,
+        amount = $5,
+        main_amount = $6,
+        transfer_service_fee = $7,
+        transfer_service_fee_main = $8,
+        company_transfer_profit = $9,
+        company_transfer_profit_main = $10,
+        transfer_date = coalesce($11, transfer_date),
+        agent_id = coalesce($12, agent_id),
+        destination_agent_id = coalesce($12, destination_agent_id),
+        destination_city = coalesce($13, destination_city),
+        notes = coalesce($14, notes),
+        updated_at = now()
+      where id = $1
+        and company_id = $2
+        and upper(coalesce(status, '')) not in ('COMPLETED', 'CANCELLED')
+      returning *
+      `, [
+            id,
+            companyId,
+            payload.sender_name,
+            payload.receiver_name,
+            payload.amount,
+            payload.main_amount,
+            payload.transfer_service_fee,
+            payload.transfer_service_fee_main,
+            payload.company_transfer_profit,
+            payload.company_transfer_profit_main,
+            payload.transfer_date ?? null,
+            payload.agent_id ?? null,
+            payload.destination_city ?? null,
+            payload.notes ?? null,
+        ]);
+        return rows[0] ?? null;
     }
     async getByShipmentIdForAgent(shipmentId, companyId, agentId) {
         const result = await this.pool.query(`

@@ -6,6 +6,8 @@ import { parseDataScope } from '../utils/scope.js';
 import { appendQuickLedgerClientLogs } from '../services/quickLedgerLogService.js';
 import { HttpError } from '../utils/errors.js';
 import { emit } from '../events/eventBus.js';
+import { AuditService } from '../services/auditService.js';
+import { dailyLedgerRowAuditSnapshot, diffDailyLedgerRowSnapshots, } from '../utils/dailyLedgerAudit.js';
 const uuid = z.string().uuid();
 function todayIsoDate() {
     return new Date().toISOString().slice(0, 10);
@@ -35,6 +37,7 @@ function canTransferLedger(roleCode, userType, permissions) {
 }
 export function createDailyLedgerRouter(service, transferService) {
     const router = express.Router();
+    const auditService = new AuditService();
     router.get('/rows', requirePermissions(['shipments.read']), async (req, res) => {
         const userContext = req.requestUserContext;
         const allowedBranchIds = Array.isArray(userContext?.allowedBranchIds) ? userContext.allowedBranchIds : [];
@@ -144,6 +147,7 @@ export function createDailyLedgerRouter(service, transferService) {
             transferServiceFeeUsd: z.coerce.number().optional(),
             notes: z.string().nullable().optional(),
             rowId: uuid.optional(),
+            dispatchId: uuid.nullable().optional(),
         });
         const input = bodySchema.parse(req.body);
         try {
@@ -166,11 +170,188 @@ export function createDailyLedgerRouter(service, transferService) {
             return;
         }
         const ownerUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, getRequestPermissions(req));
+        const previousRows = input.rowId != null ? await service.fetchRowAuditSnapshots(scope, [input.rowId]) : [];
+        const previousSnapshot = previousRows[0] != null ? dailyLedgerRowAuditSnapshot(previousRows[0]) : null;
         const row = await service.upsertRow(scope, {
             ...input,
             restrictToCreatedByUserId: ownerUserId,
         });
+        const afterSnapshot = dailyLedgerRowAuditSnapshot(row);
+        const isUpdate = previousSnapshot != null;
+        const diff = previousSnapshot != null
+            ? diffDailyLedgerRowSnapshots(previousSnapshot, afterSnapshot)
+            : { changedFields: [], changes: {} };
+        auditService.logAsync({
+            req,
+            context: { branchId: row.branch_id },
+            action: isUpdate ? 'DAILY_LEDGER_ROW_UPDATED' : 'DAILY_LEDGER_ROW_CREATED',
+            entityType: 'daily_ledger_row',
+            entityId: row.id,
+            metadata: {
+                summary: isUpdate
+                    ? `تعديل سطر ${row.row_no}${row.receipt_no ? ` — إيصال ${row.receipt_no}` : ''}`
+                    : `إدخال سطر ${row.row_no}${row.receipt_no ? ` — إيصال ${row.receipt_no}` : ''}`,
+                ledgerDate: row.ledger_date,
+                lineLabel: row.line_label,
+                rowNo: row.row_no,
+                receiptNo: row.receipt_no,
+                destination: row.destination,
+                senderName: row.sender_name,
+                receiverName: row.receiver_name,
+                collectUsd: afterSnapshot.collectUsd,
+                prepaidUsd: afterSnapshot.prepaidUsd,
+                ...(isUpdate
+                    ? {
+                        changedFields: diff.changedFields,
+                        changes: diff.changes,
+                        before: previousSnapshot,
+                        after: afterSnapshot,
+                    }
+                    : { after: afterSnapshot }),
+            },
+        });
         res.json({ success: true, data: row });
+    });
+    router.get('/dispatch-definitions', requirePermissions(['shipments.read']), async (req, res) => {
+        const userContext = req.requestUserContext;
+        const allowedBranchIds = Array.isArray(userContext?.allowedBranchIds) ? userContext.allowedBranchIds : [];
+        const roleCode = String(userContext?.roleCode ?? '').toLowerCase();
+        const userType = String(userContext?.userType ?? '').toLowerCase();
+        const lockedBranchId = (typeof userContext?.activeBranchId === 'string' ? userContext.activeBranchId : undefined) ??
+            (typeof userContext?.scope?.branchId === 'string' ? userContext.scope.branchId : undefined) ??
+            allowedBranchIds[0] ??
+            null;
+        const scope = parseDataScope(req);
+        const querySchema = z.object({
+            branchId: uuid,
+            ledgerDate: z.string().min(1),
+            lineLabel: z.string().min(1),
+            suggestNext: z.coerce.boolean().optional(),
+        });
+        const q = querySchema.parse(req.query);
+        const branchBypass = roleCode === 'admin' || userType === 'admin' || canAccessAnyCompanyBranch(roleCode, userType);
+        if (allowedBranchIds.length && !allowedBranchIds.includes(q.branchId) && !branchBypass) {
+            res.status(403).json({ success: false, error: 'Requested branch scope is not allowed for this user.' });
+            return;
+        }
+        if (isDailyLedgerScopedOperator(roleCode) && lockedBranchId && q.branchId !== lockedBranchId) {
+            res.status(403).json({ success: false, error: 'لا يمكن عرض إرساليات فرع مختلف عن الفرع التابع لك.' });
+            return;
+        }
+        const definitions = await service.listDispatchDefinitions(scope, {
+            branchId: q.branchId,
+            ledgerDate: q.ledgerDate,
+            lineLabel: q.lineLabel,
+        });
+        const nextNo = q.suggestNext
+            ? await service.suggestNextDispatchNo(scope, {
+                branchId: q.branchId,
+                ledgerDate: q.ledgerDate,
+                lineLabel: q.lineLabel,
+            })
+            : undefined;
+        res.json({
+            success: true,
+            data: {
+                definitions,
+                nextDispatchNo: nextNo,
+            },
+        });
+    });
+    router.post('/dispatch-definitions', requirePermissions(['shipments.write']), async (req, res) => {
+        const userContext = req.requestUserContext;
+        const allowedBranchIds = Array.isArray(userContext?.allowedBranchIds) ? userContext.allowedBranchIds : [];
+        const roleCode = String(userContext?.roleCode ?? '').toLowerCase();
+        const userType = String(userContext?.userType ?? '').toLowerCase();
+        const lockedBranchId = (typeof userContext?.activeBranchId === 'string' ? userContext.activeBranchId : undefined) ??
+            (typeof userContext?.scope?.branchId === 'string' ? userContext.scope.branchId : undefined) ??
+            allowedBranchIds[0] ??
+            null;
+        const scope = parseDataScope(req);
+        const bodySchema = z.object({
+            branchId: uuid,
+            ledgerDate: z.string().min(1),
+            lineLabel: z.string().min(1),
+            dispatchNo: z.coerce.number().int().min(1),
+            driverId: uuid.nullable().optional(),
+            vehicleId: uuid.nullable().optional(),
+            driverLabel: z.string().nullable().optional(),
+            vehicleLabel: z.string().nullable().optional(),
+            tripNo: z.string().nullable().optional(),
+            notes: z.string().nullable().optional(),
+        });
+        const input = bodySchema.parse(req.body);
+        try {
+            assertLedgerDateAllowed(roleCode, userType, input.ledgerDate, getRequestPermissions(req));
+        }
+        catch (dateError) {
+            res.status(400).json({
+                success: false,
+                error: dateError instanceof Error ? dateError.message : 'تاريخ الدفتر غير مسموح.',
+            });
+            return;
+        }
+        const branchBypass = roleCode === 'admin' || userType === 'admin' || canAccessAnyCompanyBranch(roleCode, userType);
+        if (allowedBranchIds.length && !allowedBranchIds.includes(input.branchId) && !branchBypass) {
+            res.status(403).json({ success: false, error: 'Requested branch scope is not allowed for this user.' });
+            return;
+        }
+        if (isDailyLedgerScopedOperator(roleCode) && lockedBranchId && input.branchId !== lockedBranchId) {
+            res.status(403).json({ success: false, error: 'لا يمكن إنشاء إرسالية على فرع مختلف عن الفرع التابع لك.' });
+            return;
+        }
+        try {
+            const created = await service.createDispatchDefinition(scope, input);
+            res.json({ success: true, data: created });
+        }
+        catch (error) {
+            if (error instanceof HttpError) {
+                res.status(error.statusCode).json({ success: false, error: error.message });
+                return;
+            }
+            throw error;
+        }
+    });
+    router.patch('/dispatch-definitions/:id', requirePermissions(['shipments.write']), async (req, res) => {
+        const scope = parseDataScope(req);
+        const paramsSchema = z.object({ id: uuid });
+        const bodySchema = z.object({
+            driverId: uuid.nullable().optional(),
+            vehicleId: uuid.nullable().optional(),
+            driverLabel: z.string().nullable().optional(),
+            vehicleLabel: z.string().nullable().optional(),
+            tripNo: z.string().nullable().optional(),
+            notes: z.string().nullable().optional(),
+        });
+        const params = paramsSchema.parse(req.params);
+        const input = bodySchema.parse(req.body);
+        try {
+            const updated = await service.updateDispatchDefinition(scope, params.id, input);
+            res.json({ success: true, data: updated });
+        }
+        catch (error) {
+            if (error instanceof HttpError) {
+                res.status(error.statusCode).json({ success: false, error: error.message });
+                return;
+            }
+            throw error;
+        }
+    });
+    router.delete('/dispatch-definitions/:id', requirePermissions(['shipments.write']), async (req, res) => {
+        const scope = parseDataScope(req);
+        const paramsSchema = z.object({ id: uuid });
+        const params = paramsSchema.parse(req.params);
+        try {
+            await service.deleteDispatchDefinition(scope, params.id);
+            res.json({ success: true });
+        }
+        catch (error) {
+            if (error instanceof HttpError) {
+                res.status(error.statusCode).json({ success: false, error: error.message });
+                return;
+            }
+            throw error;
+        }
     });
     router.post('/rows/:id/post', requirePermissions(['shipments.write']), async (req, res) => {
         const userContext = req.requestUserContext;
@@ -309,7 +490,29 @@ export function createDailyLedgerRouter(service, transferService) {
         });
         const { rowIds } = bodySchema.parse(req.body);
         const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, permissions);
+        const snapshots = await service.fetchRowAuditSnapshots(scope, rowIds);
         const result = await service.deleteRows(scope, rowIds, allowedBranchIds, createdByUserId);
+        for (const snapshotRow of snapshots) {
+            if (!result.deletedIds.includes(snapshotRow.id))
+                continue;
+            const snap = dailyLedgerRowAuditSnapshot(snapshotRow);
+            auditService.logAsync({
+                req,
+                context: { branchId: snapshotRow.branch_id },
+                action: 'DAILY_LEDGER_ROW_DELETED',
+                entityType: 'daily_ledger_row',
+                entityId: snapshotRow.id,
+                metadata: {
+                    summary: `حذف سطر ${snap.rowNo}${snap.receiptNo ? ` — إيصال ${snap.receiptNo}` : ''}`,
+                    ledgerDate: snap.ledgerDate,
+                    lineLabel: snap.lineLabel,
+                    rowNo: snap.rowNo,
+                    receiptNo: snap.receiptNo,
+                    destination: snap.destination,
+                    before: snap,
+                },
+            });
+        }
         res.json({ success: true, data: result });
     });
     router.post('/sessions/cancel', requirePermissions(['shipments.write']), async (req, res) => {

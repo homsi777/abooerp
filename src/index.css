@@ -1306,6 +1306,166 @@ body {
   color: #64748b;
 }
 
+.quick-ledger-dispatch-panel {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #c5d3e2;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.quick-ledger-dispatch-panel-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.quick-ledger-dispatch-panel-toggle {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  color: #0f3f66;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quick-ledger-dispatch-panel-count {
+  display: inline-flex;
+  min-width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 12px;
+}
+
+.quick-ledger-dispatch-panel-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.quick-ledger-dispatch-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  align-items: end;
+  margin-bottom: 10px;
+}
+
+.quick-ledger-dispatch-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.quick-ledger-dispatch-form input,
+.quick-ledger-dispatch-form select,
+.quick-ledger-dispatch-form button {
+  height: 34px;
+  border: 1px solid #b6c2d2;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.quick-ledger-dispatch-form button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.quick-ledger-dispatch-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.quick-ledger-dispatch-table th,
+.quick-ledger-dispatch-table td {
+  border: 1px solid #d7e0ea;
+  padding: 6px 8px;
+  text-align: right;
+}
+
+.quick-ledger-dispatch-table th {
+  background: #edf2f7;
+  font-weight: 800;
+}
+
+.quick-ledger-dispatch-empty {
+  margin: 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.ledger-dispatch-combobox {
+  position: relative;
+}
+
+.ledger-dispatch-combobox-input {
+  width: 100%;
+  min-width: 52px;
+  text-align: center;
+  direction: ltr;
+}
+
+.ledger-dispatch-combobox-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 2px);
+  right: 0;
+  left: 0;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid #b6c2d2;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+}
+
+.ledger-dispatch-combobox-menu li {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.ledger-dispatch-combobox-menu li.is-active,
+.ledger-dispatch-combobox-menu li:hover {
+  background: #e8f1ff;
+}
+
+.ledger-dispatch-combobox-menu strong {
+  direction: ltr;
+  text-align: center;
+}
+
+.ledger-dispatch-combobox-vehicle {
+  grid-column: 2;
+  color: #64748b;
+  font-size: 11px;
+}
+
 .quick-ledger-pager {
   display: flex;
   align-items: center;
@@ -1827,6 +1987,14 @@ body {
 
 .quick-ledger-table th.wide {
   width: 165px;
+}
+
+.quick-ledger-table th.col-dispatch,
+.quick-ledger-table td.col-dispatch {
+  width: 64px;
+  min-width: 64px;
+  max-width: 72px;
+  padding-inline: 4px;
 }
 
 /* نوع الطرود: تفصيل طويل (مثال: 1كيس+لفة اطارات+5كرتونة) — عدد الطرود: رقم قصير فقط */

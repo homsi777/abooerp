@@ -8,16 +8,43 @@ import {
 } from '../utils/agentDocumentationScope.js';
 import type { DailyLedgerRowListFilters, DailyLedgerPrintDocumentInput, DailyLedgerPrintDocumentListFilters, DailyLedgerUpsertInput, DailyLedgerPrintDocumentRowSnapshot } from '../repositories/dailyLedgerRepository.js';
 import { DailyLedgerRepository } from '../repositories/dailyLedgerRepository.js';
+import type {
+  DailyLedgerDispatchCreateInput,
+  DailyLedgerDispatchListFilters,
+  DailyLedgerDispatchUpdateInput,
+} from '../repositories/dailyLedgerDispatchRepository.js';
+import { DailyLedgerDispatchRepository } from '../repositories/dailyLedgerDispatchRepository.js';
 import type { DailyLedgerShipmentPostingService } from './dailyLedgerShipmentPostingService.js';
 
 export class DailyLedgerService {
   constructor(
     private repo: DailyLedgerRepository,
     private shipmentPosting?: DailyLedgerShipmentPostingService,
+    private dispatchRepo: DailyLedgerDispatchRepository = new DailyLedgerDispatchRepository(),
   ) {}
 
   listRows(scope: DataScope, filters: DailyLedgerRowListFilters) {
     return this.repo.listRows(scope, filters);
+  }
+
+  listDispatchDefinitions(scope: DataScope, filters: DailyLedgerDispatchListFilters) {
+    return this.dispatchRepo.listDefinitions(scope, filters);
+  }
+
+  suggestNextDispatchNo(scope: DataScope, filters: DailyLedgerDispatchListFilters) {
+    return this.dispatchRepo.suggestNextDispatchNo(scope, filters);
+  }
+
+  createDispatchDefinition(scope: DataScope, input: DailyLedgerDispatchCreateInput) {
+    return this.dispatchRepo.createDefinition(scope, input);
+  }
+
+  updateDispatchDefinition(scope: DataScope, id: string, input: DailyLedgerDispatchUpdateInput) {
+    return this.dispatchRepo.updateDefinition(scope, id, input);
+  }
+
+  deleteDispatchDefinition(scope: DataScope, id: string) {
+    return this.dispatchRepo.deleteDefinition(scope, id, scope.userId);
   }
 
   async upsertRow(scope: DataScope, input: DailyLedgerUpsertInput) {

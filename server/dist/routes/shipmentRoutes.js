@@ -59,6 +59,8 @@ const shipmentCreateSchema = z.object({
     prepaidAmount: z.coerce.number().nonnegative().optional(),
     discountAmount: z.coerce.number().nonnegative().optional(),
     transferServiceFee: z.coerce.number().nonnegative().optional(),
+    hawalaAmount: z.coerce.number().nonnegative().optional(),
+    effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 const shipmentUpdateSchema = shipmentCreateSchema.partial();
 const statusActionPayloadSchema = z.object({
