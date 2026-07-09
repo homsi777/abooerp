@@ -1516,15 +1516,33 @@ export default function ShipmentQuickLedger() {
     };
   }, [activeBranchId, activeSessionId, canViewAllLedgerEntries, ledgerBranchMode, trip.date, trip.line]);
 
+  const dispatchScopeBlockedReason = useMemo(() => {
+    if (!trip.date) return 'اختر التاريخ أولاً لتعريف الإرساليات.';
+    if (!trip.line) return 'اختر الخط (مصدر البضاعة) أولاً.';
+    if (canViewAllLedgerEntries && ledgerBranchMode === 'all') {
+      const branchId = activeBranchId || resolveBranchBackendIdFromLine(trip.line, branches);
+      if (!branchId) {
+        return 'في وضع «كل الفروع» حدّد فرعاً واحداً من البحث أعلى الصفحة (مثل حلب أو الرئيسي) لتعريف الإرساليات.';
+      }
+    } else if (!activeBranchId) {
+      return 'اختر الفرع أولاً.';
+    }
+    return null;
+  }, [activeBranchId, branches, canViewAllLedgerEntries, ledgerBranchMode, trip.date, trip.line]);
+
   const dispatchScope = useMemo(() => {
-    if (canViewAllLedgerEntries && ledgerBranchMode === 'all') return null;
-    if (!activeBranchId || !trip.date || !trip.line) return null;
+    if (!trip.date || !trip.line) return null;
+    const branchId =
+      canViewAllLedgerEntries && ledgerBranchMode === 'all'
+        ? activeBranchId || resolveBranchBackendIdFromLine(trip.line, branches)
+        : activeBranchId;
+    if (!branchId) return null;
     return {
-      branchId: activeBranchId,
+      branchId,
       ledgerDate: trip.date,
       lineLabel: trip.line,
     };
-  }, [activeBranchId, canViewAllLedgerEntries, ledgerBranchMode, trip.date, trip.line]);
+  }, [activeBranchId, branches, canViewAllLedgerEntries, ledgerBranchMode, trip.date, trip.line]);
 
   const draftScopeKey = useMemo(() => {
     if (!activeDraftContext) return '';
@@ -4472,6 +4490,7 @@ export default function ShipmentQuickLedger() {
 
       <QuickLedgerDispatchPanel
         scope={dispatchScope}
+        scopeBlockedReason={dispatchScopeBlockedReason}
         drivers={drivers}
         vehicles={vehicles}
         definitions={dispatchDefinitions}

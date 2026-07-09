@@ -1413,6 +1413,18 @@ body {
   color: #64748b;
 }
 
+.quick-ledger-dispatch-blocked {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #9a3412;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 700;
+}
+
 .ledger-dispatch-combobox {
   position: relative;
 }

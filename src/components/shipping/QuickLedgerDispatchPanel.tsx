@@ -10,6 +10,7 @@ import type { Driver, Vehicle } from '../../types';
 
 type QuickLedgerDispatchPanelProps = {
   scope: DailyLedgerDispatchScope | null;
+  scopeBlockedReason?: string | null;
   drivers: Driver[];
   vehicles: Vehicle[];
   definitions: DailyLedgerDispatchDefinition[];
@@ -20,6 +21,7 @@ type QuickLedgerDispatchPanelProps = {
 
 export default function QuickLedgerDispatchPanel({
   scope,
+  scopeBlockedReason = null,
   drivers,
   vehicles,
   definitions,
@@ -119,7 +121,30 @@ export default function QuickLedgerDispatchPanel({
     }
   };
 
-  if (!scope) return null;
+  if (!scope) {
+    return (
+      <section className="quick-ledger-dispatch-panel" dir="rtl">
+        <header className="quick-ledger-dispatch-panel-header">
+          <button
+            type="button"
+            className="quick-ledger-dispatch-panel-toggle"
+            onClick={() => setExpanded((prev) => !prev)}
+          >
+            تعريف إرساليات اليوم (النظام الجديد)
+            <span className="quick-ledger-dispatch-panel-count">0</span>
+          </button>
+          <p className="quick-ledger-dispatch-panel-hint">
+            عرّف لكل تاريخ رقم إرسالية + سائق + مركبة. ثم اختر الرقم من عمود «إرسالية» في الجدول.
+          </p>
+        </header>
+        {expanded && scopeBlockedReason ? (
+          <p className="quick-ledger-dispatch-blocked" role="status">
+            {scopeBlockedReason}
+          </p>
+        ) : null}
+      </section>
+    );
+  }
 
   return (
     <section className="quick-ledger-dispatch-panel" dir="rtl">
