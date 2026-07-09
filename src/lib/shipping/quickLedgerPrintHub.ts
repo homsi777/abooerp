@@ -61,6 +61,39 @@ export function buildDriverOptions(rows: RemoteDailyLedgerRow[]): PrintHubDriver
   return [...grouped.values()].sort((a, b) => a.label.localeCompare(b.label, 'ar'));
 }
 
+/** قائمة السائقين من الكتالوج مع عدد الأسطر في النطاق الحالي */
+export function buildCatalogDriverOptions(
+  catalogDrivers: Array<{ id: number; name: string; code?: string }>,
+  rows: RemoteDailyLedgerRow[],
+  resolveBackendId: (driverId: number) => string | null | undefined,
+): PrintHubDriverOption[] {
+  const rowCountsByBackendId = new Map<string, number>();
+  for (const row of rows) {
+    if (!row.driver_id) continue;
+    rowCountsByBackendId.set(row.driver_id, (rowCountsByBackendId.get(row.driver_id) ?? 0) + 1);
+  }
+
+  const options: PrintHubDriverOption[] = catalogDrivers
+    .map((driver) => {
+      const backendId = resolveBackendId(driver.id) ?? null;
+      const key = backendId ? `id:${backendId}` : `label:${normalizeLabel(driver.name)}`;
+      const label = driver.code ? `${driver.code} — ${driver.name}` : driver.name;
+      return {
+        key,
+        backendId,
+        label,
+        rowsCount: backendId ? rowCountsByBackendId.get(backendId) ?? 0 : 0,
+      };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label, 'ar'));
+
+  const rowOnlyDrivers = buildDriverOptions(rows).filter(
+    (item) => !options.some((option) => option.key === item.key),
+  );
+
+  return [...options, ...rowOnlyDrivers].sort((a, b) => a.label.localeCompare(b.label, 'ar'));
+}
+
 export function buildDispatchSummaries(
   definitions: DailyLedgerDispatchDefinition[],
   rows: RemoteDailyLedgerRow[],

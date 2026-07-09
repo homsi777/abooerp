@@ -26,9 +26,9 @@ import type { DailyLedgerDispatchDefinition } from '../../lib/shipping/dailyLedg
 import type { RemoteDailyLedgerRow } from '../../lib/shipping/dailyLedgerTypes';
 import {
   ALL_DRIVERS_PRINT_KEY,
+  buildCatalogDriverOptions,
   buildDestinationSummaries,
   buildDispatchSummaries,
-  buildDriverOptions,
   filterRowsForPrintHub,
   type PrintHubMode,
 } from '../../lib/shipping/quickLedgerPrintHub';
@@ -230,17 +230,15 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
         const destinations = buildDestinationSummaries(printableRows);
         setSelectedDestinations(destinations.map((item) => item.destination));
 
-        const driverOptions = buildDriverOptions(printableRows);
-        if (driverOptions.length === 1) {
-          setDriverKey(driverOptions[0].key);
-        } else {
-          const tripDriverBackendId = currentTripDriverId
-            ? getBackendIdFromSynthetic(currentTripDriverId) ?? null
-            : null;
-          const preferredKey = tripDriverBackendId ? `id:${tripDriverBackendId}` : '';
-          const hasPreferred = driverOptions.some((item) => item.key === preferredKey);
-          setDriverKey(hasPreferred ? preferredKey : ALL_DRIVERS_PRINT_KEY);
-        }
+        const tripDriverBackendId = currentTripDriverId
+          ? getBackendIdFromSynthetic(currentTripDriverId) ?? null
+          : null;
+        const preferredKey = tripDriverBackendId ? `id:${tripDriverBackendId}` : ALL_DRIVERS_PRINT_KEY;
+        const catalogOptions = buildCatalogDriverOptions(drivers, printableRows, (id) =>
+          getBackendIdFromSynthetic(id) ?? null,
+        );
+        const hasPreferred = catalogOptions.some((item) => item.key === preferredKey);
+        setDriverKey(hasPreferred ? preferredKey : ALL_DRIVERS_PRINT_KEY);
 
         const dispatchSummaries = buildDispatchSummaries(
           dispatchDefinitions,
@@ -274,7 +272,11 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
     }, [open, selectedDate, selectedLine, selectedBranchId, includeLoaded, searchQuick]);
 
     const destinationSummaries = useMemo(() => buildDestinationSummaries(baseRows), [baseRows]);
-    const driverOptions = useMemo(() => buildDriverOptions(baseRows), [baseRows]);
+    const driverOptions = useMemo(
+      () =>
+        buildCatalogDriverOptions(drivers, baseRows, (id) => getBackendIdFromSynthetic(id) ?? null),
+      [baseRows, drivers],
+    );
     const dispatchSummaries = useMemo(
       () =>
         buildDispatchSummaries(
@@ -292,9 +294,16 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
     }, [destinationSearch, destinationSummaries]);
 
     const selectedDriver = useMemo(() => {
-      if (!driverKey.startsWith('id:')) return undefined;
-      const backendId = driverKey.slice(3);
-      return drivers.find((driver) => getBackendIdFromSynthetic(driver.id) === backendId);
+      if (driverKey === ALL_DRIVERS_PRINT_KEY) return undefined;
+      if (driverKey.startsWith('id:')) {
+        const backendId = driverKey.slice(3);
+        return drivers.find((driver) => getBackendIdFromSynthetic(driver.id) === backendId);
+      }
+      if (driverKey.startsWith('label:')) {
+        const label = driverKey.slice(6);
+        return drivers.find((driver) => normalizeLabel(driver.name) === label);
+      }
+      return undefined;
     }, [driverKey, drivers]);
 
     const driverBackendId = selectedDriver ? getBackendIdFromSynthetic(selectedDriver.id) ?? undefined : undefined;
@@ -358,7 +367,7 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
     const previewReceiptRows = useMemo(
       () =>
         buildFilteredRows({
-          destinations: selectedDestinations.length ? selectedDestinations : undefined,
+          destinations: selectedDestinations,
           forceSession: sessionOnly,
         }),
       [
@@ -472,12 +481,18 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
 
     const runReceipts = async () => {
       if (busy || loading) return;
+      if (!selectedDestinations.length) {
+        onToast('يرجى تحديد وجهة واحدة على الأقل', 'error');
+        return;
+      }
       const rows = previewReceiptRows;
       if (!rows.length) {
         onToast('لا توجد أسطر مطابقة لطباعة الإيصالات', 'info');
         return;
       }
-      const scopeLabel = sessionOnly && activeSessionLabel ? activeSessionLabel : 'إيصالات';
+      const scopeLabel = sessionOnly && activeSessionLabel
+        ? activeSessionLabel
+        : `إيصالات — ${selectedDestinations.length} وجهة`;
       const title = searchQuick.trim()
         ? `إيصالات — ${searchQuick.trim()}`
         : sessionOnly
@@ -535,6 +550,96 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
       mode === 'dispatch' ? previewDispatchRows : mode === 'receipts' ? previewReceiptRows : previewDestinationRows;
 
     const previewPieces = previewRows.reduce((sum, row) => sum + (Number(row.parcel_count) || 0), 0);
+
+    const showDestinationPicker = mode === 'destination' || mode === 'receipts';
+
+    const destinationPickerPanel = showDestinationPicker ? (
+      <section className="quick-ledger-print-hub-panel">
+        <div className="quick-ledger-print-hub-panel-head">
+          <h3>{mode === 'receipts' ? 'اختر الجهات للإيصالات' : 'اختر الجهات'}</h3>
+          <div className="quick-ledger-print-hub-panel-actions">
+            <button
+              type="button"
+              disabled={!destinationSummaries.length || busy || loading}
+              onClick={() => setSelectedDestinations(destinationSummaries.map((item) => item.destination))}
+            >
+              تحديد الكل
+            </button>
+            <button
+              type="button"
+              disabled={!selectedDestinations.length || busy || loading}
+              onClick={() => setSelectedDestinations([])}
+            >
+              إلغاء الكل
+            </button>
+            {mode === 'destination' ? (
+              <button type="button" disabled={busy || loading} onClick={() => void loadRows()}>
+                {loading ? 'تحديث...' : 'تحديث'}
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        <label className="quick-ledger-print-hub-field">
+          <span>تصفية السائق (اختياري)</span>
+          <select
+            className="quick-ledger-print-hub-input"
+            value={driverKey}
+            disabled={busy || loading || !drivers.length}
+            onChange={(e) => setDriverKey(e.target.value)}
+          >
+            <option value={ALL_DRIVERS_PRINT_KEY}>كل السائقين</option>
+            {driverOptions.map((option) => (
+              <option key={option.key} value={option.key}>
+                {option.label}
+                {option.rowsCount > 0 ? ` (${option.rowsCount})` : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <input
+          className="quick-ledger-print-hub-input quick-ledger-print-hub-destination-search"
+          placeholder="بحث في الوجهات..."
+          value={destinationSearch}
+          disabled={busy || loading}
+          onChange={(e) => setDestinationSearch(e.target.value)}
+        />
+
+        <div className="quick-ledger-print-hub-destination-list">
+          {loading ? (
+            <div className="quick-ledger-print-hub-empty">جاري تحميل الوجهات...</div>
+          ) : filteredDestinationList.length === 0 ? (
+            <div className="quick-ledger-print-hub-empty">لا توجد وجهات في هذا النطاق</div>
+          ) : (
+            filteredDestinationList.map((item) => (
+              <label key={item.destination} className="quick-ledger-print-hub-destination-item">
+                <input
+                  type="checkbox"
+                  checked={selectedDestinations.includes(item.destination)}
+                  disabled={busy || loading}
+                  onChange={() => toggleDestination(item.destination)}
+                />
+                <span className="quick-ledger-print-hub-destination-name">{item.destination}</span>
+                <span className="quick-ledger-print-hub-destination-count">{item.rowsCount} سطر</span>
+              </label>
+            ))
+          )}
+        </div>
+
+        {mode === 'receipts' ? (
+          <div className="quick-ledger-print-hub-receipts-summary">
+            <Receipt size={18} />
+            <div>
+              <strong>{previewReceiptRows.length}</strong> إيصال جاهز للطباعة
+              {selectedDestinations.length ? (
+                <span> — {selectedDestinations.length} وجهة محددة</span>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </section>
+    ) : null;
 
     return (
       <>
@@ -710,78 +815,7 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
                   {loading ? <span className="quick-ledger-print-hub-loading-label">جاري التحميل...</span> : null}
                 </div>
 
-                {mode === 'destination' ? (
-                  <section className="quick-ledger-print-hub-panel">
-                    <div className="quick-ledger-print-hub-panel-head">
-                      <h3>اختر الجهات</h3>
-                      <div className="quick-ledger-print-hub-panel-actions">
-                        <button
-                          type="button"
-                          disabled={!destinationSummaries.length || busy || loading}
-                          onClick={() => setSelectedDestinations(destinationSummaries.map((item) => item.destination))}
-                        >
-                          تحديد الكل
-                        </button>
-                        <button
-                          type="button"
-                          disabled={!selectedDestinations.length || busy || loading}
-                          onClick={() => setSelectedDestinations([])}
-                        >
-                          إلغاء الكل
-                        </button>
-                        <button type="button" disabled={busy || loading} onClick={() => void loadRows()}>
-                          {loading ? 'تحديث...' : 'تحديث'}
-                        </button>
-                      </div>
-                    </div>
-
-                    <label className="quick-ledger-print-hub-field">
-                      <span>تصفية السائق (اختياري)</span>
-                      <select
-                        className="quick-ledger-print-hub-input"
-                        value={driverKey}
-                        disabled={busy || loading}
-                        onChange={(e) => setDriverKey(e.target.value)}
-                      >
-                        <option value={ALL_DRIVERS_PRINT_KEY}>كل السائقين</option>
-                        {driverOptions.map((option) => (
-                          <option key={option.key} value={option.key}>
-                            {option.label} ({option.rowsCount})
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <input
-                      className="quick-ledger-print-hub-input quick-ledger-print-hub-destination-search"
-                      placeholder="بحث في الوجهات..."
-                      value={destinationSearch}
-                      disabled={busy || loading}
-                      onChange={(e) => setDestinationSearch(e.target.value)}
-                    />
-
-                    <div className="quick-ledger-print-hub-destination-list">
-                      {loading ? (
-                        <div className="quick-ledger-print-hub-empty">جاري تحميل الوجهات...</div>
-                      ) : filteredDestinationList.length === 0 ? (
-                        <div className="quick-ledger-print-hub-empty">لا توجد وجهات في هذا النطاق</div>
-                      ) : (
-                        filteredDestinationList.map((item) => (
-                          <label key={item.destination} className="quick-ledger-print-hub-destination-item">
-                            <input
-                              type="checkbox"
-                              checked={selectedDestinations.includes(item.destination)}
-                              disabled={busy || loading}
-                              onChange={() => toggleDestination(item.destination)}
-                            />
-                            <span className="quick-ledger-print-hub-destination-name">{item.destination}</span>
-                            <span className="quick-ledger-print-hub-destination-count">{item.rowsCount} سطر</span>
-                          </label>
-                        ))
-                      )}
-                    </div>
-                  </section>
-                ) : null}
+                {destinationPickerPanel}
 
                 {mode === 'dispatch' ? (
                   <section className="quick-ledger-print-hub-panel">
@@ -838,41 +872,6 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
                   </section>
                 ) : null}
 
-                {mode === 'receipts' ? (
-                  <section className="quick-ledger-print-hub-panel">
-                    <div className="quick-ledger-print-hub-panel-head">
-                      <h3>طباعة إيصالات محمود</h3>
-                    </div>
-                    <p className="quick-ledger-print-hub-receipts-hint">
-                      تُطبَع الإيصالات للأسطر المطابقة للنطاق أعلاه. يمكنك تقييد السائق أو الوجهات من تبويب «حسب الجهة» ثم العودة هنا.
-                    </p>
-                    <label className="quick-ledger-print-hub-field">
-                      <span>تصفية السائق</span>
-                      <select
-                        className="quick-ledger-print-hub-input"
-                        value={driverKey}
-                        disabled={busy || loading}
-                        onChange={(e) => setDriverKey(e.target.value)}
-                      >
-                        <option value={ALL_DRIVERS_PRINT_KEY}>كل السائقين</option>
-                        {driverOptions.map((option) => (
-                          <option key={option.key} value={option.key}>
-                            {option.label} ({option.rowsCount})
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <div className="quick-ledger-print-hub-receipts-summary">
-                      <Receipt size={18} />
-                      <div>
-                        <strong>{previewReceiptRows.length}</strong> إيصال جاهز للطباعة
-                        {selectedDestinations.length && selectedDestinations.length < destinationSummaries.length ? (
-                          <span> — مقيّد بـ {selectedDestinations.length} وجهة</span>
-                        ) : null}
-                      </div>
-                    </div>
-                  </section>
-                ) : null}
               </div>
 
               <footer className="quick-ledger-print-hub-dialog-footer">
@@ -926,7 +925,7 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
                   <button
                     type="button"
                     className="quick-ledger-print-hub-footer-btn quick-ledger-print-hub-footer-primary"
-                    disabled={busy || loading || !previewReceiptRows.length}
+                    disabled={busy || loading || !selectedDestinations.length || !previewReceiptRows.length}
                     onClick={() => void runReceipts()}
                   >
                     <Receipt size={16} />
