@@ -429,13 +429,12 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
       scopeLabel: string,
       title: string,
     ): QuickLedgerPrintHubMeta => {
-      const destinations = [...new Set(rows.map((row) => normalizeLabel(row.destination)).filter(Boolean))];
-      const destinationLabel =
-        destinations.length === 1
-          ? destinations[0]
-          : destinations.length > 1
-            ? `${destinations.length} وجهات`
-            : '—';
+      const rowDestinations = [...new Set(rows.map((row) => normalizeLabel(row.destination)).filter(Boolean))];
+      const orderedDestinations =
+        selectedDestinations.length
+          ? selectedDestinations.filter((destination) => rowDestinations.includes(destination))
+          : rowDestinations.sort((a, b) => a.localeCompare(b, 'ar'));
+      const destinationLabel = orderedDestinations.length ? orderedDestinations.join('، ') : '—';
       const driverNames = [...new Set(rows.map((row) => normalizeLabel(row.driver_label)).filter(Boolean))];
       const driverLabel =
         selectedDriver?.name ??
