@@ -4307,6 +4307,16 @@ export default function ShipmentQuickLedger() {
             <Plus size={16} />
             إضافة سطر
           </button>
+          <QuickLedgerDispatchPanel
+            scope={dispatchScope}
+            scopeBlockedReason={dispatchScopeBlockedReason}
+            drivers={drivers}
+            vehicles={vehicles}
+            definitions={dispatchDefinitions}
+            onDefinitionsChange={setDispatchDefinitions}
+            onToast={showToast}
+            disabled={isCloudOffline}
+          />
           <button type="button" onClick={() => void loadRemoteRows()} disabled={remoteLoading}>
             {remoteLoading
               ? remoteSyncedCount > 0
@@ -4487,17 +4497,6 @@ export default function ShipmentQuickLedger() {
           <p className="quick-ledger-trip-hint">يمكن اختيار تاريخ مستقبلي عند تحميل البضائع اليوم وسفر المركبة غداً (دوريات الجمارك).</p>
         )}
       </section>
-
-      <QuickLedgerDispatchPanel
-        scope={dispatchScope}
-        scopeBlockedReason={dispatchScopeBlockedReason}
-        drivers={drivers}
-        vehicles={vehicles}
-        definitions={dispatchDefinitions}
-        onDefinitionsChange={setDispatchDefinitions}
-        onToast={showToast}
-        disabled={isCloudOffline}
-      />
 
       <section className="quick-ledger-stats">
         {stats.searchActive && (
