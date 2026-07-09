@@ -23,7 +23,6 @@ import {
   companyPrintHeaderStyles,
   renderCompanyPrintHeader,
 } from '../lib/export/companyPrintHeader';
-import { buildDailyLedgerDestinationPrintHtml } from '../lib/export/financialStatementPrint';
 import { exportLedgerStylePdf, printHtmlInBrowser } from '../lib/export/ledgerStylePrint';
 import { preparePrintHtmlForOutput, resolveCompanyLogoDataUrlForPrint } from '../lib/branding/companyLogoPrint';
 import { useToast } from '../components/Toast';
@@ -70,7 +69,6 @@ import QuickLedgerPrintHub, {
   type QuickLedgerPrintHubHandle,
   type QuickLedgerPrintHubMeta,
 } from '../components/shipping/QuickLedgerPrintHub';
-import { filterRowsByDriverKey } from '../lib/shipping/quickLedgerPrintHub';
 import LedgerDispatchCombobox from '../components/shipping/LedgerDispatchCombobox';
 import type { DailyLedgerDispatchDefinition } from '../lib/shipping/dailyLedgerDispatchGateway';
 import { dailyLedgerDispatchGateway } from '../lib/shipping/dailyLedgerDispatchGateway';
@@ -3399,67 +3397,43 @@ export default function ShipmentQuickLedger() {
   );
 
   const handlePrintHubDestinationPdf = useCallback(
-    async (input: {
-      rows: RemoteDailyLedgerRow[];
-      destinations: string[];
-      driverKey: string;
-      ledgerDate: string;
-      lineLabel: string;
-    }) => {
-      const rowsForSelectedDriver = filterRowsByDriverKey(input.rows, input.driverKey);
-      if (!rowsForSelectedDriver.length) {
-        showToast('لا توجد أسطر مطابقة للسائق المحدد', 'info');
+    async (rows: RemoteDailyLedgerRow[], meta: QuickLedgerPrintHubMeta) => {
+      if (!rows.length) {
+        showToast('لا توجد أسطر متاحة للتصدير', 'info');
         return;
       }
 
-      for (const destination of input.destinations) {
-        const rowsForDestination = rowsForSelectedDriver.filter(
-          (row) => normalizeName(row.destination ?? '') === destination,
-        );
-        if (!rowsForDestination.length) continue;
+      const destinations = [
+        ...new Set(rows.map((row) => normalizeName(row.destination ?? '')).filter(Boolean)),
+      ].sort((a, b) => a.localeCompare(b, 'ar'));
 
-        const driverNames = [...new Set(
-          rowsForDestination
-            .map((row) => normalizeName(row.driver_label ?? ''))
-            .filter(Boolean),
-        )];
+      let exported = 0;
+      for (const destination of destinations) {
+        const destRows = rows.filter((row) => normalizeName(row.destination ?? '') === destination);
+        if (!destRows.length) continue;
 
-        const html = buildDailyLedgerDestinationPrintHtml({
-          reportDate: input.ledgerDate,
-          lineLabel: input.lineLabel,
-          destination,
-          driverNames,
-          rows: rowsForDestination.map((row) => {
-            const collect = remoteRowCollectionUsd(row);
-            return {
-              receiptNo: row.receipt_no ?? '',
-              destination: row.destination ?? '',
-              parcelType: row.parcel_type ?? '',
-              parcelCount: row.parcel_count == null ? '' : String(row.parcel_count),
-              weightKg: row.weight_kg == null ? '' : String(row.weight_kg),
-              sender: row.sender_name ?? '',
-              receiver: row.receiver_name ?? '',
-              collectAmount: collect > 0 ? String(collect) : String(row.collect_amount_usd ?? ''),
-              prepaidAmount: String(row.prepaid_amount_usd ?? ''),
-              hawalaAmount: String(row.hawala_amount_usd ?? ''),
-              transferServiceFee: String(row.transfer_service_fee_usd ?? ''),
-              driverLabel: row.driver_label ?? '',
-              notes: row.notes ?? '',
-            };
-          }),
+        const printRows = destRows.map(remoteRowToPrint);
+        const html = buildQuickLedgerPrintHtml(printRows, {
+          title: `${meta.title} — ${destination}`,
+          destinationLabel: destination,
+          driverName: meta.driverLabel,
         });
 
         const safeDestination = destination.replace(/[\\/:*?"<>|]+/g, '-');
-        const safeLine = input.lineLabel.replace(/[\\/:*?"<>|]+/g, '-');
+        const safeLine = (meta.lineLabel || 'line').replace(/[\\/:*?"<>|]+/g, '-');
         await exportLedgerStylePdf({
-          title: `دفتر الشحن اليومي — ${destination} — ${input.ledgerDate}`,
+          title: `دفتر الشحن اليومي — ${destination} — ${meta.ledgerDate}`,
           html,
-          defaultFileName: `daily-ledger-${safeLine}-${safeDestination}-${input.ledgerDate}.pdf`,
-          landscape: true,
+          defaultFileName: `daily-ledger-${safeLine}-${safeDestination}-${meta.ledgerDate}.pdf`,
+          landscape: false,
         });
+        exported += 1;
       }
 
-      showToast(`تم تصدير ${input.destinations.length} ملف PDF`, 'success');
+      showToast(
+        exported === 1 ? 'تم تصدير ملف PDF' : `تم تصدير ${exported} ملفات PDF`,
+        'success',
+      );
     },
     [showToast],
   );

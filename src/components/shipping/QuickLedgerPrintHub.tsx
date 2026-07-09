@@ -83,13 +83,10 @@ type QuickLedgerPrintHubProps = {
   disabled?: boolean;
   onPrintShipments: (rows: RemoteDailyLedgerRow[], meta: QuickLedgerPrintHubMeta) => Promise<void>;
   onPrintReceipts: (rows: RemoteDailyLedgerRow[], meta: QuickLedgerPrintHubMeta) => Promise<void>;
-  onExportDestinationPdf?: (input: {
-    rows: RemoteDailyLedgerRow[];
-    destinations: string[];
-    driverKey: string;
-    ledgerDate: string;
-    lineLabel: string;
-  }) => Promise<void>;
+  onExportDestinationPdf?: (
+    rows: RemoteDailyLedgerRow[],
+    meta: QuickLedgerPrintHubMeta,
+  ) => Promise<void>;
   onToast: (message: string, type?: 'error' | 'info' | 'success') => void;
   onPreparePrint?: () => void;
 };
@@ -572,21 +569,28 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
       }
       const rows = previewDestinationRows;
       if (!rows.length) {
-        onToast('لا توجد أسطر متاحة للتصدير', 'info');
+        const driverLabel = selectedDriverFilter?.name || selectedDriverFilter?.code;
+        onToast(
+          driverLabel
+            ? `لا توجد أسطر للسائق «${driverLabel}» ضمن الوجهات المحددة — جرّب «كل السائقين» أو وجهات أخرى`
+            : 'لا توجد أسطر متاحة للتصدير',
+          'info',
+        );
         return;
       }
+      const scopeLabel = `جهات: ${selectedDestinations.length}`;
+      const title = searchQuick.trim()
+        ? `دفتر الشحن — ${searchQuick.trim()}`
+        : sessionOnly
+          ? `دفتر الشحن — ${activeSessionLabel ?? 'الإرسالية الحالية'}`
+          : 'دفتر الشحن — حسب الجهة';
+
       setBusy(true);
       try {
-        await onExportDestinationPdf({
-          rows: baseRows,
-          destinations: selectedDestinations,
-          driverKey,
-          ledgerDate: selectedDate,
-          lineLabel:
-            canViewAllBranches && !selectedBranchId
-              ? 'كل الفروع'
-              : normalizeLabel(selectedLine) || lineLabel,
-        });
+        await onExportDestinationPdf(
+          rows,
+          buildMeta(rows, sessionOnly ? 'session' : 'destination', sessionOnly ? 'session' : 'destination', scopeLabel, title),
+        );
         setOpen(false);
         setSessionOnly(false);
       } catch (error) {
@@ -635,7 +639,7 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
           <select
             className="quick-ledger-print-hub-input"
             value={driverOptions.some((item) => item.key === driverKey) ? driverKey : ALL_DRIVERS_PRINT_KEY}
-            disabled={busy || loading || !drivers.length}
+            disabled={busy || loading}
             onChange={(e) => setDriverKey(e.target.value)}
           >
             <option value={ALL_DRIVERS_PRINT_KEY}>كل السائقين</option>
@@ -645,6 +649,11 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
               </option>
             ))}
           </select>
+          {!driverOptions.length && !loading ? (
+            <p className="quick-ledger-print-hub-driver-empty-hint" role="status">
+              لا يوجد سائقون في الكتالوج — أضف السائقين من الإعدادات أو اختر «كل السائقين».
+            </p>
+          ) : null}
           {selectedDriverFilter && driverScopedRows.length === 0 ? (
             <p className="quick-ledger-print-hub-driver-empty-hint" role="status">
               لا توجد أسطر لهذا السائق في النطاق الحالي — اختر «كل السائقين» أو غيّر التاريخ/الفرع.

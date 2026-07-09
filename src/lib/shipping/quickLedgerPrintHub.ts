@@ -148,14 +148,11 @@ export function buildCatalogDriverOptions(
     })
     .sort((a, b) => a.label.localeCompare(b.label, 'ar'));
 
-  const rowOnlyDrivers = buildDriverOptions(rows).filter((item) => {
-    if (options.some((option) => option.key === item.key)) return false;
-    return item.rowsCount > 0;
-  });
-
-  return [...options.filter((item) => item.rowsCount > 0), ...rowOnlyDrivers].sort((a, b) =>
-    a.label.localeCompare(b.label, 'ar'),
+  const rowOnlyDrivers = buildDriverOptions(rows).filter(
+    (item) => !options.some((option) => option.key === item.key),
   );
+
+  return [...options, ...rowOnlyDrivers].sort((a, b) => a.label.localeCompare(b.label, 'ar'));
 }
 
 export function buildDispatchSummaries(
