@@ -3517,7 +3517,13 @@ export default function ShipmentQuickLedger() {
       ? 'متصل بالسحابة — الحفظ يعمل مباشرة.'
       : cloudStatus === 'checking'
         ? 'جاري فحص الاتصال بالسحابة...'
-        : 'غير متصل بالسحابة — يمكنك متابعة إدخال الشحنات، وسيتم حفظها على هذا الجهاز ومزامنتها لاحقاً عند عودة الاتصال.';
+        : 'غير متصل بالسحابة — يمكنك متابعة الإدخال والمزامنة لاحقاً.';
+  const cloudStatusShort =
+    cloudStatus === 'online'
+      ? 'متصل'
+      : cloudStatus === 'checking'
+        ? 'فحص الاتصال'
+        : 'غير متصل';
   const selectedDeleteHasServerRows = rows.some((row) => selectedDeleteRowIds.includes(row.id) && Boolean(row.dbId));
 
   return (
@@ -3526,328 +3532,351 @@ export default function ShipmentQuickLedger() {
         type="button"
         className="quick-ledger-help-btn"
         onClick={openAgentHelp}
-        title="اختصارات الوكلاء — ارقام الجهة"
+        title="اختصارات الوكلاء — ارقام الجهة (مثل 9 للرقة)"
         aria-label="اختصارات الوكلاء"
       >
         <HelpCircle size={22} />
       </button>
-      <div className={`quick-ledger-cloud-status is-${cloudStatus}`} role="status" aria-live="polite">
-        <span>{cloudStatusMessage}</span>
-        {pendingLocalDraftCount > 0 ? (
-          <strong>{`يوجد ${pendingLocalDraftCount} صف بانتظار المزامنة.`}</strong>
-        ) : null}
-      </div>
-      <section className="quick-ledger-toolbar">
-        <div>
-          <div className="quick-ledger-eyebrow">إدخال سريع للشحنات</div>
-          <h2>دفتر الشحن اليومي</h2>
-          <p className="quick-ledger-hint">
-            {canViewAllLedgerEntries ? (
-              <>
-                <strong>وضع المدير:</strong> الافتراضي <strong>كل الفروع</strong> لنفس التاريخ — أو اختر فرعاً محدداً (حلب، الرئيسي، …) للتفصيل.
-              </>
-            ) : (
-              <>
-                اختر <strong>الخط</strong> لعرض الشحنات المحفوظة فوراً (بدون أسطر فارغة في القائمة). للإدخال الجديد يظهر سطر واحد في الأسفل.
-              </>
+
+      <header className="quick-ledger-header">
+        <section className="quick-ledger-toolbar" aria-label="أدوات الدفتر">
+          <h2 className="quick-ledger-title">دفتر الشحن اليومي</h2>
+          <div className="quick-ledger-actions">
+            {canViewAllLedgerEntries && (
+              <button
+                type="button"
+                className={`quick-ledger-all-branches-btn${ledgerBranchMode === 'all' ? ' is-active' : ''}`}
+                onClick={() => {
+                  setLedgerBranchMode('all');
+                  setBranchSearch('كل الفروع');
+                }}
+                title="عرض إدخالات كل فروع الشركة لنفس التاريخ"
+              >
+                كل الفروع
+              </button>
             )}
-            {' '}
-            «الجهة» = رقم الاختصار (<strong>؟</strong>) أو اسم المحافظة — مثل <strong>9</strong> للرقة.
-          </p>
-        </div>
-        <div className="quick-ledger-actions">
-          {canViewAllLedgerEntries && (
-            <button
-              type="button"
-              className={`quick-ledger-all-branches-btn${ledgerBranchMode === 'all' ? ' is-active' : ''}`}
-              onClick={() => {
-                setLedgerBranchMode('all');
-                setBranchSearch('كل الفروع');
-              }}
-              title="عرض إدخالات كل فروع الشركة لنفس التاريخ"
-            >
-              كل الفروع
+            <button type="button" onClick={addRows}>
+              <Plus size={16} />
+              إضافة سطر
             </button>
-          )}
-          <div className="quick-ledger-search">
-            <Search size={16} />
+            <QuickLedgerDispatchPanel
+              ledgerDate={trip.date}
+              lineLabel={trip.line}
+              lineOptions={lineOptions}
+              branches={branchChoices}
+              canPickBranch={canPickDispatchBranch}
+              preferredBranchId={dispatchPreferredBranchId}
+              lockedBranchId={dispatchLockedBranchId}
+              drivers={drivers}
+              vehicles={vehicles}
+              definitions={dispatchDefinitions}
+              onDefinitionsChange={setDispatchDefinitions}
+              onToast={showToast}
+              disabled={isCloudOffline}
+            />
+            <button type="button" onClick={() => void loadRemoteRows()} disabled={remoteLoading}>
+              {remoteLoading
+                ? remoteSyncedCount > 0
+                  ? `مزامنة ${remoteSyncedCount}...`
+                  : 'جاري التحديث...'
+                : 'تحديث'}
+            </button>
+            {canLedgerViewLoaded ? (
+              <label className="quick-ledger-print-toggle">
+                <input type="checkbox" checked={includeLoaded} onChange={(e) => setIncludeLoaded(e.target.checked)} />
+                إظهار المحمّلة
+              </label>
+            ) : null}
+            <QuickLedgerPrintHub
+              ref={printHubRef}
+              ledgerDate={trip.date}
+              lineLabel={trip.line}
+              lineOptions={lineOptions}
+              branches={branches}
+              canPickBranch={canPickDispatchBranch}
+              preferredBranchId={dispatchPreferredBranchId}
+              lockedBranchId={dispatchLockedBranchId}
+              canViewAllBranches={canViewAllLedgerEntries && ledgerBranchMode === 'all'}
+              includeLoaded={includeLoaded}
+              searchQuick={searchQuick}
+              catalogAgents={catalogAgents}
+              remoteRowsRaw={remoteRowsRaw}
+              drivers={drivers}
+              vehicles={vehicles}
+              dispatchDefinitions={dispatchDefinitions}
+              activeSessionId={activeSessionId}
+              activeSessionLabel={activeSessionPrintLabel}
+              canExportPdf={canLedgerExportPdf}
+              canPickFutureDate={canPickFutureDate}
+              canPickHistoricalDate={canPickHistoricalDate}
+              todayIso={todayIso}
+              currentTripDriverId={trip.driverId}
+              disabled={isCloudOffline}
+              onPrintShipments={handlePrintHubShipments}
+              onPrintReceipts={handlePrintHubReceipts}
+              onExportDestinationPdf={canLedgerExportPdf ? handlePrintHubDestinationPdf : undefined}
+              onToast={showToast}
+              onPreparePrint={handlePrintHubPrepare}
+            />
+            {activeSessionId && canLedgerCancelSession && !transferMode && !deleteMode ? (
+              <button
+                type="button"
+                onClick={() => requestCancelActiveSession()}
+                disabled={sessionSwitching || cancelingSession || isCloudOffline}
+                title="حلّ الإرسالية وإرجاع أسطرها إلى «الكل» دون حذف البيانات"
+              >
+                <X size={16} />
+                إلغاء إرسالية
+              </button>
+            ) : null}
+            {canLedgerTransfer ? (
+              transferMode ? (
+                <>
+                  <button type="button" onClick={exitTransferMode} disabled={transferring}>
+                    إلغاء النقل
+                  </button>
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={
+                      transferring ||
+                      isCloudOffline ||
+                      !selectedTransferRowIds.length ||
+                      transferSelectionSummary.hasMultipleBranches
+                    }
+                    onClick={() => void openTransferDialog()}
+                  >
+                    <Truck size={16} />
+                    {`تأكيد نقل (${selectedTransferRowIds.length})`}
+                  </button>
+                </>
+              ) : canLedgerDeleteRows && deleteMode ? null : !deleteMode ? (
+                <button type="button" onClick={enterTransferMode} disabled={isCloudOffline}>
+                  <Truck size={16} />
+                  نقل إرسالية
+                </button>
+              ) : null
+            ) : null}
+            {canLedgerDeleteRows ? (
+              deleteMode ? (
+                <>
+                  <button type="button" onClick={exitDeleteMode} disabled={deletingRows}>
+                    إلغاء التحديد
+                  </button>
+                  <button
+                    type="button"
+                    className="danger"
+                    disabled={deletingRows || !selectedDeleteRowIds.length || (isCloudOffline && selectedDeleteHasServerRows)}
+                    onClick={() => setDeleteConfirmOpen(true)}
+                  >
+                    <Trash2 size={16} />
+                    {deletingRows ? 'جاري الحذف...' : `حذف (${selectedDeleteRowIds.length})`}
+                  </button>
+                </>
+              ) : !transferMode ? (
+                <button type="button" className="danger" onClick={() => setDeleteMode(true)}>
+                  <Trash2 size={16} />
+                  حذف أسطر
+                </button>
+              ) : null
+            ) : null}
+            {canLedgerCloseSection ? (
+              <button type="button" onClick={() => setCloseConfirmOpen(true)}>
+                إغلاق القسم
+              </button>
+            ) : null}
+            {canLedgerSaveLog ? (
+              <button type="button" onClick={() => quickLedgerLog.download()} title="تنزيل سجل عمليات دفتر الشحن">
+                <ScrollText size={16} />
+                سجل الحفظ
+              </button>
+            ) : null}
+            {canLedgerPostShipments ? (
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void saveRows()}
+                disabled={saving || loadingRefs || !activeSessionId || isCloudOffline}
+                title={isCloudOffline ? 'الحفظ على السحابة يحتاج اتصالاً. الصفوف المحلية بانتظار المزامنة.' : !activeSessionId ? SESSION_SCOPE_REQUIRED_MSG : undefined}
+              >
+                <Save size={16} />
+                {saving
+                  ? 'جاري الحفظ...'
+                  : stats.saved > 0 && stats.complete > 0
+                    ? `استكمال الحفظ (${stats.complete})`
+                    : 'حفظ الشحنات'}
+              </button>
+            ) : null}
+            <span
+              className={`quick-ledger-cloud-pill is-${cloudStatus}`}
+              role="status"
+              aria-live="polite"
+              title={cloudStatusMessage}
+            >
+              {cloudStatusShort}
+              {pendingLocalDraftCount > 0 ? ` · ${pendingLocalDraftCount} بانتظار` : ''}
+            </span>
+          </div>
+        </section>
+
+        <section className="quick-ledger-trip" aria-label="بيانات الرحلة">
+          <label>
+            <span>الخط</span>
+            <select value={trip.line} onChange={(e) => handleTripLineChange(e.target.value)}>
+              <option value="">اختر الخط / المصدر</option>
+              {lineOptions.map((item) => (
+                <option key={item} value={item}>{item}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>رقم الرحلة</span>
+            <input value={trip.tripNo} onChange={(e) => setTrip({ ...trip, tripNo: e.target.value })} />
+          </label>
+          <label>
+            <span>التاريخ</span>
             <input
-              list="ledger-branch-list"
-              placeholder={canViewAllLedgerEntries ? 'فرع محدد أو كل الفروع' : 'بحث الفرع'}
-              value={branchSearch}
-              onChange={(e) => setBranchSearch(e.target.value)}
-              disabled={isBranchLocked}
-              onKeyDown={(e) => {
-                if (isBranchLocked) return;
-                if (e.key !== 'Enter') return;
-                const needle = normalizeName(branchSearch);
-                if (!needle) return;
-                if (canViewAllLedgerEntries && (needle === 'كل الفروع' || needle.includes('كل الفروع'))) {
-                  setLedgerBranchMode('all');
-                  setBranchSearch('كل الفروع');
+              type="date"
+              className={isBackdateMode ? 'is-backdate' : isFutureDateMode ? 'is-future' : undefined}
+              value={trip.date}
+              max={canPickFutureDate ? undefined : todayIso}
+              min={canPickHistoricalDate ? undefined : todayIso}
+              title={
+                isBackdateMode
+                  ? 'تصحيح على تاريخ سابق'
+                  : isFutureDateMode
+                    ? 'دفتر بتاريخ مستقبلي — شحنات محمّلة اليوم ومسافرة لاحقاً'
+                    : canPickHistoricalDate && canPickFutureDate
+                      ? 'يمكن اختيار تاريخ سابق أو مستقبل حسب الصلاحية'
+                      : canPickHistoricalDate
+                        ? 'يمكن اختيار تواريخ سابقة'
+                        : canPickFutureDate
+                          ? 'يمكن اختيار تاريخ مستقبلي'
+                          : undefined
+              }
+              onChange={(e) => {
+                const next = e.target.value;
+                if (!canPickHistoricalDate && next < todayIso) {
+                  showToast('لا يمكن اختيار تاريخ سابق — يلزم صلاحية تعديل تاريخ الدفتر', 'info');
+                  setTrip((prev) => ({ ...prev, date: todayIso }));
                   return;
                 }
-                const found =
-                  branchChoices.find((b) => normalizeName(b.name) === needle) ??
-                  branchChoices.find((b) => normalizeName(b.name).includes(needle));
-                const backendId = found ? getBackendIdFromSynthetic(found.id) : undefined;
-                if (backendId) {
-                  setLedgerBranchMode('single');
-                  void setActiveBranch(backendId);
-                  setBranchSearch(found!.name);
-                }
-              }}
-              onBlur={() => {
-                if (isBranchLocked) return;
-                const needle = normalizeName(branchSearch);
-                if (!needle) return;
-                if (canViewAllLedgerEntries && (needle === 'كل الفروع' || needle.includes('كل الفروع'))) {
-                  setLedgerBranchMode('all');
-                  setBranchSearch('كل الفروع');
+                if (!canPickFutureDate && next > todayIso) {
+                  showToast('لا يمكن اختيار تاريخ مستقبلي — يلزم صلاحية تاريخ مستقبلي لدفتر الشحن', 'error');
                   return;
                 }
-                const found =
-                  branchChoices.find((b) => normalizeName(b.name) === needle) ??
-                  branchChoices.find((b) => normalizeName(b.name).includes(needle));
-                const backendId = found ? getBackendIdFromSynthetic(found.id) : undefined;
-                if (backendId) {
-                  setLedgerBranchMode('single');
-                  void setActiveBranch(backendId);
-                  setBranchSearch(found!.name);
-                }
+                setTrip((prev) => ({ ...prev, date: next }));
               }}
             />
-          </div>
+          </label>
+          <label>
+            <span>المركبة</span>
+            <select value={trip.vehicleId || ''} onChange={(e) => handleVehicleSelect(Number(e.target.value))}>
+              <option value="">اختر المركبة...</option>
+              {vehicles.map((vehicle) => (
+                <option key={vehicle.id} value={vehicle.id}>
+                  {vehicle.plateNumber}{vehicle.model ? ` — ${vehicle.model}` : ''}{vehicle.type ? ` (${vehicle.type})` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>السائق</span>
+            <select value={trip.driverId || ''} onChange={(e) => handleDriverSelect(Number(e.target.value))}>
+              <option value="">اختر السائق...</option>
+              {drivers.map((driver) => (
+                <option key={driver.id} value={driver.id}>
+                  {driver.code ? `${driver.code} — ` : ''}{driver.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="quick-ledger-trip-search">
+            <span>الفرع</span>
+            <div className="quick-ledger-search">
+              <Search size={14} />
+              <input
+                list="ledger-branch-list"
+                placeholder={canViewAllLedgerEntries ? 'كل الفروع أو فرع' : 'الفرع'}
+                value={branchSearch}
+                onChange={(e) => setBranchSearch(e.target.value)}
+                disabled={isBranchLocked}
+                onKeyDown={(e) => {
+                  if (isBranchLocked) return;
+                  if (e.key !== 'Enter') return;
+                  const needle = normalizeName(branchSearch);
+                  if (!needle) return;
+                  if (canViewAllLedgerEntries && (needle === 'كل الفروع' || needle.includes('كل الفروع'))) {
+                    setLedgerBranchMode('all');
+                    setBranchSearch('كل الفروع');
+                    return;
+                  }
+                  const found =
+                    branchChoices.find((b) => normalizeName(b.name) === needle) ??
+                    branchChoices.find((b) => normalizeName(b.name).includes(needle));
+                  const backendId = found ? getBackendIdFromSynthetic(found.id) : undefined;
+                  if (backendId) {
+                    setLedgerBranchMode('single');
+                    void setActiveBranch(backendId);
+                    setBranchSearch(found!.name);
+                  }
+                }}
+                onBlur={() => {
+                  if (isBranchLocked) return;
+                  const needle = normalizeName(branchSearch);
+                  if (!needle) return;
+                  if (canViewAllLedgerEntries && (needle === 'كل الفروع' || needle.includes('كل الفروع'))) {
+                    setLedgerBranchMode('all');
+                    setBranchSearch('كل الفروع');
+                    return;
+                  }
+                  const found =
+                    branchChoices.find((b) => normalizeName(b.name) === needle) ??
+                    branchChoices.find((b) => normalizeName(b.name).includes(needle));
+                  const backendId = found ? getBackendIdFromSynthetic(found.id) : undefined;
+                  if (backendId) {
+                    setLedgerBranchMode('single');
+                    void setActiveBranch(backendId);
+                    setBranchSearch(found!.name);
+                  }
+                }}
+              />
+            </div>
+          </label>
           <datalist id="ledger-branch-list">
             {canViewAllLedgerEntries && <option value="كل الفروع" />}
             {branchChoices.map((b) => (
               <option key={b.id} value={b.name} />
             ))}
           </datalist>
-          <div className="quick-ledger-search">
-            <Search size={16} />
-            <input placeholder="بحث سريع داخل الدفتر" value={searchQuick} onChange={(e) => setSearchQuick(e.target.value)} />
-          </div>
-          <button type="button" onClick={addRows}>
-            <Plus size={16} />
-            إضافة سطر
-          </button>
-          <QuickLedgerDispatchPanel
-            ledgerDate={trip.date}
-            lineLabel={trip.line}
-            lineOptions={lineOptions}
-            branches={branchChoices}
-            canPickBranch={canPickDispatchBranch}
-            preferredBranchId={dispatchPreferredBranchId}
-            lockedBranchId={dispatchLockedBranchId}
-            drivers={drivers}
-            vehicles={vehicles}
-            definitions={dispatchDefinitions}
-            onDefinitionsChange={setDispatchDefinitions}
-            onToast={showToast}
-            disabled={isCloudOffline}
-          />
-          <button type="button" onClick={() => void loadRemoteRows()} disabled={remoteLoading}>
-            {remoteLoading
-              ? remoteSyncedCount > 0
-                ? `مزامنة ${remoteSyncedCount}...`
-                : 'جاري التحديث...'
-              : 'تحديث'}
-          </button>
-          {canLedgerViewLoaded ? (
-            <label className="quick-ledger-print-toggle">
-              <input type="checkbox" checked={includeLoaded} onChange={(e) => setIncludeLoaded(e.target.checked)} />
-              إظهار المحمّلة
-            </label>
-          ) : null}
-          <QuickLedgerPrintHub
-            ref={printHubRef}
-            ledgerDate={trip.date}
-            lineLabel={trip.line}
-            lineOptions={lineOptions}
-            branches={branches}
-            canPickBranch={canPickDispatchBranch}
-            preferredBranchId={dispatchPreferredBranchId}
-            lockedBranchId={dispatchLockedBranchId}
-            canViewAllBranches={canViewAllLedgerEntries && ledgerBranchMode === 'all'}
-            includeLoaded={includeLoaded}
-            searchQuick={searchQuick}
-            catalogAgents={catalogAgents}
-            remoteRowsRaw={remoteRowsRaw}
-            drivers={drivers}
-            vehicles={vehicles}
-            dispatchDefinitions={dispatchDefinitions}
-            activeSessionId={activeSessionId}
-            activeSessionLabel={activeSessionPrintLabel}
-            canExportPdf={canLedgerExportPdf}
-            canPickFutureDate={canPickFutureDate}
-            canPickHistoricalDate={canPickHistoricalDate}
-            todayIso={todayIso}
-            currentTripDriverId={trip.driverId}
-            disabled={isCloudOffline}
-            onPrintShipments={handlePrintHubShipments}
-            onPrintReceipts={handlePrintHubReceipts}
-            onExportDestinationPdf={canLedgerExportPdf ? handlePrintHubDestinationPdf : undefined}
-            onToast={showToast}
-            onPreparePrint={handlePrintHubPrepare}
-          />
-          {activeSessionId && canLedgerCancelSession && !transferMode && !deleteMode ? (
-            <button
-              type="button"
-              onClick={() => requestCancelActiveSession()}
-              disabled={sessionSwitching || cancelingSession || isCloudOffline}
-              title="حلّ الإرسالية وإرجاع أسطرها إلى «الكل» دون حذف البيانات"
-            >
-              <X size={16} />
-              إلغاء إرسالية
-            </button>
-          ) : null}
-          {canLedgerTransfer ? (
-            transferMode ? (
-              <>
-                <button type="button" onClick={exitTransferMode} disabled={transferring}>
-                  إلغاء النقل
-                </button>
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={
-                    transferring ||
-                    isCloudOffline ||
-                    !selectedTransferRowIds.length ||
-                    transferSelectionSummary.hasMultipleBranches
-                  }
-                  onClick={() => void openTransferDialog()}
-                >
-                  <Truck size={16} />
-                  {`تأكيد نقل إرسالية (${selectedTransferRowIds.length})`}
-                </button>
-              </>
-            ) : canLedgerDeleteRows && deleteMode ? null : !deleteMode ? (
-              <button type="button" onClick={enterTransferMode} disabled={isCloudOffline}>
-                <Truck size={16} />
-                نقل إرسالية
-              </button>
-            ) : null
-          ) : null}
-          {canLedgerDeleteRows ? (
-            deleteMode ? (
-              <>
-                <button type="button" onClick={exitDeleteMode} disabled={deletingRows}>
-                  إلغاء التحديد
-                </button>
-                <button
-                  type="button"
-                  className="danger"
-                  disabled={deletingRows || !selectedDeleteRowIds.length || (isCloudOffline && selectedDeleteHasServerRows)}
-                  onClick={() => setDeleteConfirmOpen(true)}
-                >
-                  <Trash2 size={16} />
-                  {deletingRows ? 'جاري الحذف...' : `حذف المحدد (${selectedDeleteRowIds.length})`}
-                </button>
-              </>
-            ) : !transferMode ? (
-              <button type="button" className="danger" onClick={() => setDeleteMode(true)}>
-                <Trash2 size={16} />
-                حذف أسطر
-              </button>
-            ) : null
-          ) : null}
-          {canLedgerCloseSection ? (
-            <button type="button" onClick={() => setCloseConfirmOpen(true)}>
-              إغلاق القسم
-            </button>
-          ) : null}
-          {canLedgerSaveLog ? (
-            <button type="button" onClick={() => quickLedgerLog.download()} title="تنزيل سجل عمليات دفتر الشحن">
-              <ScrollText size={16} />
-              سجل الحفظ
-            </button>
-          ) : null}
-          {canLedgerPostShipments ? (
-            <button
-              type="button"
-              className="primary"
-              onClick={() => void saveRows()}
-              disabled={saving || loadingRefs || !activeSessionId || isCloudOffline}
-              title={isCloudOffline ? 'الحفظ على السحابة يحتاج اتصالاً. الصفوف المحلية بانتظار المزامنة.' : !activeSessionId ? SESSION_SCOPE_REQUIRED_MSG : undefined}
-            >
-              <Save size={16} />
-              {saving
-                ? 'جاري الحفظ...'
-                : stats.saved > 0 && stats.complete > 0
-                  ? `استكمال الحفظ (${stats.complete})`
-                  : 'حفظ الشحنات'}
-            </button>
-          ) : null}
-        </div>
-      </section>
-
-      <section className="quick-ledger-trip">
-        <label>
-          <span>الخط</span>
-          <select value={trip.line} onChange={(e) => handleTripLineChange(e.target.value)}>
-            <option value="">اختر الخط / المصدر</option>
-            {lineOptions.map((item) => (
-              <option key={item} value={item}>{item}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>رقم الرحلة</span>
-          <input value={trip.tripNo} onChange={(e) => setTrip({ ...trip, tripNo: e.target.value })} />
-        </label>
-        <label>
-          <span>التاريخ</span>
-          <input
-            type="date"
-            value={trip.date}
-            max={canPickFutureDate ? undefined : todayIso}
-            min={canPickHistoricalDate ? undefined : todayIso}
-            onChange={(e) => {
-              const next = e.target.value;
-              if (!canPickHistoricalDate && next < todayIso) {
-                showToast('لا يمكن اختيار تاريخ سابق — يلزم صلاحية تعديل تاريخ الدفتر', 'info');
-                setTrip((prev) => ({ ...prev, date: todayIso }));
-                return;
+          <label className="quick-ledger-trip-search">
+            <span>بحث</span>
+            <div className="quick-ledger-search">
+              <Search size={14} />
+              <input placeholder="وجهة أو إيصال..." value={searchQuick} onChange={(e) => setSearchQuick(e.target.value)} />
+            </div>
+          </label>
+          {canViewAllLedgerEntries ? (
+            <span
+              className="quick-ledger-scope-chip"
+              title={
+                ledgerBranchMode === 'all'
+                  ? 'وضع المدير — كل فروع الشركة لنفس التاريخ'
+                  : `وضع المدير — فرع ${activeBranchDisplayName}`
               }
-              if (!canPickFutureDate && next > todayIso) {
-                showToast('لا يمكن اختيار تاريخ مستقبلي — يلزم صلاحية تاريخ مستقبلي لدفتر الشحن', 'error');
-                return;
-              }
-              setTrip((prev) => ({ ...prev, date: next }));
-            }}
-          />
-        </label>
-        <label>
-          <span>المركبة</span>
-          <select value={trip.vehicleId || ''} onChange={(e) => handleVehicleSelect(Number(e.target.value))}>
-            <option value="">اختر المركبة...</option>
-            {vehicles.map((vehicle) => (
-              <option key={vehicle.id} value={vehicle.id}>
-                {vehicle.plateNumber}{vehicle.model ? ` — ${vehicle.model}` : ''}{vehicle.type ? ` (${vehicle.type})` : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>السائق</span>
-          <select value={trip.driverId || ''} onChange={(e) => handleDriverSelect(Number(e.target.value))}>
-            <option value="">اختر السائق...</option>
-            {drivers.map((driver) => (
-              <option key={driver.id} value={driver.id}>
-                {driver.code ? `${driver.code} — ` : ''}{driver.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {canPickHistoricalDate && (
-          <p className="quick-ledger-trip-hint">يمكن اختيار تواريخ سابقة لإدخال بيانات متأخرة أو تصحيح إيصالات ناقصة.</p>
-        )}
-        {canPickFutureDate && (
-          <p className="quick-ledger-trip-hint">يمكن اختيار تاريخ مستقبلي عند تحميل البضائع اليوم وسفر المركبة غداً (دوريات الجمارك).</p>
-        )}
-      </section>
+            >
+              {activeBranchDisplayName}
+              {' · '}
+              {remoteLoading ? '…' : `${remoteSyncedCount} سطر`}
+            </span>
+          ) : null}
+          {reprintRequired ? (
+            <span className="quick-ledger-scope-chip is-warn" title="تم تعديل الإرسالية بعد الطباعة">
+              أعد الطباعة
+            </span>
+          ) : null}
+        </section>
+      </header>
 
       <section className="quick-ledger-stats">
         {stats.searchActive && (
@@ -3916,11 +3945,14 @@ export default function ShipmentQuickLedger() {
             </span>
           )}
         </div>
-        {!activeSessionId && daySessions.length > 0 && (
-          <p className="quick-ledger-sessions-operational-hint" role="status">
-            وضع «الكل» للمراجعة والطباعة اليومية فقط. اختر إرسالية [1] أو [2]… قبل «حفظ الشحنات» أو الترحيل.
-          </p>
-        )}
+        {!activeSessionId && daySessions.length > 0 ? (
+          <span
+            className="quick-ledger-sessions-save-hint"
+            title="اختر إرسالية [1] أو [2]… قبل «حفظ الشحنات»"
+          >
+            اختر إرسالية للحفظ
+          </span>
+        ) : null}
         {activeSession && (
           <div className="quick-ledger-session-summary">
             <span>الإرسالية الحالية: <strong>#{activeSession.displayNo}</strong></span>
@@ -3954,38 +3986,6 @@ export default function ShipmentQuickLedger() {
           </div>
         )}
       </section>
-
-      {isBackdateMode && (
-        <div className="quick-ledger-backdate-banner" dir="rtl" role="alert">
-          تنبيه: أنت تعمل على تاريخ سابق ({trip.date}). سيُسجَّل هذا الإدخال كتصحيح على تاريخ سابق،
-          ويُمنع تكرار رقم الإيصال، وتُعلَّم الإرسالية القديمة بإعادة الطباعة عند التعديل.
-        </div>
-      )}
-
-      {isFutureDateMode && (
-        <div className="quick-ledger-backdate-banner" dir="rtl" role="status">
-          دفتر بتاريخ مستقبلي ({trip.date}) — للشحنات المحمّلة اليوم والمسافرة في الرحلة القادمة (مثلاً دورية جمارك الغد).
-        </div>
-      )}
-
-      {canViewAllLedgerEntries && (
-        <div className="quick-ledger-supervisor-banner" dir="rtl" role="status">
-          وضع المدير — النطاق: <strong>{activeBranchDisplayName}</strong> — التاريخ: <strong>{trip.date || '—'}</strong>
-          {' — '}
-          {remoteLoading
-            ? 'جاري التحميل...'
-            : `${remoteSyncedCount} سطر محفوظ (كل موظفي الإدخال)`}
-          {ledgerBranchMode === 'all' && !remoteLoading && (
-            <span> — يشمل حلب والرئيسي وجميع الفروع.</span>
-          )}
-        </div>
-      )}
-
-      {reprintRequired && (
-        <div className="quick-ledger-reprint-banner" dir="rtl" role="alert">
-          تم تعديل الإرسالية بعد الطباعة، يرجى إعادة الطباعة.
-        </div>
-      )}
 
       {transferMode && canLedgerTransfer && (
         <section className="quick-ledger-transfer-bar" dir="rtl">
