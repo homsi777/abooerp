@@ -68,6 +68,7 @@ import QuickLedgerAgentHelpDialog from '../components/shipping/QuickLedgerAgentH
 import QuickLedgerDispatchPanel from '../components/shipping/QuickLedgerDispatchPanel';
 import LedgerDispatchCombobox from '../components/shipping/LedgerDispatchCombobox';
 import type { DailyLedgerDispatchDefinition } from '../lib/shipping/dailyLedgerDispatchGateway';
+import { dailyLedgerDispatchGateway } from '../lib/shipping/dailyLedgerDispatchGateway';
 import {
   buildQuickCodesFromAgents,
   resolveGovernorateFromQuickCode,
@@ -1516,33 +1517,79 @@ export default function ShipmentQuickLedger() {
     };
   }, [activeBranchId, activeSessionId, canViewAllLedgerEntries, ledgerBranchMode, trip.date, trip.line]);
 
-  const dispatchScopeBlockedReason = useMemo(() => {
-    if (!trip.date) return 'اختر التاريخ أولاً لتعريف الإرساليات.';
-    if (!trip.line) return 'اختر الخط (مصدر البضاعة) أولاً.';
-    if (canViewAllLedgerEntries && ledgerBranchMode === 'all') {
-      const branchId = activeBranchId || resolveBranchBackendIdFromLine(trip.line, branches);
-      if (!branchId) {
-        return 'في وضع «كل الفروع» حدّد فرعاً واحداً من البحث أعلى الصفحة (مثل حلب أو الرئيسي) لتعريف الإرساليات.';
-      }
-    } else if (!activeBranchId) {
-      return 'اختر الفرع أولاً.';
-    }
-    return null;
-  }, [activeBranchId, branches, canViewAllLedgerEntries, ledgerBranchMode, trip.date, trip.line]);
+  /** المدير يختار الفرع داخل البطاقة؛ موظف الإدخال مربوط بفرعه فقط */
+  const canPickDispatchBranch = canViewAllLedgerEntries;
 
-  const dispatchScope = useMemo(() => {
-    if (!trip.date || !trip.line) return null;
-    const branchId =
+  const dispatchLockedBranchId = useMemo(() => {
+    if (canPickDispatchBranch) return null;
+    if (user?.branchId) return user.branchId;
+    if (activeBranchId) return activeBranchId;
+    const first = branchChoices[0];
+    return first ? getBackendIdFromSynthetic(first.id) ?? null : null;
+  }, [activeBranchId, branchChoices, canPickDispatchBranch, user?.branchId]);
+
+  const dispatchPreferredBranchId = useMemo(() => {
+    return (
+      activeBranchId ||
+      resolveBranchBackendIdFromLine(trip.line, branches) ||
+      dispatchLockedBranchId
+    );
+  }, [activeBranchId, branches, dispatchLockedBranchId, trip.line]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const ledgerDate = trip.date?.trim();
+    const lineLabel = trip.line?.trim();
+    if (!ledgerDate || !lineLabel) {
+      setDispatchDefinitions([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const branchIds =
       canViewAllLedgerEntries && ledgerBranchMode === 'all'
-        ? activeBranchId || resolveBranchBackendIdFromLine(trip.line, branches)
-        : activeBranchId;
-    if (!branchId) return null;
-    return {
-      branchId,
-      ledgerDate: trip.date,
-      lineLabel: trip.line,
+        ? branchChoices
+            .map((branch) => getBackendIdFromSynthetic(branch.id))
+            .filter((value): value is string => Boolean(value))
+        : [
+            dispatchPreferredBranchId ||
+              getBackendIdFromSynthetic(branchChoices[0]?.id) ||
+              '',
+          ].filter(Boolean);
+
+    if (!branchIds.length) return () => {
+      cancelled = true;
     };
-  }, [activeBranchId, branches, canViewAllLedgerEntries, ledgerBranchMode, trip.date, trip.line]);
+
+    void (async () => {
+      try {
+        const lists = await Promise.all(
+          branchIds.map((branchId) =>
+            dailyLedgerDispatchGateway.list({ branchId, ledgerDate, lineLabel }),
+          ),
+        );
+        if (cancelled) return;
+        const merged = [
+          ...new Map(lists.flatMap((result) => result.definitions).map((item) => [item.id, item])).values(),
+        ].sort((a, b) => a.dispatch_no - b.dispatch_no);
+        setDispatchDefinitions(merged);
+      } catch {
+        if (!cancelled) setDispatchDefinitions([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    branchChoices,
+    canViewAllLedgerEntries,
+    dispatchPreferredBranchId,
+    ledgerBranchMode,
+    trip.date,
+    trip.line,
+  ]);
 
   const draftScopeKey = useMemo(() => {
     if (!activeDraftContext) return '';
@@ -4308,8 +4355,13 @@ export default function ShipmentQuickLedger() {
             إضافة سطر
           </button>
           <QuickLedgerDispatchPanel
-            scope={dispatchScope}
-            scopeBlockedReason={dispatchScopeBlockedReason}
+            ledgerDate={trip.date}
+            lineLabel={trip.line}
+            lineOptions={lineOptions}
+            branches={branchChoices}
+            canPickBranch={canPickDispatchBranch}
+            preferredBranchId={dispatchPreferredBranchId}
+            lockedBranchId={dispatchLockedBranchId}
             drivers={drivers}
             vehicles={vehicles}
             definitions={dispatchDefinitions}
@@ -4798,7 +4850,11 @@ export default function ShipmentQuickLedger() {
                     <LedgerDispatchCombobox
                       value={row.dispatchNo ?? ''}
                       dispatchId={row.dispatchId}
-                      definitions={dispatchDefinitions}
+                      definitions={
+                        row.branchBackendId
+                          ? dispatchDefinitions.filter((item) => item.branch_id === row.branchBackendId)
+                          : dispatchDefinitions
+                      }
                       disabled={locked}
                       rowId={row.id}
                       inputId={`ledger-dispatch-${row.id}`}

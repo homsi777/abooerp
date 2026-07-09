@@ -1,16 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Truck, X } from 'lucide-react';
+import { CalendarDays, MapPin, Plus, Trash2, Truck, X } from 'lucide-react';
 import { getBackendIdFromSynthetic } from '../../lib/api/phase15Gateway';
 import {
   dailyLedgerDispatchGateway,
   type DailyLedgerDispatchDefinition,
   type DailyLedgerDispatchScope,
 } from '../../lib/shipping/dailyLedgerDispatchGateway';
-import type { Driver, Vehicle } from '../../types';
+import type { Branch, Driver, Vehicle } from '../../types';
 
 type QuickLedgerDispatchPanelProps = {
-  scope: DailyLedgerDispatchScope | null;
-  scopeBlockedReason?: string | null;
+  ledgerDate: string;
+  lineLabel: string;
+  lineOptions: string[];
+  branches: Branch[];
+  canPickBranch: boolean;
+  preferredBranchId: string | null;
+  lockedBranchId: string | null;
   drivers: Driver[];
   vehicles: Vehicle[];
   definitions: DailyLedgerDispatchDefinition[];
@@ -19,9 +24,19 @@ type QuickLedgerDispatchPanelProps = {
   disabled?: boolean;
 };
 
+function resolveBranchBackendId(branch: Branch | undefined): string | null {
+  if (!branch) return null;
+  return getBackendIdFromSynthetic(branch.id) ?? null;
+}
+
 export default function QuickLedgerDispatchPanel({
-  scope,
-  scopeBlockedReason = null,
+  ledgerDate,
+  lineLabel,
+  lineOptions,
+  branches,
+  canPickBranch,
+  preferredBranchId,
+  lockedBranchId,
   drivers,
   vehicles,
   definitions,
@@ -30,6 +45,8 @@ export default function QuickLedgerDispatchPanel({
   disabled = false,
 }: QuickLedgerDispatchPanelProps) {
   const [open, setOpen] = useState(false);
+  const [selectedBranchId, setSelectedBranchId] = useState('');
+  const [selectedLine, setSelectedLine] = useState('');
   const [dispatchNo, setDispatchNo] = useState('1');
   const [driverId, setDriverId] = useState('');
   const [vehicleId, setVehicleId] = useState('');
@@ -37,17 +54,75 @@ export default function QuickLedgerDispatchPanel({
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const sortedDefinitions = useMemo(
-    () => [...definitions].sort((a, b) => a.dispatch_no - b.dispatch_no),
-    [definitions],
+  const branchOptions = useMemo(
+    () =>
+      branches
+        .map((branch) => ({
+          branch,
+          backendId: resolveBranchBackendId(branch),
+        }))
+        .filter((item): item is { branch: Branch; backendId: string } => Boolean(item.backendId)),
+    [branches],
   );
 
-  const loadDefinitions = async () => {
-    if (!scope) return;
+  useEffect(() => {
+    const fallbackBranchId =
+      lockedBranchId ||
+      preferredBranchId ||
+      branchOptions[0]?.backendId ||
+      '';
+    setSelectedBranchId((prev) => {
+      if (lockedBranchId) return lockedBranchId;
+      if (prev && branchOptions.some((item) => item.backendId === prev)) return prev;
+      return fallbackBranchId;
+    });
+  }, [branchOptions, lockedBranchId, preferredBranchId]);
+
+  useEffect(() => {
+    setSelectedLine((prev) => {
+      const next = lineLabel.trim() || prev;
+      if (next) return next;
+      return lineOptions[0] ?? '';
+    });
+  }, [lineLabel, lineOptions]);
+
+  const effectiveScope = useMemo<DailyLedgerDispatchScope | null>(() => {
+    if (!ledgerDate || !selectedLine.trim() || !selectedBranchId) return null;
+    return {
+      branchId: selectedBranchId,
+      ledgerDate,
+      lineLabel: selectedLine.trim(),
+    };
+  }, [ledgerDate, selectedBranchId, selectedLine]);
+
+  const selectedBranchName = useMemo(() => {
+    const hit = branchOptions.find((item) => item.backendId === selectedBranchId);
+    return hit?.branch.name ?? '—';
+  }, [branchOptions, selectedBranchId]);
+
+  const sortedDefinitions = useMemo(() => {
+    const scoped = canPickBranch
+      ? definitions
+      : definitions.filter((item) => item.branch_id === selectedBranchId);
+    return [...scoped].sort((a, b) => a.dispatch_no - b.dispatch_no);
+  }, [canPickBranch, definitions, selectedBranchId]);
+
+  const scopeBlockedReason = useMemo(() => {
+    if (!ledgerDate) return 'اختر التاريخ من شاشة الدفتر أولاً.';
+    if (!selectedLine.trim()) return 'اختر الخط (مصدر البضاعة) من القائمة أدناه.';
+    if (!selectedBranchId) return 'اختر الفرع من القائمة أدناه.';
+    return null;
+  }, [ledgerDate, selectedBranchId, selectedLine]);
+
+  const loadDefinitions = async (scope: DailyLedgerDispatchScope) => {
     setLoading(true);
     try {
       const result = await dailyLedgerDispatchGateway.list({ ...scope, suggestNext: true });
-      onDefinitionsChange(result.definitions);
+      const merged = [
+        ...definitions.filter((item) => item.branch_id !== scope.branchId),
+        ...result.definitions,
+      ].sort((a, b) => a.dispatch_no - b.dispatch_no);
+      onDefinitionsChange(merged);
       if (result.nextDispatchNo) setDispatchNo(String(result.nextDispatchNo));
     } catch (error) {
       onToast(error instanceof Error ? error.message : 'تعذر تحميل تعريفات الإرساليات', 'error');
@@ -57,9 +132,9 @@ export default function QuickLedgerDispatchPanel({
   };
 
   useEffect(() => {
-    if (!open || !scope) return;
-    void loadDefinitions();
-  }, [open, scope?.branchId, scope?.ledgerDate, scope?.lineLabel]);
+    if (!open || !effectiveScope) return;
+    void loadDefinitions(effectiveScope);
+  }, [open, effectiveScope?.branchId, effectiveScope?.ledgerDate, effectiveScope?.lineLabel]);
 
   const resetForm = (nextNo?: number) => {
     setDriverId('');
@@ -69,7 +144,7 @@ export default function QuickLedgerDispatchPanel({
   };
 
   const handleCreate = async () => {
-    if (!scope || disabled || busy) return;
+    if (!effectiveScope || disabled || busy || scopeBlockedReason) return;
     const no = Number(dispatchNo);
     if (!Number.isFinite(no) || no < 1) {
       onToast('أدخل رقم إرسالية صحيحاً (1، 2، 3…)', 'error');
@@ -84,7 +159,7 @@ export default function QuickLedgerDispatchPanel({
     setBusy(true);
     try {
       const created = await dailyLedgerDispatchGateway.create({
-        ...scope,
+        ...effectiveScope,
         dispatchNo: no,
         driverId: driver ? getBackendIdFromSynthetic(driver.id) : null,
         vehicleId: vehicle ? getBackendIdFromSynthetic(vehicle.id) : null,
@@ -94,11 +169,14 @@ export default function QuickLedgerDispatchPanel({
           : null,
         tripNo: tripNo.trim() || null,
       });
-      const next = [...definitions, created].sort((a, b) => a.dispatch_no - b.dispatch_no);
+      const next = [
+        ...definitions.filter((item) => item.id !== created.id && item.branch_id !== effectiveScope.branchId),
+        created,
+      ].sort((a, b) => a.dispatch_no - b.dispatch_no);
       onDefinitionsChange(next);
-      const suggested = await dailyLedgerDispatchGateway.list({ ...scope, suggestNext: true });
+      const suggested = await dailyLedgerDispatchGateway.list({ ...effectiveScope, suggestNext: true });
       resetForm(suggested.nextDispatchNo ?? no + 1);
-      onToast(`تم تعريف الإرسالية #${created.dispatch_no}`, 'success');
+      onToast(`تم تعريف الإرسالية #${created.dispatch_no} — ${selectedBranchName}`, 'success');
     } catch (error) {
       onToast(error instanceof Error ? error.message : 'تعذر إنشاء تعريف الإرسالية', 'error');
     } finally {
@@ -107,7 +185,7 @@ export default function QuickLedgerDispatchPanel({
   };
 
   const handleDelete = async (definition: DailyLedgerDispatchDefinition) => {
-    if (!scope || disabled || busy) return;
+    if (!effectiveScope || disabled || busy) return;
     if (!window.confirm(`حذف تعريف الإرسالية #${definition.dispatch_no}؟`)) return;
     setBusy(true);
     try {
@@ -121,7 +199,7 @@ export default function QuickLedgerDispatchPanel({
     }
   };
 
-  const canUseForm = Boolean(scope) && !disabled && !scopeBlockedReason;
+  const canUseForm = Boolean(effectiveScope) && !disabled && !scopeBlockedReason;
 
   return (
     <>
@@ -141,157 +219,235 @@ export default function QuickLedgerDispatchPanel({
 
       {open ? (
         <div
-          className="quick-ledger-confirm"
+          className="quick-ledger-dispatch-overlay"
           role="dialog"
           aria-modal="true"
           aria-labelledby="quick-ledger-dispatch-modal-title"
           onClick={() => setOpen(false)}
         >
           <div
-            className="quick-ledger-confirm-panel quick-ledger-dispatch-modal"
+            className="quick-ledger-dispatch-dialog"
             dir="rtl"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="quick-ledger-dispatch-modal-header">
-              <div>
-                <h3 id="quick-ledger-dispatch-modal-title">تعريف إرساليات اليوم</h3>
-                <p className="quick-ledger-dispatch-modal-subtitle">
-                  عرّف رقم إرسالية + سائق + مركبة لهذا التاريخ، ثم اختر الرقم من عمود «إرسالية» في الجدول.
+            <header className="quick-ledger-dispatch-dialog-hero">
+              <div className="quick-ledger-dispatch-dialog-hero-text">
+                <span className="quick-ledger-dispatch-dialog-eyebrow">دفتر الشحن اليومي</span>
+                <h2 id="quick-ledger-dispatch-modal-title">تعريف إرساليات اليوم</h2>
+                <p>
+                  {canPickBranch
+                    ? 'حدّد الفرع والخط، ثم أنشئ إرساليات مرقّمة. بعدها اختر الرقم من عمود «إرسالية» في جدول الإدخال.'
+                    : `فرعك: ${selectedBranchName} — أنشئ إرساليات مرقّمة واربط الأسطر بها من الجدول.`}
                 </p>
               </div>
               <button
                 type="button"
-                className="quick-ledger-dispatch-modal-close"
+                className="quick-ledger-dispatch-dialog-close"
                 aria-label="إغلاق"
                 onClick={() => setOpen(false)}
               >
-                <X size={18} />
+                <X size={20} />
               </button>
-            </div>
+            </header>
 
-            {scopeBlockedReason ? (
-              <p className="quick-ledger-dispatch-blocked" role="status">
-                {scopeBlockedReason}
-              </p>
-            ) : null}
-
-            {scope ? (
-              <>
-                <div className="quick-ledger-dispatch-form">
-                  <label>
-                    <span>رقم الإرسالية</span>
-                    <input
-                      type="number"
-                      min={1}
-                      value={dispatchNo}
-                      disabled={!canUseForm || busy}
-                      onChange={(e) => setDispatchNo(e.target.value)}
-                    />
+            <div className="quick-ledger-dispatch-dialog-body">
+              <section className="quick-ledger-dispatch-context-card">
+                <h3>نطاق التعريف</h3>
+                <div className="quick-ledger-dispatch-context-grid">
+                  <label className="quick-ledger-dispatch-field">
+                    <span><CalendarDays size={14} aria-hidden /> التاريخ</span>
+                    <input className="quick-ledger-dispatch-input" value={ledgerDate || '—'} readOnly />
                   </label>
-                  <label>
-                    <span>السائق</span>
+                  <label className="quick-ledger-dispatch-field">
+                    <span><MapPin size={14} aria-hidden /> الخط (مصدر البضاعة)</span>
                     <select
-                      value={driverId}
-                      disabled={!canUseForm || busy}
-                      onChange={(e) => setDriverId(e.target.value)}
+                      className="quick-ledger-dispatch-input"
+                      value={selectedLine}
+                      disabled={!lineOptions.length}
+                      onChange={(e) => setSelectedLine(e.target.value)}
                     >
-                      <option value="">اختر...</option>
-                      {drivers.map((driver) => (
-                        <option key={driver.id} value={driver.id}>
-                          {driver.code ? `${driver.code} — ` : ''}{driver.name}
+                      <option value="">اختر الخط...</option>
+                      {lineOptions.map((line) => (
+                        <option key={line} value={line}>
+                          {line}
                         </option>
                       ))}
                     </select>
                   </label>
-                  <label>
-                    <span>المركبة</span>
-                    <select
-                      value={vehicleId}
-                      disabled={!canUseForm || busy}
-                      onChange={(e) => setVehicleId(e.target.value)}
-                    >
-                      <option value="">اختر...</option>
-                      {vehicles.map((vehicle) => (
-                        <option key={vehicle.id} value={vehicle.id}>
-                          {vehicle.plateNumber}
-                          {vehicle.model ? ` — ${vehicle.model}` : ''}
-                        </option>
-                      ))}
-                    </select>
+                  <label className="quick-ledger-dispatch-field">
+                    <span>الفرع</span>
+                    {canPickBranch ? (
+                      <select
+                        className="quick-ledger-dispatch-input"
+                        value={selectedBranchId}
+                        onChange={(e) => setSelectedBranchId(e.target.value)}
+                      >
+                        <option value="">اختر الفرع...</option>
+                        {branchOptions.map(({ branch, backendId }) => (
+                          <option key={backendId} value={backendId}>
+                            {branch.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input className="quick-ledger-dispatch-input" value={selectedBranchName} readOnly />
+                    )}
                   </label>
-                  <label>
-                    <span>رقم الرحلة</span>
-                    <input
-                      value={tripNo}
-                      disabled={!canUseForm || busy}
-                      onChange={(e) => setTripNo(e.target.value)}
-                    />
-                  </label>
+                </div>
+                {scopeBlockedReason ? (
+                  <p className="quick-ledger-dispatch-blocked" role="status">
+                    {scopeBlockedReason}
+                  </p>
+                ) : null}
+              </section>
+
+              <div className="quick-ledger-dispatch-dialog-columns">
+                <section className="quick-ledger-dispatch-create-card">
+                  <div className="quick-ledger-dispatch-section-head">
+                    <h3>إضافة إرسالية جديدة</h3>
+                    <span className="quick-ledger-dispatch-section-hint">رقم + سائق + مركبة</span>
+                  </div>
+                  <div className="quick-ledger-dispatch-create-grid">
+                    <label className="quick-ledger-dispatch-field">
+                      <span>رقم الإرسالية</span>
+                      <input
+                        className="quick-ledger-dispatch-input quick-ledger-dispatch-input-number"
+                        type="number"
+                        min={1}
+                        value={dispatchNo}
+                        disabled={!canUseForm || busy}
+                        onChange={(e) => setDispatchNo(e.target.value)}
+                      />
+                    </label>
+                    <label className="quick-ledger-dispatch-field">
+                      <span>السائق</span>
+                      <select
+                        className="quick-ledger-dispatch-input"
+                        value={driverId}
+                        disabled={!canUseForm || busy}
+                        onChange={(e) => setDriverId(e.target.value)}
+                      >
+                        <option value="">اختر السائق...</option>
+                        {drivers.map((driver) => (
+                          <option key={driver.id} value={driver.id}>
+                            {driver.code ? `${driver.code} — ` : ''}{driver.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="quick-ledger-dispatch-field">
+                      <span>المركبة</span>
+                      <select
+                        className="quick-ledger-dispatch-input"
+                        value={vehicleId}
+                        disabled={!canUseForm || busy}
+                        onChange={(e) => setVehicleId(e.target.value)}
+                      >
+                        <option value="">اختر المركبة...</option>
+                        {vehicles.map((vehicle) => (
+                          <option key={vehicle.id} value={vehicle.id}>
+                            {vehicle.plateNumber}
+                            {vehicle.model ? ` — ${vehicle.model}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="quick-ledger-dispatch-field">
+                      <span>رقم الرحلة</span>
+                      <input
+                        className="quick-ledger-dispatch-input"
+                        value={tripNo}
+                        disabled={!canUseForm || busy}
+                        onChange={(e) => setTripNo(e.target.value)}
+                        placeholder="اختياري"
+                      />
+                    </label>
+                  </div>
                   <button
                     type="button"
-                    className="primary"
+                    className="quick-ledger-dispatch-submit"
                     disabled={!canUseForm || busy}
                     onClick={() => void handleCreate()}
                   >
-                    <Plus size={14} />
+                    <Plus size={16} />
                     {busy ? 'جاري الحفظ...' : 'تعريف إرسالية'}
                   </button>
-                </div>
+                </section>
 
-                {loading ? (
-                  <p className="quick-ledger-dispatch-empty">جاري تحميل التعريفات...</p>
-                ) : sortedDefinitions.length > 0 ? (
-                  <div className="quick-ledger-dispatch-table-wrap">
-                    <table className="quick-ledger-dispatch-table">
-                      <thead>
-                        <tr>
-                          <th>رقم</th>
-                          <th>السائق</th>
-                          <th>المركبة</th>
-                          <th>رقم الرحلة</th>
-                          <th>أسطر</th>
-                          <th />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sortedDefinitions.map((definition) => (
-                          <tr key={definition.id}>
-                            <td><strong>#{definition.dispatch_no}</strong></td>
-                            <td>{definition.driver_label || '—'}</td>
-                            <td>{definition.vehicle_label || '—'}</td>
-                            <td>{definition.trip_no || '—'}</td>
-                            <td>{definition.rows_count ?? 0}</td>
-                            <td>
-                              <button
-                                type="button"
-                                className="danger subtle"
-                                disabled={disabled || busy || (definition.rows_count ?? 0) > 0}
-                                title={
-                                  (definition.rows_count ?? 0) > 0
-                                    ? 'لا يمكن الحذف — يوجد أسطر مرتبطة'
-                                    : 'حذف التعريف'
-                                }
-                                onClick={() => void handleDelete(definition)}
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                <section className="quick-ledger-dispatch-list-card">
+                  <div className="quick-ledger-dispatch-section-head">
+                    <h3>الإرساليات المعرّفة</h3>
+                    <span className="quick-ledger-dispatch-count-badge">{sortedDefinitions.length}</span>
                   </div>
-                ) : (
-                  <p className="quick-ledger-dispatch-empty">لا توجد إرساليات معرّفة لهذا التاريخ بعد.</p>
-                )}
-              </>
-            ) : null}
 
-            <div className="quick-ledger-dispatch-modal-footer">
-              <button type="button" onClick={() => setOpen(false)}>
+                  {loading ? (
+                    <div className="quick-ledger-dispatch-empty-state">جاري تحميل التعريفات...</div>
+                  ) : sortedDefinitions.length > 0 ? (
+                    <div className="quick-ledger-dispatch-table-wrap">
+                      <table className="quick-ledger-dispatch-table">
+                        <thead>
+                          <tr>
+                            {canPickBranch ? <th>الفرع</th> : null}
+                            <th>رقم</th>
+                            <th>السائق</th>
+                            <th>المركبة</th>
+                            <th>رقم الرحلة</th>
+                            <th>أسطر</th>
+                            <th />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sortedDefinitions.map((definition) => {
+                            const branchName =
+                              branchOptions.find((item) => item.backendId === definition.branch_id)?.branch
+                                .name ?? '—';
+                            return (
+                              <tr key={definition.id}>
+                                {canPickBranch ? <td>{branchName}</td> : null}
+                                <td>
+                                  <span className="quick-ledger-dispatch-no">#{definition.dispatch_no}</span>
+                                </td>
+                                <td>{definition.driver_label || '—'}</td>
+                                <td>{definition.vehicle_label || '—'}</td>
+                                <td>{definition.trip_no || '—'}</td>
+                                <td>{definition.rows_count ?? 0}</td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="quick-ledger-dispatch-delete"
+                                    disabled={disabled || busy || (definition.rows_count ?? 0) > 0}
+                                    title={
+                                      (definition.rows_count ?? 0) > 0
+                                        ? 'لا يمكن الحذف — يوجد أسطر مرتبطة'
+                                        : 'حذف التعريف'
+                                    }
+                                    onClick={() => void handleDelete(definition)}
+                                  >
+                                    <Trash2 size={15} />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="quick-ledger-dispatch-empty-state">
+                      <Truck size={28} strokeWidth={1.5} aria-hidden />
+                      <p>لا توجد إرساليات معرّفة لهذا النطاق بعد.</p>
+                      <span>أضف أول إرسالية من النموذج على اليسار.</span>
+                    </div>
+                  )}
+                </section>
+              </div>
+            </div>
+
+            <footer className="quick-ledger-dispatch-dialog-footer">
+              <button type="button" className="quick-ledger-dispatch-footer-btn" onClick={() => setOpen(false)}>
                 إغلاق
               </button>
-            </div>
+            </footer>
           </div>
         </div>
       ) : null}
