@@ -22,6 +22,12 @@ export type CustomSaveSubmit = {
   targetDate: string;
 };
 
+type DestinationGroup = {
+  key: string;
+  label: string;
+  rowIds: number[];
+};
+
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -37,6 +43,25 @@ type Props = {
 
 function driverLabel(driver: Driver): string {
   return driver.name?.trim() || `#${driver.id}`;
+}
+
+function destinationKey(value: string): string {
+  const trimmed = value.trim();
+  return trimmed || '—';
+}
+
+function buildDestinationGroups(rows: CustomSaveRow[]): DestinationGroup[] {
+  const map = new Map<string, DestinationGroup>();
+  for (const row of rows) {
+    const key = destinationKey(row.destination);
+    const existing = map.get(key);
+    if (existing) {
+      existing.rowIds.push(row.id);
+      continue;
+    }
+    map.set(key, { key, label: key, rowIds: [row.id] });
+  }
+  return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, 'ar'));
 }
 
 export default function QuickLedgerCustomSaveDialog({
@@ -60,6 +85,19 @@ export default function QuickLedgerCustomSaveDialog({
     () => candidateRows.filter((row) => isRowComplete(row) && !row.postedShipmentId),
     [candidateRows, isRowComplete],
   );
+
+  const destinationGroups = useMemo(() => buildDestinationGroups(eligibleRows), [eligibleRows]);
+
+  const rowsByDestination = useMemo(() => {
+    const groups = new Map<string, CustomSaveRow[]>();
+    for (const row of eligibleRows) {
+      const key = destinationKey(row.destination);
+      const bucket = groups.get(key) ?? [];
+      bucket.push(row);
+      groups.set(key, bucket);
+    }
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b, 'ar'));
+  }, [eligibleRows]);
 
   useEffect(() => {
     if (!open) return;
@@ -105,6 +143,24 @@ export default function QuickLedgerCustomSaveDialog({
     }
   };
 
+  const toggleDestination = (rowIds: number[]) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      const allSelected = rowIds.every((rowId) => next.has(rowId));
+      if (allSelected) {
+        rowIds.forEach((rowId) => next.delete(rowId));
+      } else {
+        rowIds.forEach((rowId) => next.add(rowId));
+      }
+      return next;
+    });
+  };
+
+  const isDestinationFullySelected = (rowIds: number[]) => rowIds.every((rowId) => selectedIds.has(rowId));
+
+  const isDestinationPartiallySelected = (rowIds: number[]) =>
+    rowIds.some((rowId) => selectedIds.has(rowId)) && !isDestinationFullySelected(rowIds);
+
   const handleSubmit = () => {
     if (!driverId) return;
     if (!selectedIds.size) return;
@@ -121,7 +177,7 @@ export default function QuickLedgerCustomSaveDialog({
   return (
     <div className="quick-ledger-dispatch-dialog-backdrop" role="presentation" onClick={onClose}>
       <div
-        className="quick-ledger-dispatch-dialog"
+        className="quick-ledger-dispatch-dialog quick-ledger-custom-save-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="custom-save-title"
@@ -132,7 +188,7 @@ export default function QuickLedgerCustomSaveDialog({
             <span className="quick-ledger-dispatch-dialog-eyebrow">دفتر الشحن اليومي</span>
             <h3 id="custom-save-title">حفظ مخصص — إرسالية</h3>
             <p className="quick-ledger-dispatch-dialog-sub">
-              اختر الأسطر والسائق والتاريخ ثم احفظ وارحّل الشحنات في خطوة واحدة.
+              اختر الوجهات أو الأسطر، ثم حدّد السائق والتاريخ واحفظ وارحّل الشحنات في خطوة واحدة.
             </p>
           </div>
           <button type="button" className="quick-ledger-dispatch-dialog-close" onClick={onClose} aria-label="إغلاق">
@@ -174,6 +230,47 @@ export default function QuickLedgerCustomSaveDialog({
             </label>
           </div>
 
+          {destinationGroups.length > 0 ? (
+            <section className="quick-ledger-custom-save-destinations" aria-label="الوجهات">
+              <div className="quick-ledger-custom-save-section-head">
+                <h4>الوجهات</h4>
+                <span>{destinationGroups.length} وجهة · {selectedIds.size} / {eligibleRows.length} سطر</span>
+              </div>
+              <div className="quick-ledger-custom-save-destination-list">
+                {destinationGroups.map((group) => {
+                  const selectedCount = group.rowIds.filter((rowId) => selectedIds.has(rowId)).length;
+                  const fullySelected = isDestinationFullySelected(group.rowIds);
+                  const partiallySelected = isDestinationPartiallySelected(group.rowIds);
+                  return (
+                    <div
+                      key={group.key}
+                      className={[
+                        'quick-ledger-custom-save-destination-item',
+                        fullySelected ? 'is-selected' : partiallySelected ? 'is-partial' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                    >
+                      <div className="quick-ledger-custom-save-destination-info">
+                        <strong>{group.label}</strong>
+                        <span>
+                          {selectedCount} / {group.rowIds.length} سطر
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="quick-ledger-custom-save-destination-select"
+                        onClick={() => toggleDestination(group.rowIds)}
+                      >
+                        {fullySelected ? 'إلغاء التحديد' : 'تحديد'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+
           <div className="quick-ledger-custom-save-rows-header">
             <label className="quick-ledger-custom-save-select-all">
               <input
@@ -182,7 +279,7 @@ export default function QuickLedgerCustomSaveDialog({
                 onChange={toggleAll}
               />
               <span>
-                الأسطر المكتملة ({selectedIds.size} / {eligibleRows.length})
+                تحديد كل الأسطر ({selectedIds.size} / {eligibleRows.length})
               </span>
             </label>
           </div>
@@ -191,22 +288,48 @@ export default function QuickLedgerCustomSaveDialog({
             {eligibleRows.length === 0 ? (
               <p className="quick-ledger-custom-save-empty">لا توجد أسطر مكتملة جاهزة للحفظ.</p>
             ) : (
-              eligibleRows.map((row) => (
-                <label key={row.id} className="quick-ledger-custom-save-row">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(row.id)}
-                    onChange={() => toggleRow(row.id)}
-                  />
-                  <span className="quick-ledger-custom-save-row-main">
-                    <strong>{row.receiptNo || `سطر ${row.id}`}</strong>
-                    <span>{row.destination || '—'}</span>
-                  </span>
-                  <span className="quick-ledger-custom-save-row-meta">
-                    {row.parcelCount || '0'} طرود · {row.weightKg || '0'} كغ
-                  </span>
-                </label>
-              ))
+              <>
+                <div className="quick-ledger-custom-save-row quick-ledger-custom-save-row-head" aria-hidden>
+                  <span />
+                  <span>الإيصال / النوع</span>
+                  <span>المرسل / المستلم</span>
+                  <span>طرود · وزن</span>
+                </div>
+                {rowsByDestination.map(([destKey, destRows]) => (
+                  <div key={destKey} className="quick-ledger-custom-save-destination-block">
+                    <div className="quick-ledger-custom-save-destination-block-title">
+                      <span>{destKey}</span>
+                      <button
+                        type="button"
+                        className="quick-ledger-custom-save-destination-select is-inline"
+                        onClick={() => toggleDestination(destRows.map((row) => row.id))}
+                      >
+                        {isDestinationFullySelected(destRows.map((row) => row.id)) ? 'إلغاء' : 'تحديد'}
+                      </button>
+                    </div>
+                    {destRows.map((row) => (
+                      <label key={row.id} className="quick-ledger-custom-save-row">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(row.id)}
+                          onChange={() => toggleRow(row.id)}
+                        />
+                        <span className="quick-ledger-custom-save-row-main">
+                          <strong>{row.receiptNo || `سطر ${row.id}`}</strong>
+                          <span>{row.parcelType || '—'}</span>
+                        </span>
+                        <span className="quick-ledger-custom-save-row-parties">
+                          <span>{row.sender || '—'}</span>
+                          <span>{row.receiver || '—'}</span>
+                        </span>
+                        <span className="quick-ledger-custom-save-row-meta">
+                          {row.parcelCount || '0'} طرود · {row.weightKg || '0'} كغ
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                ))}
+              </>
             )}
           </div>
         </div>
