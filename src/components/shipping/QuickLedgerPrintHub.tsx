@@ -12,7 +12,6 @@ import {
   Package,
   Printer,
   Receipt,
-  Truck,
   X,
 } from 'lucide-react';
 import { getBackendIdFromSynthetic } from '../../lib/api/phase15Gateway';
@@ -22,13 +21,11 @@ import {
 } from '../../lib/shipping/dailyLedgerScope';
 import { dedupeDailyLedgerRowsById } from '../../lib/shipping/dailyLedgerPrintable';
 import { filterRemoteRowsBySearch, sortRemoteRowsChronological } from '../../lib/shipping/dailyLedgerRowFilter';
-import type { DailyLedgerDispatchDefinition } from '../../lib/shipping/dailyLedgerDispatchGateway';
 import type { RemoteDailyLedgerRow } from '../../lib/shipping/dailyLedgerTypes';
 import {
   ALL_DRIVERS_PRINT_KEY,
   buildCatalogDriverOptions,
   buildDestinationSummaries,
-  buildDispatchSummaries,
   filterRowsForPrintHub,
   type PrintHubDriverSelection,
   type PrintHubMode,
@@ -37,7 +34,6 @@ import type { Branch, Driver, Vehicle } from '../../types';
 
 export type QuickLedgerPrintHubOpenOptions = {
   mode?: PrintHubMode;
-  sessionOnly?: boolean;
 };
 
 export type QuickLedgerPrintHubHandle = {
@@ -72,9 +68,6 @@ type QuickLedgerPrintHubProps = {
   remoteRowsRaw: RemoteDailyLedgerRow[];
   drivers: Driver[];
   vehicles: Vehicle[];
-  dispatchDefinitions: DailyLedgerDispatchDefinition[];
-  activeSessionId: string | null;
-  activeSessionLabel?: string;
   canExportPdf: boolean;
   canPickFutureDate: boolean;
   canPickHistoricalDate: boolean;
@@ -117,9 +110,6 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
       remoteRowsRaw,
       drivers,
       vehicles,
-      dispatchDefinitions,
-      activeSessionId,
-      activeSessionLabel,
       canExportPdf,
       canPickFutureDate,
       canPickHistoricalDate,
@@ -136,7 +126,6 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
   ) {
     const [open, setOpen] = useState(false);
     const [mode, setMode] = useState<PrintHubMode>('destination');
-    const [sessionOnly, setSessionOnly] = useState(false);
     const [selectedDate, setSelectedDate] = useState(ledgerDate);
     const [selectedLine, setSelectedLine] = useState(lineLabel);
     const [selectedBranchId, setSelectedBranchId] = useState('');
@@ -145,7 +134,6 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
     const [baseRows, setBaseRows] = useState<RemoteDailyLedgerRow[]>([]);
     const [driverKey, setDriverKey] = useState(ALL_DRIVERS_PRINT_KEY);
     const [selectedDestinations, setSelectedDestinations] = useState<string[]>([]);
-    const [selectedDispatchIds, setSelectedDispatchIds] = useState<string[]>([]);
     const [destinationSearch, setDestinationSearch] = useState('');
 
     const branchOptions = useMemo(
@@ -244,17 +232,9 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
           (item) => item.key === preferredKey || item.key === `id:${tripDriverBackendId}`,
         );
         setDriverKey(hasPreferred ? preferredKey : ALL_DRIVERS_PRINT_KEY);
-
-        const dispatchSummaries = buildDispatchSummaries(
-          dispatchDefinitions,
-          printableRows,
-          viewAll ? null : selectedBranchId,
-        );
-        setSelectedDispatchIds(dispatchSummaries.map((item) => item.id));
       } catch (error) {
         setBaseRows([]);
         setSelectedDestinations([]);
-        setSelectedDispatchIds([]);
         setDriverKey(ALL_DRIVERS_PRINT_KEY);
         onToast(error instanceof Error ? error.message : 'تعذر تحميل أسطر الدفتر للطباعة', 'error');
       } finally {
@@ -265,7 +245,6 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
     useImperativeHandle(ref, () => ({
       open: (options) => {
         setMode(options?.mode ?? 'destination');
-        setSessionOnly(Boolean(options?.sessionOnly));
         setOpen(true);
         onPreparePrint?.();
       },
@@ -297,15 +276,6 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
           (backendId) => buildVehicleIdsForDriverBackendId(backendId),
         ),
       [baseRows, drivers, vehicles],
-    );
-    const dispatchSummaries = useMemo(
-      () =>
-        buildDispatchSummaries(
-          dispatchDefinitions,
-          baseRows,
-          canViewAllBranches && !selectedBranchId ? null : selectedBranchId,
-        ),
-      [baseRows, canViewAllBranches, dispatchDefinitions, selectedBranchId],
     );
 
     const selectedDriver = useMemo(() => {
@@ -365,61 +335,28 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
       return source.filter((item) => item.destination.toLowerCase().includes(query));
     }, [destinationSearch, filteredDestinationSummaries]);
 
-    const buildFilteredRows = (input: {
-      destinations?: string[];
-      dispatchIds?: string[];
-      forceSession?: boolean;
-    }) =>
+    const buildFilteredRows = (input: { destinations?: string[] }) =>
       filterRowsForPrintHub(baseRows, {
         searchQuery: searchQuick,
         agents: catalogAgents,
         driverSelection: selectedDriverFilter,
         selectedDestinations: input.destinations,
-        selectedDispatchIds: input.dispatchIds,
-        sessionId: input.forceSession || sessionOnly ? activeSessionId : null,
       });
 
     const previewDestinationRows = useMemo(
       () =>
         buildFilteredRows({
           destinations: selectedDestinations,
-          forceSession: sessionOnly,
         }),
-      [
-        baseRows,
-        driverKey,
-        selectedDriverFilter,
-        selectedDestinations,
-        sessionOnly,
-        activeSessionId,
-        searchQuick,
-      ],
-    );
-
-    const previewDispatchRows = useMemo(
-      () =>
-        buildFilteredRows({
-          dispatchIds: selectedDispatchIds,
-          forceSession: sessionOnly,
-        }),
-      [baseRows, driverKey, selectedDriverFilter, selectedDispatchIds, sessionOnly, activeSessionId, searchQuick],
+      [baseRows, driverKey, selectedDriverFilter, selectedDestinations, searchQuick],
     );
 
     const previewReceiptRows = useMemo(
       () =>
         buildFilteredRows({
           destinations: selectedDestinations,
-          forceSession: sessionOnly,
         }),
-      [
-        baseRows,
-        driverKey,
-        selectedDriverFilter,
-        selectedDestinations,
-        sessionOnly,
-        activeSessionId,
-        searchQuick,
-      ],
+      [baseRows, driverKey, selectedDriverFilter, selectedDestinations, searchQuick],
     );
 
     const buildMeta = (
@@ -462,18 +399,9 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
       );
     };
 
-    const toggleDispatch = (dispatchId: string) => {
-      setSelectedDispatchIds((prev) =>
-        prev.includes(dispatchId) ? prev.filter((item) => item !== dispatchId) : [...prev, dispatchId],
-      );
-    };
-
     const runShipments = async () => {
       if (busy || loading) return;
-      const rows =
-        mode === 'dispatch'
-          ? previewDispatchRows
-          : previewDestinationRows;
+      const rows = previewDestinationRows;
       if (!rows.length) {
         const driverLabel = selectedDriverFilter?.name || selectedDriverFilter?.code;
         onToast(
@@ -484,40 +412,20 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
         );
         return;
       }
-      if (mode === 'dispatch' && !selectedDispatchIds.length) {
-        onToast('يرجى تحديد إرسالية واحدة على الأقل', 'error');
-        return;
-      }
-      if (mode === 'destination' && !selectedDestinations.length) {
+      if (!selectedDestinations.length) {
         onToast('يرجى تحديد وجهة واحدة على الأقل', 'error');
         return;
       }
 
-      const scopeLabel =
-        sessionOnly && activeSessionLabel
-          ? activeSessionLabel
-          : mode === 'dispatch'
-            ? `إرساليات: ${selectedDispatchIds.length}`
-            : mode === 'destination'
-              ? `جهات: ${selectedDestinations.length}`
-              : 'طباعة';
-      const title =
-        searchQuick.trim()
-          ? `دفتر الشحن — ${searchQuick.trim()}`
-          : sessionOnly
-            ? `دفتر الشحن — ${activeSessionLabel ?? 'الإرسالية الحالية'}`
-            : mode === 'dispatch'
-              ? `دفتر الشحن — حسب الإرسالية`
-              : `دفتر الشحن — حسب الجهة`;
+      const scopeLabel = `جهات: ${selectedDestinations.length}`;
+      const title = searchQuick.trim()
+        ? `دفتر الشحن — ${searchQuick.trim()}`
+        : 'دفتر الشحن — حسب الجهة';
 
       setBusy(true);
       try {
-        await onPrintShipments(
-          rows,
-          buildMeta(rows, sessionOnly ? 'session' : mode, sessionOnly ? 'session' : mode, scopeLabel, title),
-        );
+        await onPrintShipments(rows, buildMeta(rows, 'destination', 'destination', scopeLabel, title));
         setOpen(false);
-        setSessionOnly(false);
       } catch (error) {
         onToast(error instanceof Error ? error.message : 'تعذر تنفيذ طباعة الشحنات', 'error');
       } finally {
@@ -536,23 +444,18 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
         onToast('لا توجد أسطر مطابقة لطباعة الإيصالات', 'info');
         return;
       }
-      const scopeLabel = sessionOnly && activeSessionLabel
-        ? activeSessionLabel
-        : `إيصالات — ${selectedDestinations.length} وجهة`;
+      const scopeLabel = `إيصالات — ${selectedDestinations.length} وجهة`;
       const title = searchQuick.trim()
         ? `إيصالات — ${searchQuick.trim()}`
-        : sessionOnly
-          ? `إيصالات — ${activeSessionLabel ?? 'الإرسالية الحالية'}`
-          : 'إيصالات — دفتر الشحن';
+        : 'إيصالات — دفتر الشحن';
 
       setBusy(true);
       try {
         await onPrintReceipts(
           rows,
-          buildMeta(rows, sessionOnly ? 'session' : 'receipts', sessionOnly ? 'session' : 'receipts', scopeLabel, title),
+          buildMeta(rows, 'receipts', 'receipts', scopeLabel, title),
         );
         setOpen(false);
-        setSessionOnly(false);
       } catch (error) {
         onToast(error instanceof Error ? error.message : 'تعذر تنفيذ طباعة الإيصالات', 'error');
       } finally {
@@ -580,18 +483,15 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
       const scopeLabel = `جهات: ${selectedDestinations.length}`;
       const title = searchQuick.trim()
         ? `دفتر الشحن — ${searchQuick.trim()}`
-        : sessionOnly
-          ? `دفتر الشحن — ${activeSessionLabel ?? 'الإرسالية الحالية'}`
-          : 'دفتر الشحن — حسب الجهة';
+        : 'دفتر الشحن — حسب الجهة';
 
       setBusy(true);
       try {
         await onExportDestinationPdf(
           rows,
-          buildMeta(rows, sessionOnly ? 'session' : 'destination', sessionOnly ? 'session' : 'destination', scopeLabel, title),
+          buildMeta(rows, 'destination', 'destination', scopeLabel, title),
         );
         setOpen(false);
-        setSessionOnly(false);
       } catch (error) {
         onToast(error instanceof Error ? error.message : 'تعذر تصدير ملفات PDF', 'error');
       } finally {
@@ -599,8 +499,7 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
       }
     };
 
-    const previewRows =
-      mode === 'dispatch' ? previewDispatchRows : mode === 'receipts' ? previewReceiptRows : previewDestinationRows;
+    const previewRows = mode === 'receipts' ? previewReceiptRows : previewDestinationRows;
 
     const previewPieces = previewRows.reduce((sum, row) => sum + (Number(row.parcel_count) || 0), 0);
 
@@ -711,7 +610,6 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
           disabled={disabled}
           title="طباعة كشف الشحن، حسب الجهة أو الإرسالية، أو إيصالات محمود"
           onClick={() => {
-            setSessionOnly(false);
             setMode('destination');
             setOpen(true);
             onPreparePrint?.();
@@ -730,7 +628,6 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
             onClick={() => {
               if (busy) return;
               setOpen(false);
-              setSessionOnly(false);
             }}
           >
             <div className="quick-ledger-print-hub-dialog" dir="rtl" onClick={(event) => event.stopPropagation()}>
@@ -739,7 +636,7 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
                   <span className="quick-ledger-print-hub-dialog-eyebrow">دفتر الشحن اليومي</span>
                   <h2 id="quick-ledger-print-hub-title">طباعة وتصدير</h2>
                   <p>
-                    اختر طريقة الطباعة: حسب الجهة، حسب الإرسالية المعرّفة، أو إيصالات محمود المطبوعة مسبقاً.
+                    اختر طريقة الطباعة: حسب الجهة أو إيصالات محمود المطبوعة مسبقاً.
                   </p>
                 </div>
                 <button
@@ -747,23 +644,13 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
                   className="quick-ledger-print-hub-dialog-close"
                   aria-label="إغلاق"
                   disabled={busy}
-                  onClick={() => {
-                    setOpen(false);
-                    setSessionOnly(false);
-                  }}
+                  onClick={() => setOpen(false)}
                 >
                   <X size={20} />
                 </button>
               </header>
 
               <div className="quick-ledger-print-hub-dialog-body">
-                {sessionOnly && activeSessionLabel ? (
-                  <div className="quick-ledger-print-hub-session-banner" role="status">
-                    <Truck size={16} aria-hidden />
-                    طباعة الإرسالية الحالية فقط: <strong>{activeSessionLabel}</strong>
-                  </div>
-                ) : null}
-
                 <section className="quick-ledger-print-hub-context-card">
                   <h3>نطاق البيانات</h3>
                   <div className="quick-ledger-print-hub-context-grid">
@@ -848,18 +735,6 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
                   <button
                     type="button"
                     role="tab"
-                    aria-selected={mode === 'dispatch'}
-                    className={`quick-ledger-print-hub-mode-tab${mode === 'dispatch' ? ' is-active' : ''}`}
-                    disabled={busy}
-                    onClick={() => setMode('dispatch')}
-                  >
-                    <Truck size={18} />
-                    <span>حسب الإرسالية</span>
-                    <small>من التعريفات #1، #2…</small>
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
                     aria-selected={mode === 'receipts'}
                     className={`quick-ledger-print-hub-mode-tab${mode === 'receipts' ? ' is-active' : ''}`}
                     disabled={busy}
@@ -879,61 +754,6 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
 
                 {destinationPickerPanel}
 
-                {mode === 'dispatch' ? (
-                  <section className="quick-ledger-print-hub-panel">
-                    <div className="quick-ledger-print-hub-panel-head">
-                      <h3>اختر الإرساليات المعرّفة</h3>
-                      <div className="quick-ledger-print-hub-panel-actions">
-                        <button
-                          type="button"
-                          disabled={!dispatchSummaries.length || busy || loading}
-                          onClick={() => setSelectedDispatchIds(dispatchSummaries.map((item) => item.id))}
-                        >
-                          تحديد الكل
-                        </button>
-                        <button
-                          type="button"
-                          disabled={!selectedDispatchIds.length || busy || loading}
-                          onClick={() => setSelectedDispatchIds([])}
-                        >
-                          إلغاء الكل
-                        </button>
-                      </div>
-                    </div>
-
-                    {dispatchSummaries.length === 0 ? (
-                      <div className="quick-ledger-print-hub-empty quick-ledger-print-hub-empty-warn">
-                        <Truck size={20} />
-                        <p>لا توجد إرساليات معرّفة لهذا التاريخ والخط.</p>
-                        <span>استخدم زر «تعريف إرساليات اليوم» من شريط الأدوات أولاً.</span>
-                      </div>
-                    ) : (
-                      <div className="quick-ledger-print-hub-dispatch-grid">
-                        {dispatchSummaries.map((item) => (
-                          <label
-                            key={item.id}
-                            className={`quick-ledger-print-hub-dispatch-card${selectedDispatchIds.includes(item.id) ? ' is-selected' : ''}`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selectedDispatchIds.includes(item.id)}
-                              disabled={busy || loading}
-                              onChange={() => toggleDispatch(item.id)}
-                            />
-                            <span className="quick-ledger-print-hub-dispatch-no">#{item.dispatchNo}</span>
-                            <span className="quick-ledger-print-hub-dispatch-driver">{item.driverLabel}</span>
-                            <span className="quick-ledger-print-hub-dispatch-vehicle">{item.vehicleLabel}</span>
-                            {item.tripNo ? (
-                              <span className="quick-ledger-print-hub-dispatch-trip">رحلة {item.tripNo}</span>
-                            ) : null}
-                            <span className="quick-ledger-print-hub-dispatch-count">{item.rowsCount} سطر</span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
-                  </section>
-                ) : null}
-
               </div>
 
               <footer className="quick-ledger-print-hub-dialog-footer">
@@ -941,10 +761,7 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
                   type="button"
                   className="quick-ledger-print-hub-footer-btn"
                   disabled={busy}
-                  onClick={() => {
-                    setOpen(false);
-                    setSessionOnly(false);
-                  }}
+                  onClick={() => setOpen(false)}
                 >
                   إلغاء
                 </button>
@@ -971,17 +788,6 @@ const QuickLedgerPrintHub = forwardRef<QuickLedgerPrintHubHandle, QuickLedgerPri
                       {busy ? 'جاري الطباعة...' : 'طباعة كشف الشحن'}
                     </button>
                   </>
-                ) : null}
-                {mode === 'dispatch' ? (
-                  <button
-                    type="button"
-                    className="quick-ledger-print-hub-footer-btn quick-ledger-print-hub-footer-primary"
-                    disabled={busy || loading || !selectedDispatchIds.length || !dispatchSummaries.length}
-                    onClick={() => void runShipments()}
-                  >
-                    <Printer size={16} />
-                    {busy ? 'جاري الطباعة...' : 'طباعة كشف الشحن'}
-                  </button>
                 ) : null}
                 {mode === 'receipts' ? (
                   <button
