@@ -4142,10 +4142,10 @@ export default function ShipmentQuickLedger() {
                 setGlobalSearchSeed('');
                 setGlobalSearchOpen(true);
               }}
-              title="بحث في كل التواريخ — إيصال، نوع بضاعة، مرسل، مستلم"
+              title="بحث في كل التواريخ — مرسل، مستلم، إشعار/إيصال، نوع بضاعة"
             >
               <Search size={16} />
-              <span>إيصال · نوع بضاعة · مرسل · مستلم — كل التواريخ المسجّلة...</span>
+              <span>مرسل · مستلم · إشعار/إيصال · نوع بضاعة — كل التواريخ...</span>
             </button>
           </label>
           {canViewAllLedgerEntries ? (

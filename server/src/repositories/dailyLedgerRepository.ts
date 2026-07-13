@@ -543,18 +543,40 @@ export class DailyLedgerRepository {
       `);
     }
     if (filters.q && filters.q.trim()) {
-      const q = `%${filters.q.trim()}%`;
-      values.push(q);
-      const qp = `$${values.length}`;
-      conditions.push(
-        `(
-          coalesce(r.receipt_no,'') ilike ${qp}
-          or coalesce(r.destination,'') ilike ${qp}
-          or coalesce(r.parcel_type,'') ilike ${qp}
-          or coalesce(r.sender_name,'') ilike ${qp}
-          or coalesce(r.receiver_name,'') ilike ${qp}
-        )`,
-      );
+      const raw = filters.q.trim();
+      const tokens = raw.split(/\s+/).filter(Boolean);
+      if (tokens.length <= 1) {
+        const q = `%${raw}%`;
+        values.push(q);
+        const qp = `$${values.length}`;
+        conditions.push(
+          `(
+            coalesce(r.receipt_no,'') ilike ${qp}
+            or coalesce(r.destination,'') ilike ${qp}
+            or coalesce(r.parcel_type,'') ilike ${qp}
+            or coalesce(r.sender_name,'') ilike ${qp}
+            or coalesce(r.receiver_name,'') ilike ${qp}
+            or coalesce(r.notes,'') ilike ${qp}
+          )`,
+        );
+      } else {
+        const tokenClauses: string[] = [];
+        for (const token of tokens) {
+          values.push(`%${token}%`);
+          const qp = `$${values.length}`;
+          tokenClauses.push(
+            `(
+              coalesce(r.receipt_no,'') ilike ${qp}
+              or coalesce(r.destination,'') ilike ${qp}
+              or coalesce(r.parcel_type,'') ilike ${qp}
+              or coalesce(r.sender_name,'') ilike ${qp}
+              or coalesce(r.receiver_name,'') ilike ${qp}
+              or coalesce(r.notes,'') ilike ${qp}
+            )`,
+          );
+        }
+        conditions.push(`(${tokenClauses.join(' and ')})`);
+      }
     }
     if (filters.receiptNo?.trim()) {
       values.push(`%${filters.receiptNo.trim()}%`);

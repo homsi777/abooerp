@@ -1,20 +1,13 @@
 import { printLedgerStyleDocument } from '../export/ledgerStylePrint';
-import type { LedgerGlobalSearchInput } from './dailyLedgerGlobalSearchGateway';
+import {
+  ledgerGlobalSearchCriteriaLabel,
+  type LedgerGlobalSearchInput,
+} from './dailyLedgerGlobalSearchGateway';
 import type { RemoteDailyLedgerRow } from './dailyLedgerTypes';
 import {
   buildQuickLedgerPrintHtml,
   remoteRowToPrint,
 } from './quickLedgerShipmentPrint';
-
-function criteriaSummary(criteria: LedgerGlobalSearchInput): string {
-  const parts = [
-    criteria.receiptNo?.trim() ? `إيصال: ${criteria.receiptNo.trim()}` : '',
-    criteria.parcelType?.trim() ? `نوع: ${criteria.parcelType.trim()}` : '',
-    criteria.senderName?.trim() ? `مرسل: ${criteria.senderName.trim()}` : '',
-    criteria.receiverName?.trim() ? `مستلم: ${criteria.receiverName.trim()}` : '',
-  ].filter(Boolean);
-  return parts.length ? parts.join(' · ') : '—';
-}
 
 export function buildGlobalSearchResultsPrintHtml(options: {
   rows: RemoteDailyLedgerRow[];
@@ -24,7 +17,7 @@ export function buildGlobalSearchResultsPrintHtml(options: {
   const printRows = options.rows.map(remoteRowToPrint);
   return buildQuickLedgerPrintHtml(printRows, {
     title: 'نتائج البحث الشامل — دفتر الشحن',
-    destinationLabel: criteriaSummary(options.criteria),
+    destinationLabel: ledgerGlobalSearchCriteriaLabel(options.criteria),
     driverName: options.scopeLabel,
     entryColumnsOnly: true,
   });

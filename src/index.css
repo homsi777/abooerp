@@ -1986,8 +1986,39 @@ body {
 }
 
 .quick-ledger-global-search-dialog {
-  width: min(1180px, calc(100vw - 40px));
+  width: min(1480px, calc(100vw - 24px));
   max-height: calc(100vh - 88px);
+}
+
+.quick-ledger-global-search-unified {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.quick-ledger-global-search-unified-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px;
+  border: 2px solid #14b8a6;
+  border-radius: 10px;
+  background: #fff;
+  color: #0f766e;
+}
+
+.quick-ledger-global-search-unified-row input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 10px 0;
+  font-size: 15px;
+  font-weight: 600;
+  outline: none;
+  background: transparent;
 }
 
 .quick-ledger-global-search-fields {
@@ -2099,6 +2130,62 @@ body {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
+}
+
+.quick-ledger-global-search-table-wrap {
+  overflow: auto;
+  max-height: min(52vh, 520px);
+}
+
+.quick-ledger-global-search-shipment-table {
+  min-width: 1280px;
+}
+
+.quick-ledger-global-search-shipment-table th,
+.quick-ledger-global-search-shipment-table td {
+  padding: 8px 7px;
+  border-bottom: 1px solid #f1f5f9;
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.quick-ledger-global-search-shipment-table .col-meta {
+  text-align: right;
+  min-width: 108px;
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  background: #fff;
+  box-shadow: -4px 0 8px rgba(15, 23, 42, 0.04);
+}
+
+.quick-ledger-global-search-shipment-table thead .col-meta {
+  background: #f8fafc;
+}
+
+.quick-ledger-global-search-shipment-table .col-party,
+.quick-ledger-global-search-shipment-table .col-notes {
+  text-align: right;
+  white-space: normal;
+  word-break: break-word;
+  max-width: 140px;
+}
+
+.quick-ledger-global-search-shipment-table .col-notes {
+  max-width: 160px;
+  font-size: 11px;
+}
+
+.quick-ledger-global-search-shipment-table .col-money,
+.quick-ledger-global-search-shipment-table .col-weight {
+  direction: ltr;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+.quick-ledger-global-search-shipment-table .col-receipt strong {
+  color: #0f766e;
 }
 
 .quick-ledger-global-search-results th,
