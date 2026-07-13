@@ -171,6 +171,74 @@ export function createDailyLedgerRouter(
     },
   );
 
+  router.get(
+    '/duplicate-receipts',
+    requirePermissions(['shipments.read']),
+    async (req, res) => {
+      const userContext = (req as any).requestUserContext as any;
+      const allowedBranchIds: string[] = Array.isArray(userContext?.allowedBranchIds) ? userContext.allowedBranchIds : [];
+      const roleCode = String(userContext?.roleCode ?? '').toLowerCase();
+      const userType = String(userContext?.userType ?? '').toLowerCase();
+      const lockedBranchId =
+        (typeof userContext?.activeBranchId === 'string' ? userContext.activeBranchId : undefined) ??
+        (typeof userContext?.scope?.branchId === 'string' ? userContext.scope.branchId : undefined) ??
+        allowedBranchIds[0] ??
+        null;
+      const scope = parseDataScope(req);
+      const querySchema = z.object({
+        branchId: uuid.optional(),
+        dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        allBranches: z.coerce.boolean().optional(),
+        scopeMode: z.enum(['same_day', 'cross_date', 'all']).optional(),
+        limit: z.coerce.number().min(1).max(500).optional(),
+      });
+      const q = querySchema.parse(req.query);
+      const permissions = getRequestPermissions(req);
+      const viewAllEntries = canViewAllDailyLedgerEntries(roleCode, userType, permissions);
+      const wantsAllBranches = q.allBranches === true;
+
+      if (wantsAllBranches && !viewAllEntries) {
+        res.status(403).json({
+          success: false,
+          error: 'عرض كل الفروع متاح للمدير فقط.',
+        });
+        return;
+      }
+
+      const effectiveBranchId = wantsAllBranches ? undefined : (q.branchId ?? lockedBranchId);
+      if (!effectiveBranchId && !wantsAllBranches) {
+        res.status(400).json({ success: false, error: 'branchId is required.' });
+        return;
+      }
+      const branchBypass = roleCode === 'admin' || userType === 'admin' || canAccessAnyCompanyBranch(roleCode, userType);
+      if (
+        effectiveBranchId &&
+        allowedBranchIds.length &&
+        !allowedBranchIds.includes(effectiveBranchId) &&
+        !branchBypass
+      ) {
+        res.status(403).json({ success: false, error: 'Requested branch scope is not allowed for this user.' });
+        return;
+      }
+      if (isDailyLedgerScopedOperator(roleCode) && lockedBranchId && effectiveBranchId && effectiveBranchId !== lockedBranchId) {
+        res.status(403).json({ success: false, error: 'لا يمكن عرض فرع مختلف عن الفرع التابع لك.' });
+        return;
+      }
+
+      const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, permissions);
+      const data = await service.listDuplicateReceiptGroups(scope, {
+        branchId: effectiveBranchId,
+        dateFrom: q.dateFrom,
+        dateTo: q.dateTo,
+        createdByUserId,
+        scopeMode: q.scopeMode ?? 'all',
+        limit: q.limit ?? 200,
+      });
+      res.json({ success: true, data });
+    },
+  );
+
   router.post(
     '/rows/upsert',
     requirePermissions(['shipments.write']),

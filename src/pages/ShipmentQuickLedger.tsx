@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  Copy,
   FileText,
   HelpCircle,
   Plus,
@@ -111,6 +112,7 @@ import QuickLedgerCustomSaveDialog, {
 import QuickLedgerDispatchSaveLogPanel from '../components/shipping/QuickLedgerDispatchSaveLogPanel';
 import QuickLedgerPostSavePrintPrompt from '../components/shipping/QuickLedgerPostSavePrintPrompt';
 import QuickLedgerGlobalSearchModal from '../components/shipping/QuickLedgerGlobalSearchModal';
+import QuickLedgerDuplicateRowsModal from '../components/shipping/QuickLedgerDuplicateRowsModal';
 import {
   mergeLedgerRowWithAutoTariff,
   parseUsd,
@@ -925,6 +927,7 @@ export default function ShipmentQuickLedger() {
   });
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [globalSearchSeed, setGlobalSearchSeed] = useState('');
+  const [duplicatesOpen, setDuplicatesOpen] = useState(false);
   const [destinationSort, setDestinationSort] = useState<'none' | 'asc' | 'desc'>('none');
 
   const destinations = useMemo(
@@ -3936,6 +3939,14 @@ export default function ShipmentQuickLedger() {
                 سجل حفظ إرساليات
               </button>
             ) : null}
+            <button
+              type="button"
+              onClick={() => setDuplicatesOpen(true)}
+              title="فحص إيصالات مكررة — نفس اليوم أو عبر التواريخ"
+            >
+              <Copy size={16} />
+              أسطر مكررة
+            </button>
             {canLedgerSaveLog ? (
               <button type="button" onClick={() => quickLedgerLog.download()} title="تنزيل سجل عمليات دفتر الشحن">
                 <ScrollText size={16} />
@@ -4593,6 +4604,16 @@ export default function ShipmentQuickLedger() {
         includeLoaded={includeLoaded}
         branches={branches}
         onSelectRow={(row) => void handleGlobalSearchSelect(row)}
+      />
+      <QuickLedgerDuplicateRowsModal
+        open={duplicatesOpen}
+        onClose={() => setDuplicatesOpen(false)}
+        branchId={activeBranchId ?? undefined}
+        allBranches={canViewAllLedgerEntries && ledgerBranchMode === 'all'}
+        onSelectRow={(row) => {
+          setDuplicatesOpen(false);
+          void handleGlobalSearchSelect(row);
+        }}
       />
       <QuickLedgerPostSavePrintPrompt
         open={postSavePrintOpen}

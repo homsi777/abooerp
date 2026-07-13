@@ -33,6 +33,20 @@ export class DailyLedgerService {
     return this.repo.listRows(scope, filters);
   }
 
+  listDuplicateReceiptGroups(
+    scope: DataScope,
+    filters: {
+      branchId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      createdByUserId?: string;
+      scopeMode?: 'same_day' | 'cross_date' | 'all';
+      limit?: number;
+    },
+  ) {
+    return this.repo.listDuplicateReceiptGroups(scope, filters);
+  }
+
   listDispatchDefinitions(scope: DataScope, filters: DailyLedgerDispatchListFilters) {
     return this.dispatchRepo.listDefinitions(scope, filters);
   }

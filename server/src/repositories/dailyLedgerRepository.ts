@@ -655,6 +655,308 @@ export class DailyLedgerRepository {
     return result.rows;
   }
 
+  async listDuplicateReceiptGroups(
+    scope: DataScope,
+    filters: {
+      branchId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      createdByUserId?: string;
+      /** نفس اليوم+الخط فقط | كل التكرارات عبر التواريخ | كلاهما */
+      scopeMode?: 'same_day' | 'cross_date' | 'all';
+      limit?: number;
+    },
+  ): Promise<{
+    groups: Array<{
+      kind: 'same_day_line' | 'cross_date';
+      receipt_no: string;
+      count: number;
+      hawala_sum: string;
+      transfer_fee_sum: string;
+      collect_sum: string;
+      prepaid_sum: string;
+      rows: Array<{
+        id: string;
+        row_no: number;
+        receipt_no: string | null;
+        destination: string;
+        parcel_type: string;
+        parcel_count: number | null;
+        weight_kg: string | null;
+        sender_name: string;
+        receiver_name: string;
+        collect_amount_usd: string;
+        prepaid_amount_usd: string;
+        hawala_amount_usd: string;
+        fees_amount_usd: string;
+        transfer_service_fee_usd: string;
+        notes: string | null;
+        posted_shipment_id: string | null;
+        loaded_at: string | null;
+        created_at: string;
+        branch_id: string;
+        branch_name: string | null;
+        ledger_date: string;
+        line_label: string;
+        driver_label: string | null;
+        dispatch_no: number | null;
+      }>;
+    }>;
+    summary: {
+      sameDayGroups: number;
+      crossDateGroups: number;
+      totalDuplicateRows: number;
+    };
+  }> {
+    const conditions: string[] = ['r.deleted_at is null', 's.deleted_at is null'];
+    const values: unknown[] = [];
+
+    if (scope.companyId) {
+      values.push(scope.companyId);
+      conditions.push(`s.company_id = $${values.length}`);
+    }
+    if (filters.branchId) {
+      values.push(filters.branchId);
+      conditions.push(`s.branch_id = $${values.length}`);
+    }
+    if (filters.dateFrom) {
+      values.push(filters.dateFrom);
+      conditions.push(`s.ledger_date >= $${values.length}::date`);
+    }
+    if (filters.dateTo) {
+      values.push(filters.dateTo);
+      conditions.push(`s.ledger_date <= $${values.length}::date`);
+    }
+    if (filters.createdByUserId) {
+      values.push(filters.createdByUserId);
+      conditions.push(`r.created_by = $${values.length}::uuid`);
+    }
+    conditions.push(`coalesce(nullif(trim(r.receipt_no), ''), '') <> ''`);
+
+    const limit = Math.min(Math.max(filters.limit ?? 200, 1), 500);
+    const scopeMode = filters.scopeMode ?? 'all';
+    values.push(scopeMode);
+    const scopeModeParam = `$${values.length}`;
+    values.push(limit);
+    const limitParam = `$${values.length}`;
+    const whereSql = conditions.join(' and ');
+
+    const result = await pool.query<{
+      kind: 'same_day_line' | 'cross_date';
+      receipt_no: string;
+      count: number;
+      hawala_sum: string;
+      transfer_fee_sum: string;
+      collect_sum: string;
+      prepaid_sum: string;
+      rows_json: unknown;
+    }>(
+      `
+      with filtered as (
+        select
+          r.id,
+          r.row_no,
+          r.receipt_no,
+          r.destination,
+          r.parcel_type,
+          r.parcel_count,
+          r.weight_kg::text as weight_kg,
+          r.sender_name,
+          r.receiver_name,
+          r.collect_amount_usd::text as collect_amount_usd,
+          r.prepaid_amount_usd::text as prepaid_amount_usd,
+          r.hawala_amount_usd::text as hawala_amount_usd,
+          r.fees_amount_usd::text as fees_amount_usd,
+          r.transfer_service_fee_usd::text as transfer_service_fee_usd,
+          r.notes,
+          r.posted_shipment_id,
+          r.loaded_at,
+          r.created_at,
+          s.branch_id,
+          b.name as branch_name,
+          s.ledger_date::text as ledger_date,
+          s.line_label,
+          s.driver_label,
+          d.dispatch_no,
+          lower(trim(r.receipt_no)) as receipt_key
+        from daily_ledger_rows r
+        join daily_ledger_sessions s on s.id = r.session_id
+        join branches b on b.id = s.branch_id
+        left join daily_ledger_dispatch_definitions d
+          on d.id = r.dispatch_id and d.deleted_at is null
+        where ${whereSql}
+      ),
+      same_day_keys as (
+        select receipt_key, ledger_date, line_label, branch_id
+        from filtered
+        group by receipt_key, ledger_date, line_label, branch_id
+        having count(*) > 1
+      ),
+      cross_date_keys as (
+        select receipt_key
+        from filtered
+        group by receipt_key
+        having count(distinct ledger_date) > 1
+      ),
+      same_day_groups as (
+        select
+          'same_day_line'::text as kind,
+          f.receipt_key as receipt_no,
+          count(*)::int as count,
+          coalesce(sum(f.hawala_amount_usd::numeric), 0)::text as hawala_sum,
+          coalesce(sum(f.transfer_service_fee_usd::numeric), 0)::text as transfer_fee_sum,
+          coalesce(sum(f.collect_amount_usd::numeric + f.fees_amount_usd::numeric), 0)::text as collect_sum,
+          coalesce(sum(f.prepaid_amount_usd::numeric), 0)::text as prepaid_sum,
+          jsonb_agg(
+            jsonb_build_object(
+              'id', f.id,
+              'row_no', f.row_no,
+              'receipt_no', f.receipt_no,
+              'destination', f.destination,
+              'parcel_type', f.parcel_type,
+              'parcel_count', f.parcel_count,
+              'weight_kg', f.weight_kg,
+              'sender_name', f.sender_name,
+              'receiver_name', f.receiver_name,
+              'collect_amount_usd', f.collect_amount_usd,
+              'prepaid_amount_usd', f.prepaid_amount_usd,
+              'hawala_amount_usd', f.hawala_amount_usd,
+              'fees_amount_usd', f.fees_amount_usd,
+              'transfer_service_fee_usd', f.transfer_service_fee_usd,
+              'notes', f.notes,
+              'posted_shipment_id', f.posted_shipment_id,
+              'loaded_at', f.loaded_at,
+              'created_at', f.created_at,
+              'branch_id', f.branch_id,
+              'branch_name', f.branch_name,
+              'ledger_date', f.ledger_date,
+              'line_label', f.line_label,
+              'driver_label', f.driver_label,
+              'dispatch_no', f.dispatch_no
+            )
+            order by f.ledger_date desc, f.row_no asc
+          ) as rows_json
+        from filtered f
+        join same_day_keys k
+          on k.receipt_key = f.receipt_key
+         and k.ledger_date = f.ledger_date
+         and k.line_label = f.line_label
+         and k.branch_id = f.branch_id
+        group by f.receipt_key, f.ledger_date, f.line_label, f.branch_id
+      ),
+      cross_date_groups as (
+        select
+          'cross_date'::text as kind,
+          f.receipt_key as receipt_no,
+          count(*)::int as count,
+          coalesce(sum(f.hawala_amount_usd::numeric), 0)::text as hawala_sum,
+          coalesce(sum(f.transfer_service_fee_usd::numeric), 0)::text as transfer_fee_sum,
+          coalesce(sum(f.collect_amount_usd::numeric + f.fees_amount_usd::numeric), 0)::text as collect_sum,
+          coalesce(sum(f.prepaid_amount_usd::numeric), 0)::text as prepaid_sum,
+          jsonb_agg(
+            jsonb_build_object(
+              'id', f.id,
+              'row_no', f.row_no,
+              'receipt_no', f.receipt_no,
+              'destination', f.destination,
+              'parcel_type', f.parcel_type,
+              'parcel_count', f.parcel_count,
+              'weight_kg', f.weight_kg,
+              'sender_name', f.sender_name,
+              'receiver_name', f.receiver_name,
+              'collect_amount_usd', f.collect_amount_usd,
+              'prepaid_amount_usd', f.prepaid_amount_usd,
+              'hawala_amount_usd', f.hawala_amount_usd,
+              'fees_amount_usd', f.fees_amount_usd,
+              'transfer_service_fee_usd', f.transfer_service_fee_usd,
+              'notes', f.notes,
+              'posted_shipment_id', f.posted_shipment_id,
+              'loaded_at', f.loaded_at,
+              'created_at', f.created_at,
+              'branch_id', f.branch_id,
+              'branch_name', f.branch_name,
+              'ledger_date', f.ledger_date,
+              'line_label', f.line_label,
+              'driver_label', f.driver_label,
+              'dispatch_no', f.dispatch_no
+            )
+            order by f.ledger_date desc, f.row_no asc
+          ) as rows_json
+        from filtered f
+        join cross_date_keys k on k.receipt_key = f.receipt_key
+        where not exists (
+          select 1 from same_day_keys sdk
+          where sdk.receipt_key = f.receipt_key
+        )
+        group by f.receipt_key
+      ),
+      combined as (
+        select * from same_day_groups
+        union all
+        select * from cross_date_groups
+      )
+      select *
+      from combined
+      where (
+        ${scopeModeParam} = 'all'
+        or (${scopeModeParam} = 'same_day' and kind = 'same_day_line')
+        or (${scopeModeParam} = 'cross_date' and kind = 'cross_date')
+      )
+      order by
+        case when kind = 'same_day_line' then 0 else 1 end,
+        count desc,
+        receipt_no asc
+      limit ${limitParam}
+      `,
+      values,
+    );
+
+    const groups = result.rows.map((row) => ({
+      kind: row.kind,
+      receipt_no: row.receipt_no,
+      count: Number(row.count),
+      hawala_sum: String(row.hawala_sum ?? '0'),
+      transfer_fee_sum: String(row.transfer_fee_sum ?? '0'),
+      collect_sum: String(row.collect_sum ?? '0'),
+      prepaid_sum: String(row.prepaid_sum ?? '0'),
+      rows: (Array.isArray(row.rows_json) ? row.rows_json : []) as Array<{
+        id: string;
+        row_no: number;
+        receipt_no: string | null;
+        destination: string;
+        parcel_type: string;
+        parcel_count: number | null;
+        weight_kg: string | null;
+        sender_name: string;
+        receiver_name: string;
+        collect_amount_usd: string;
+        prepaid_amount_usd: string;
+        hawala_amount_usd: string;
+        fees_amount_usd: string;
+        transfer_service_fee_usd: string;
+        notes: string | null;
+        posted_shipment_id: string | null;
+        loaded_at: string | null;
+        created_at: string;
+        branch_id: string;
+        branch_name: string | null;
+        ledger_date: string;
+        line_label: string;
+        driver_label: string | null;
+        dispatch_no: number | null;
+      }>,
+    }));
+
+    return {
+      groups,
+      summary: {
+        sameDayGroups: groups.filter((g) => g.kind === 'same_day_line').length,
+        crossDateGroups: groups.filter((g) => g.kind === 'cross_date').length,
+        totalDuplicateRows: groups.reduce((sum, g) => sum + g.count, 0),
+      },
+    };
+  }
+
   /** الجلسات المخصّصة لأسطر معيّنة (تُستخدم لتعليم إعادة الطباعة عند النقل) */
   async getSessionIdsForRows(companyId: string, rowIds: string[]): Promise<string[]> {
     if (!rowIds.length) return [];
