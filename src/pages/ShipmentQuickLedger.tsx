@@ -1002,6 +1002,7 @@ export default function ShipmentQuickLedger() {
   const [confirmedReceiptRowIds, setConfirmedReceiptRowIds] = useState<Set<number>>(() => new Set());
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const printHubRef = useRef<QuickLedgerPrintHubHandle>(null);
+  const saveMenuRef = useRef<HTMLDivElement>(null);
   const [reprintRequired, setReprintRequired] = useState(false);
   const [remoteRowsRaw, setRemoteRowsRaw] = useState<RemoteDailyLedgerRow[]>([]);
   const [deleteMode, setDeleteMode] = useState(false);
@@ -3901,9 +3902,14 @@ export default function ShipmentQuickLedger() {
 
   useEffect(() => {
     if (!saveMenuOpen) return;
-    const closeMenu = () => setSaveMenuOpen(false);
-    document.addEventListener('click', closeMenu);
-    return () => document.removeEventListener('click', closeMenu);
+    const closeMenu = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (saveMenuRef.current?.contains(target)) return;
+      setSaveMenuOpen(false);
+    };
+    document.addEventListener('mousedown', closeMenu);
+    return () => document.removeEventListener('mousedown', closeMenu);
   }, [saveMenuOpen]);
   const cloudStatusShort =
     cloudStatus === 'online'
@@ -4060,30 +4066,26 @@ export default function ShipmentQuickLedger() {
               </button>
             ) : null}
             {canLedgerPostShipments ? (
-              <div className="quick-ledger-save-menu" onClick={(event) => event.stopPropagation()}>
+              <div
+                ref={saveMenuRef}
+                className={`quick-ledger-save-menu${saveMenuOpen ? ' is-open' : ''}`}
+              >
                 <button
                   type="button"
-                  className="primary quick-ledger-save-menu-main"
-                  onClick={() => void saveRows({ mode: 'all' })}
-                  disabled={saving || loadingRefs || isCloudOffline}
-                  title={isCloudOffline ? 'الحفظ على السحابة يحتاج اتصالاً. الصفوف المحلية بانتظار المزامنة.' : 'حفظ كل الأسطر المكتملة'}
-                >
-                  <Save size={16} />
-                  {saving
-                    ? 'جاري الحفظ...'
-                    : stats.saved > 0 && stats.complete > 0
-                      ? `استكمال الحفظ (${stats.complete})`
-                      : 'حفظ الكل'}
-                </button>
-                <button
-                  type="button"
-                  className="primary quick-ledger-save-menu-toggle"
+                  className="primary quick-ledger-save-menu-trigger"
                   onClick={() => setSaveMenuOpen((open) => !open)}
                   disabled={saving || loadingRefs || isCloudOffline}
-                  aria-label="خيارات الحفظ"
+                  aria-haspopup="menu"
                   aria-expanded={saveMenuOpen}
+                  title={
+                    isCloudOffline
+                      ? 'الحفظ على السحابة يحتاج اتصالاً. الصفوف المحلية بانتظار المزامنة.'
+                      : 'اختر نوع الحفظ — حفظ الكل أو حفظ مخصص'
+                  }
                 >
-                  <ChevronDown size={16} />
+                  <Save size={16} />
+                  {saving ? 'جاري الحفظ...' : 'حفظ الشحنات'}
+                  <ChevronDown size={16} className={saveMenuOpen ? 'is-open' : ''} aria-hidden />
                 </button>
                 {saveMenuOpen ? (
                   <div className="quick-ledger-save-menu-dropdown" role="menu">
@@ -4096,6 +4098,7 @@ export default function ShipmentQuickLedger() {
                       }}
                     >
                       حفظ الكل
+                      {stats.complete > 0 ? ` (${stats.complete} سطر)` : ''}
                     </button>
                     <button
                       type="button"
