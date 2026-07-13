@@ -1,4 +1,5 @@
 import { httpClient } from '../api/httpClient';
+import { normalizeRemoteDailyLedgerRows } from './dailyLedgerPrintable';
 import { resolveLedgerBranchId } from './dailyLedgerQueryParams';
 import type { RemoteDailyLedgerRow } from './dailyLedgerTypes';
 
@@ -70,5 +71,7 @@ export async function searchLedgerRowsGlobally(
     if (filters.receiverName?.trim()) params.set('receiverName', filters.receiverName.trim());
   }
 
-  return httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${params.toString()}`);
+  return normalizeRemoteDailyLedgerRows(
+    await httpClient.get<RemoteDailyLedgerRow[]>(`/daily-ledger/rows?${params.toString()}`),
+  );
 }

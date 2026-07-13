@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Printer, Search, X } from 'lucide-react';
 import {
@@ -7,7 +7,10 @@ import {
   type LedgerGlobalSearchInput,
 } from '../../lib/shipping/dailyLedgerGlobalSearchGateway';
 import { printGlobalSearchResults } from '../../lib/shipping/dailyLedgerGlobalSearchPrint';
-import { remoteRowCollectionUsd } from '../../lib/shipping/dailyLedgerPrintable';
+import {
+  remoteCollectAmountLabel,
+  remoteRowCollectionUsd,
+} from '../../lib/shipping/dailyLedgerPrintable';
 import type { RemoteDailyLedgerRow } from '../../lib/shipping/dailyLedgerTypes';
 import type { Branch } from '../../types';
 import { getBackendIdFromSynthetic } from '../../lib/api/phase15Gateway';
@@ -29,16 +32,23 @@ function fmtDate(value: string | null | undefined): string {
   return (match?.[1] ?? raw) || '—';
 }
 
+function fmtCell(value: string | number | null | undefined): string {
+  if (value == null) return '—';
+  const raw = String(value).trim();
+  return raw || '—';
+}
+
 function fmtMoney(value: string | null | undefined): string {
   const raw = String(value ?? '').trim();
-  if (!raw || raw === '0' || raw === '0.00') return '—';
+  if (!raw || raw === '0' || raw === '0.00' || raw === '0.0') return '—';
   return raw;
 }
 
 function fmtCollect(row: RemoteDailyLedgerRow): string {
+  const labeled = remoteCollectAmountLabel(row);
+  if (labeled.trim()) return labeled;
   const total = remoteRowCollectionUsd(row);
-  if (total > 0) return String(total);
-  return fmtMoney(row.collect_amount_usd);
+  return total > 0 ? String(total) : '—';
 }
 
 export default function QuickLedgerGlobalSearchModal({
@@ -58,6 +68,7 @@ export default function QuickLedgerGlobalSearchModal({
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastCriteria, setLastCriteria] = useState<LedgerGlobalSearchInput>({});
+  const tableWrapRef = useRef<HTMLDivElement | null>(null);
 
   const branchNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -76,6 +87,14 @@ export default function QuickLedgerGlobalSearchModal({
     setError(null);
     setLastCriteria({});
   }, [open, initialQuery]);
+
+  useEffect(() => {
+    if (!searched || !rows.length) return;
+    const wrap = tableWrapRef.current;
+    if (!wrap) return;
+    wrap.scrollLeft = 0;
+    wrap.scrollTop = 0;
+  }, [rows, searched]);
 
   const scopeLabel = allBranches ? 'كل الفروع — كل التواريخ' : 'الفرع الحالي — كل التواريخ';
 
@@ -216,11 +235,10 @@ export default function QuickLedgerGlobalSearchModal({
                     {printing ? 'جاري الطباعة...' : 'طباعة النتائج'}
                   </button>
                 </div>
-                <div className="quick-ledger-global-search-table-wrap">
+                <div ref={tableWrapRef} className="quick-ledger-global-search-table-wrap">
                   <table className="quick-ledger-global-search-shipment-table">
                     <thead>
                       <tr>
-                        <th className="col-meta">التاريخ · الفرع</th>
                         <th className="col-type">نوع البضاعة</th>
                         <th className="col-count">عدد الطرود</th>
                         <th className="col-weight">الوزن كغ</th>
@@ -232,6 +250,7 @@ export default function QuickLedgerGlobalSearchModal({
                         <th className="col-party">المرسل إليه</th>
                         <th className="col-receipt">رقم الإيصال</th>
                         <th className="col-notes">ملاحظات</th>
+                        <th className="col-meta">التاريخ · الفرع</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -242,24 +261,24 @@ export default function QuickLedgerGlobalSearchModal({
                           onClick={() => onSelectRow(row)}
                           title="اضغط للانتقال إلى السطر في الدفتر"
                         >
-                          <td className="col-meta">
-                            <div>{fmtDate(row.ledger_date)}</div>
-                            <div className="quick-ledger-global-search-muted">
-                              {branchNameById.get(row.branch_id) ?? '—'}
-                              {row.line_label ? ` · ${row.line_label}` : ''}
-                            </div>
-                          </td>
-                          <td className="col-type">{row.parcel_type || '—'}</td>
-                          <td className="col-count">{row.parcel_count ?? '—'}</td>
-                          <td className="col-weight">{row.weight_kg ?? '—'}</td>
+                          <td className="col-type">{fmtCell(row.parcel_type)}</td>
+                          <td className="col-count">{fmtCell(row.parcel_count)}</td>
+                          <td className="col-weight">{fmtCell(row.weight_kg)}</td>
                           <td className="col-money">{fmtCollect(row)}</td>
                           <td className="col-money">{fmtMoney(row.hawala_amount_usd)}</td>
                           <td className="col-money">{fmtMoney(row.transfer_service_fee_usd)}</td>
                           <td className="col-money">{fmtMoney(row.prepaid_amount_usd)}</td>
-                          <td className="col-party">{row.sender_name || '—'}</td>
-                          <td className="col-party">{row.receiver_name || '—'}</td>
-                          <td className="col-receipt"><strong>{row.receipt_no || '—'}</strong></td>
-                          <td className="col-notes">{row.notes || '—'}</td>
+                          <td className="col-party">{fmtCell(row.sender_name)}</td>
+                          <td className="col-party">{fmtCell(row.receiver_name)}</td>
+                          <td className="col-receipt"><strong>{fmtCell(row.receipt_no)}</strong></td>
+                          <td className="col-notes">{fmtCell(row.notes)}</td>
+                          <td className="col-meta">
+                            <div>{fmtDate(row.ledger_date)}</div>
+                            <div className="quick-ledger-global-search-muted">
+                              {branchNameById.get(row.branch_id) ?? fmtCell(row.branch_id)}
+                              {row.line_label ? ` · ${row.line_label}` : ''}
+                            </div>
+                          </td>
                         </tr>
                       ))}
                     </tbody>

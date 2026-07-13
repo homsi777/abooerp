@@ -65,3 +65,78 @@ export function remoteCollectAmountLabel(
 export function remoteRowWeightKg(row: RemoteDailyLedgerRow): number {
   return parseWeightKg(row.weight_kg ?? '') ?? 0;
 }
+
+function readRowField(raw: Record<string, unknown>, snake: string, camel: string): unknown {
+  if (raw[snake] !== undefined && raw[snake] !== null) return raw[snake];
+  if (raw[camel] !== undefined && raw[camel] !== null) return raw[camel];
+  return undefined;
+}
+
+function readRowString(raw: Record<string, unknown>, snake: string, camel: string, fallback = ''): string {
+  const value = readRowField(raw, snake, camel);
+  return value == null ? fallback : String(value);
+}
+
+function readRowNullableString(raw: Record<string, unknown>, snake: string, camel: string): string | null {
+  const value = readRowString(raw, snake, camel, '').trim();
+  return value || null;
+}
+
+/** توحيد صف الدفتر من API — snake_case أو camelCase */
+export function normalizeRemoteDailyLedgerRow(raw: unknown): RemoteDailyLedgerRow {
+  const row = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const parcelCountRaw = readRowField(row, 'parcel_count', 'parcelCount');
+  const parcelCount =
+    parcelCountRaw == null || parcelCountRaw === ''
+      ? null
+      : Number(parcelCountRaw);
+  const dispatchNoRaw = readRowField(row, 'dispatch_no', 'dispatchNo');
+
+  return {
+    id: readRowString(row, 'id', 'id'),
+    row_no: Number(readRowField(row, 'row_no', 'rowNo') ?? 0),
+    receipt_no: readRowNullableString(row, 'receipt_no', 'receiptNo'),
+    destination: readRowString(row, 'destination', 'destination'),
+    parcel_type: readRowString(row, 'parcel_type', 'parcelType'),
+    parcel_count: Number.isFinite(parcelCount) ? parcelCount : null,
+    weight_kg: readRowNullableString(row, 'weight_kg', 'weightKg'),
+    sender_name: readRowString(row, 'sender_name', 'senderName'),
+    receiver_name: readRowString(row, 'receiver_name', 'receiverName'),
+    collect_amount_usd: readRowString(row, 'collect_amount_usd', 'collectAmountUsd', '0'),
+    prepaid_amount_usd: readRowString(row, 'prepaid_amount_usd', 'prepaidAmountUsd', '0'),
+    hawala_amount_usd: readRowString(row, 'hawala_amount_usd', 'hawalaAmountUsd', '0'),
+    fees_amount_usd: readRowString(row, 'fees_amount_usd', 'feesAmountUsd', '0'),
+    transfer_service_fee_usd: readRowString(row, 'transfer_service_fee_usd', 'transferServiceFeeUsd', '0'),
+    notes: readRowNullableString(row, 'notes', 'notes'),
+    posted_shipment_id: readRowNullableString(row, 'posted_shipment_id', 'postedShipmentId'),
+    posted_at: readRowNullableString(row, 'posted_at', 'postedAt'),
+    loaded_manifest_id: readRowNullableString(row, 'loaded_manifest_id', 'loadedManifestId'),
+    loaded_at: readRowNullableString(row, 'loaded_at', 'loadedAt'),
+    created_at: readRowString(row, 'created_at', 'createdAt'),
+    updated_at: readRowString(row, 'updated_at', 'updatedAt'),
+    branch_id: readRowString(row, 'branch_id', 'branchId'),
+    ledger_date: readRowString(row, 'ledger_date', 'ledgerDate'),
+    line_label: readRowString(row, 'line_label', 'lineLabel'),
+    origin_label: readRowString(row, 'origin_label', 'originLabel'),
+    trip_no: readRowNullableString(row, 'trip_no', 'tripNo'),
+    vehicle_label: readRowNullableString(row, 'vehicle_label', 'vehicleLabel'),
+    driver_label: readRowNullableString(row, 'driver_label', 'driverLabel'),
+    driver_id: readRowNullableString(row, 'driver_id', 'driverId'),
+    vehicle_id: readRowNullableString(row, 'vehicle_id', 'vehicleId'),
+    session_id: readRowNullableString(row, 'session_id', 'sessionId'),
+    session_printed_at: readRowNullableString(row, 'session_printed_at', 'sessionPrintedAt'),
+    session_reprint_required:
+      readRowField(row, 'session_reprint_required', 'sessionReprintRequired') as boolean | null | undefined ?? null,
+    session_reprint_reason: readRowNullableString(row, 'session_reprint_reason', 'sessionReprintReason'),
+    dispatch_id: readRowNullableString(row, 'dispatch_id', 'dispatchId'),
+    dispatch_no:
+      dispatchNoRaw == null || dispatchNoRaw === ''
+        ? null
+        : Number(dispatchNoRaw),
+  };
+}
+
+export function normalizeRemoteDailyLedgerRows(rows: unknown): RemoteDailyLedgerRow[] {
+  if (!Array.isArray(rows)) return [];
+  return rows.map(normalizeRemoteDailyLedgerRow);
+}
