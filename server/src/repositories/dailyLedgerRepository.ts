@@ -223,7 +223,7 @@ async function resolveRowSessionScopeForUpsert(
   };
 }
 
-/** ينقل السطر إلى جلسة السائق إذا كان محفوظاً في جلسة «بدون سائق» أو سائق مختلف */
+/** ينقل السطر إلى جلسة السائق/التاريخ المطلوب إذا اختلفت عن الجلسة الحالية */
 async function migrateRowToDriverSessionIfNeeded(
   client: PoolClient,
   scope: DataScope,
@@ -232,11 +232,9 @@ async function migrateRowToDriverSessionIfNeeded(
   resolvedDriverId: string | null,
   resolvedDriverLabel: string | null,
 ): Promise<void> {
-  if (!resolvedDriverId) return;
-
-  const current = await client.query<{ session_id: string; driver_id: string | null }>(
+  const current = await client.query<{ session_id: string }>(
     `
-    select r.session_id, s.driver_id
+    select r.session_id
     from daily_ledger_rows r
     join daily_ledger_sessions s on s.id = r.session_id
     join branches b on b.id = s.branch_id
@@ -249,9 +247,6 @@ async function migrateRowToDriverSessionIfNeeded(
   );
   if (!current.rows.length) return;
 
-  const { session_id: currentSessionId, driver_id: currentDriverId } = current.rows[0];
-  if (currentDriverId === resolvedDriverId) return;
-
   const targetSession = await ensureDriverSession(
     client,
     scope,
@@ -259,7 +254,7 @@ async function migrateRowToDriverSessionIfNeeded(
     resolvedDriverId,
     resolvedDriverLabel,
   );
-  if (targetSession.id === currentSessionId) return;
+  if (targetSession.id === current.rows[0].session_id) return;
 
   const nextRowNo = await nextRowNoForSession(client, targetSession.id);
   await client.query(
@@ -690,6 +685,45 @@ export class DailyLedgerRepository {
     try {
       await client.query('begin');
 
+      const requestedScope = {
+        branchId: input.branchId,
+        ledgerDate: input.ledgerDate,
+        lineLabel: input.lineLabel,
+      };
+
+      let effectiveRowId = input.rowId ?? null;
+      if (!effectiveRowId) {
+        effectiveRowId = await resolveExistingLedgerRowIdByReceipt(
+          client,
+          scope.companyId,
+          requestedScope,
+          input.receiptNo,
+        );
+      }
+
+      if (effectiveRowId) {
+        const sessionScope = await resolveRowSessionScopeForUpsert(
+          client,
+          scope.companyId,
+          effectiveRowId,
+        );
+        if (!sessionScope) {
+          throw new HttpError(404, 'سطر الدفتر غير موجود أو لا ينتمي لشركتك.');
+        }
+        const scopeMatchesRequest =
+          sessionScope.ledgerDate === requestedScope.ledgerDate &&
+          sessionScope.lineLabel === requestedScope.lineLabel &&
+          sessionScope.branchId === requestedScope.branchId;
+        if (scopeMatchesRequest) {
+          input = {
+            ...input,
+            branchId: sessionScope.branchId,
+            ledgerDate: sessionScope.ledgerDate,
+            lineLabel: sessionScope.lineLabel,
+          };
+        }
+      }
+
       const ledgerScope = {
         branchId: input.branchId,
         ledgerDate: input.ledgerDate,
@@ -710,33 +744,6 @@ export class DailyLedgerRepository {
           driverLabel: fleet.driverLabel ?? input.driverLabel ?? null,
           vehicleLabel: fleet.vehicleLabel ?? input.vehicleLabel ?? null,
           tripNo: fleet.tripNo ?? input.tripNo ?? null,
-        };
-      }
-
-      let effectiveRowId = input.rowId ?? null;
-      if (!effectiveRowId) {
-        effectiveRowId = await resolveExistingLedgerRowIdByReceipt(
-          client,
-          scope.companyId,
-          ledgerScope,
-          input.receiptNo,
-        );
-      }
-
-      if (effectiveRowId) {
-        const sessionScope = await resolveRowSessionScopeForUpsert(
-          client,
-          scope.companyId,
-          effectiveRowId,
-        );
-        if (!sessionScope) {
-          throw new HttpError(404, 'سطر الدفتر غير موجود أو لا ينتمي لشركتك.');
-        }
-        input = {
-          ...input,
-          branchId: sessionScope.branchId,
-          ledgerDate: sessionScope.ledgerDate,
-          lineLabel: sessionScope.lineLabel,
         };
       }
 

@@ -3478,12 +3478,15 @@ export default function ShipmentQuickLedger() {
           notes: saveMode === 'custom' ? 'حفظ مخصص' : 'حفظ الكل',
         });
       } catch (dispatchError) {
-        quickLedgerLog.log(
-          'warn',
-          'dispatch',
-          dispatchError instanceof Error ? dispatchError.message : 'تعذر إنشاء تعريف الإرسالية',
-        );
+        const message =
+          dispatchError instanceof Error ? dispatchError.message : 'تعذر إنشاء تعريف الإرسالية';
+        quickLedgerLog.log('error', 'dispatch', message);
+        failBatch('فشل إنشاء تعريف الإرسالية', message, progressItems, { targetLedgerDate });
+        return;
       }
+
+      const dispatchIdForSave = activeDispatch.id;
+      const savingToAlternateDate = targetLedgerDate !== trip.date;
 
       let workingRows = [...currentRows];
       const upsertedRowIds: string[] = [];
@@ -3530,7 +3533,7 @@ export default function ShipmentQuickLedger() {
             feesAmountUsd: 0,
             transferServiceFeeUsd: parseUsd(row.transferServiceFee),
             notes: row.notes || null,
-            dispatchId: activeDispatch?.id ?? row.dispatchId ?? null,
+            dispatchId: dispatchIdForSave,
           });
           upsertedRowIds.push(saved.id);
           savedDbIdByDisplayId.set(row.id, saved.id);
@@ -3649,7 +3652,7 @@ export default function ShipmentQuickLedger() {
             next[row.id] = errorsByRowId.get(dbId)!.message;
           }
         }
-        persistFailedSaveRows(sessionScope.ledgerDate, sessionScope.lineLabel, next);
+        persistFailedSaveRows(saveScope.ledgerDate, saveScope.lineLabel, next);
         return next;
       });
 
@@ -3695,8 +3698,10 @@ export default function ShipmentQuickLedger() {
       if (result.posted.length) {
         showToast(
           resumeMode
-            ? `تم استكمال ترحيل ${result.posted.length} شحنة بتاريخ ${sessionScope.ledgerDate} — ستظهر في قائمة الشحنات (تحميل/تسليم) والذمم في قسم المالية (وكلاء/عملاء).`
-            : `تم ترحيل ${result.posted.length} شحنة بتاريخ ${sessionScope.ledgerDate} — متاحة الآن في قائمة الشحنات والذمم المالية.`,
+            ? `تم استكمال ترحيل ${result.posted.length} شحنة بتاريخ ${saveScope.ledgerDate} — ستظهر في قائمة الشحنات (تحميل/تسليم) والذمم في قسم المالية (وكلاء/عملاء).`
+            : savingToAlternateDate
+              ? `تم ترحيل ${result.posted.length} شحنة بتاريخ ${saveScope.ledgerDate} — نُقلت من تاريخ العرض (${trip.date}).`
+              : `تم ترحيل ${result.posted.length} شحنة بتاريخ ${saveScope.ledgerDate} — متاحة الآن في قائمة الشحنات والذمم المالية.`,
           'success',
         );
       }
