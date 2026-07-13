@@ -345,6 +345,10 @@ export interface DailyLedgerRowListFilters {
   /** عند مدخل البيانات: يُقيّد العرض بأسطر هذا المستخدم فقط */
   createdByUserId?: string;
   q?: string;
+  receiptNo?: string;
+  parcelType?: string;
+  senderName?: string;
+  receiverName?: string;
   limit: number;
   offset: number;
 }
@@ -551,6 +555,22 @@ export class DailyLedgerRepository {
           or coalesce(r.receiver_name,'') ilike ${qp}
         )`,
       );
+    }
+    if (filters.receiptNo?.trim()) {
+      values.push(`%${filters.receiptNo.trim()}%`);
+      conditions.push(`coalesce(r.receipt_no,'') ilike $${values.length}`);
+    }
+    if (filters.parcelType?.trim()) {
+      values.push(`%${filters.parcelType.trim()}%`);
+      conditions.push(`coalesce(r.parcel_type,'') ilike $${values.length}`);
+    }
+    if (filters.senderName?.trim()) {
+      values.push(`%${filters.senderName.trim()}%`);
+      conditions.push(`coalesce(r.sender_name,'') ilike $${values.length}`);
+    }
+    if (filters.receiverName?.trim()) {
+      values.push(`%${filters.receiverName.trim()}%`);
+      conditions.push(`coalesce(r.receiver_name,'') ilike $${values.length}`);
     }
 
     values.push(filters.limit);

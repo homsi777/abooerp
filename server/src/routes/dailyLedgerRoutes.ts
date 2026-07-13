@@ -98,6 +98,10 @@ export function createDailyLedgerRouter(
         onlyWithData: z.coerce.boolean().optional(),
         allBranches: z.coerce.boolean().optional(),
         q: z.string().optional(),
+        receiptNo: z.string().optional(),
+        parcelType: z.string().optional(),
+        senderName: z.string().optional(),
+        receiverName: z.string().optional(),
         limit: z.coerce.number().min(1).max(10000).optional(),
         offset: z.coerce.number().min(0).optional(),
       });
@@ -155,6 +159,10 @@ export function createDailyLedgerRouter(
         onlyWithData: q.onlyWithData,
         createdByUserId,
         q: q.q,
+        receiptNo: q.receiptNo,
+        parcelType: q.parcelType,
+        senderName: q.senderName,
+        receiverName: q.receiverName,
         limit: q.limit ?? 250,
         offset: q.offset ?? 0,
       });

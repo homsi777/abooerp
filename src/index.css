@@ -1950,6 +1950,222 @@ body {
   background: #f1f5f9;
 }
 
+.quick-ledger-global-search-field {
+  flex: 1 1 320px;
+  min-width: min(420px, 100%);
+}
+
+.quick-ledger-global-search-trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #64748b;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: right;
+}
+
+.quick-ledger-global-search-trigger:hover {
+  border-color: #0d9488;
+  color: #0f766e;
+  box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.15);
+}
+
+.quick-ledger-global-search-trigger span {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quick-ledger-global-search-dialog {
+  width: min(1180px, calc(100vw - 40px));
+  max-height: calc(100vh - 88px);
+}
+
+.quick-ledger-global-search-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.quick-ledger-global-search-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.quick-ledger-global-search-fields input {
+  padding: 9px 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.quick-ledger-global-search-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.quick-ledger-global-search-hint {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.quick-ledger-global-search-error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.quick-ledger-global-search-results {
+  flex: 1;
+  min-height: 280px;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.quick-ledger-global-search-empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: #64748b;
+}
+
+.quick-ledger-global-search-results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.quick-ledger-global-search-results-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.quick-ledger-global-search-print-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid #0d9488;
+  border-radius: 8px;
+  background: #14b8a6;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.quick-ledger-global-search-print-btn:hover:not(:disabled) {
+  background: #0d9488;
+  border-color: #0f766e;
+}
+
+.quick-ledger-global-search-print-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.quick-ledger-global-search-results table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.quick-ledger-global-search-results th,
+.quick-ledger-global-search-results td {
+  padding: 9px 8px;
+  border-bottom: 1px solid #f1f5f9;
+  text-align: right;
+  vertical-align: top;
+}
+
+.quick-ledger-global-search-results th {
+  background: #f8fafc;
+  font-weight: 800;
+  color: #475569;
+  position: sticky;
+  top: 42px;
+  z-index: 1;
+}
+
+.quick-ledger-global-search-row {
+  cursor: pointer;
+}
+
+.quick-ledger-global-search-row:hover {
+  background: rgba(20, 184, 166, 0.08);
+}
+
+.quick-ledger-global-search-muted {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.quick-ledger-global-search-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.quick-ledger-global-search-status.is-posted {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.quick-ledger-global-search-status.is-loaded {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.quick-ledger-global-search-status.is-draft {
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+@media (max-width: 1100px) {
+  .quick-ledger-global-search-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .quick-ledger-global-search-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
 .quick-ledger-custom-save-dialog {
   width: min(1160px, calc(100vw - 40px));
   max-height: calc(100vh - 88px);

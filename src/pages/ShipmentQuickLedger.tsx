@@ -89,8 +89,6 @@ import {
 } from '../lib/shipping/dailyLedgerPrintable';
 import { computeTotalsFromRemoteRows, formatUsdAmount } from '../lib/shipping/dailyLedgerTotals';
 import {
-  filterLocalRowsBySearch,
-  filterRemoteRowsBySearch,
   resolveDocumentationLedgerDates,
   sortRemoteRowsChronological,
 } from '../lib/shipping/dailyLedgerRowFilter';
@@ -112,6 +110,7 @@ import QuickLedgerCustomSaveDialog, {
 } from '../components/shipping/QuickLedgerCustomSaveDialog';
 import QuickLedgerDispatchSaveLogPanel from '../components/shipping/QuickLedgerDispatchSaveLogPanel';
 import QuickLedgerPostSavePrintPrompt from '../components/shipping/QuickLedgerPostSavePrintPrompt';
+import QuickLedgerGlobalSearchModal from '../components/shipping/QuickLedgerGlobalSearchModal';
 import {
   mergeLedgerRowWithAutoTariff,
   parseUsd,
@@ -1003,6 +1002,7 @@ export default function ShipmentQuickLedger() {
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const printHubRef = useRef<QuickLedgerPrintHubHandle>(null);
   const saveMenuRef = useRef<HTMLDivElement>(null);
+  const pendingFocusDbRowIdRef = useRef<string | null>(null);
   const [reprintRequired, setReprintRequired] = useState(false);
   const [remoteRowsRaw, setRemoteRowsRaw] = useState<RemoteDailyLedgerRow[]>([]);
   const [deleteMode, setDeleteMode] = useState(false);
@@ -1092,7 +1092,8 @@ export default function ShipmentQuickLedger() {
     driverId: 0,
     vehicleId: 0,
   });
-  const [searchQuick, setSearchQuick] = useState('');
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [globalSearchSeed, setGlobalSearchSeed] = useState('');
   const [destinationSort, setDestinationSort] = useState<'none' | 'asc' | 'desc'>('none');
 
   const destinations = useMemo(
@@ -1137,7 +1138,7 @@ export default function ShipmentQuickLedger() {
     let displayable = rows.filter(
       (row) => isRowStarted(row) || (trailingBlank != null && row.id === trailingBlank.id),
     );
-    const filtered = filterLocalRowsBySearch(displayable, searchQuick, catalogAgents);
+    const filtered = displayable;
     if (destinationSort === 'none') return filtered;
     const entryRow =
       trailingBlank && filtered.some((row) => row.id === trailingBlank.id) ? trailingBlank : null;
@@ -1153,7 +1154,7 @@ export default function ShipmentQuickLedger() {
       })
       .map(({ row }) => row);
     return entryRow ? [...sorted, entryRow] : sorted;
-  }, [rows, searchQuick, catalogAgents, destinationSort]);
+  }, [rows, catalogAgents, destinationSort]);
 
   const deletableVisibleRows = useMemo(
     () => visibleRows.filter(isRowDeletable),
@@ -1260,10 +1261,9 @@ export default function ShipmentQuickLedger() {
 
   const stats = useMemo(() => {
     const printable = filterPrintableDailyLedgerRows(remoteRowsRaw);
-    const filteredRemote = filterRemoteRowsBySearch(printable, searchQuick, catalogAgents);
+    const filteredRemote = printable;
     const totals = computeTotalsFromRemoteRows(filteredRemote);
     const completeRows = rows.filter((row) => isRowComplete(row) && !row.postedShipmentId);
-    const searchActive = Boolean(normalizeName(searchQuick));
     return {
       rowCount: totals.rowCount,
       collectionUsd: totals.collectionUsd,
@@ -1273,10 +1273,10 @@ export default function ShipmentQuickLedger() {
       totalWeightKg: totals.weightKg,
       complete: completeRows.length,
       saved: filteredRemote.filter((row) => Boolean(row.posted_shipment_id)).length,
-      searchActive,
-      searchLabel: searchActive ? searchQuick.trim() : '',
+      searchActive: false,
+      searchLabel: '',
     };
-  }, [remoteRowsRaw, rows, searchQuick, catalogAgents]);
+  }, [remoteRowsRaw, rows]);
 
   const rowsRef = useRef(rows);
   const customersRef = useRef(customers);
@@ -1778,6 +1778,21 @@ export default function ShipmentQuickLedger() {
         : displayRows;
       if (generation !== loadGenerationRef.current) return;
       setRows(rowsWithDrafts);
+      const focusDbRowId = pendingFocusDbRowIdRef.current;
+      if (focusDbRowId) {
+        pendingFocusDbRowIdRef.current = null;
+        const displayRow = rowsWithDrafts.find((entry) => entry.dbId === focusDbRowId);
+        if (displayRow) {
+          setActiveRowId(displayRow.id);
+          window.setTimeout(() => {
+            document
+              .querySelector(`[data-ledger-row-id="${displayRow.id}"]`)
+              ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          }, 80);
+        } else {
+          showToast('تم فتح تاريخ السطر — لم يُعثر على السطر في العرض الحالي.', 'info');
+        }
+      }
     } catch (error) {
       if (generation === loadGenerationRef.current) {
         showToast(error instanceof Error ? error.message : 'تعذر تحديث دفتر الشحن اليومي من الشبكة', 'error');
@@ -3822,6 +3837,26 @@ export default function ShipmentQuickLedger() {
     }
   };
 
+  const handleGlobalSearchSelect = async (row: RemoteDailyLedgerRow) => {
+    setGlobalSearchOpen(false);
+    pendingFocusDbRowIdRef.current = row.id;
+    const targetDate = String(row.ledger_date ?? '').slice(0, 10);
+    const targetLine = row.line_label ?? tripRef.current.line;
+    if (row.branch_id) {
+      setLedgerBranchMode('single');
+      await setActiveBranch(row.branch_id);
+    }
+    const nextTrip = {
+      ...tripRef.current,
+      date: targetDate || tripRef.current.date,
+      line: targetLine || tripRef.current.line,
+    };
+    tripRef.current = nextTrip;
+    setTrip(nextTrip);
+    setRemoteLoading(true);
+    await loadRemoteRows();
+  };
+
   const cloudStatusMessage =
     cloudStatus === 'online'
       ? 'متصل بالسحابة — الحفظ يعمل مباشرة.'
@@ -3987,7 +4022,7 @@ export default function ShipmentQuickLedger() {
               lockedBranchId={dispatchLockedBranchId}
               canViewAllBranches={canViewAllLedgerEntries && ledgerBranchMode === 'all'}
               includeLoaded={includeLoaded}
-              searchQuick={searchQuick}
+              searchQuick=""
               catalogAgents={catalogAgents}
               remoteRowsRaw={remoteRowsRaw}
               drivers={drivers}
@@ -4267,12 +4302,20 @@ export default function ShipmentQuickLedger() {
               <option key={b.id} value={b.name} />
             ))}
           </datalist>
-          <label className="quick-ledger-trip-search">
-            <span>بحث</span>
-            <div className="quick-ledger-search">
-              <Search size={14} />
-              <input placeholder="وجهة أو إيصال..." value={searchQuick} onChange={(e) => setSearchQuick(e.target.value)} />
-            </div>
+          <label className="quick-ledger-trip-search quick-ledger-global-search-field">
+            <span>بحث شامل</span>
+            <button
+              type="button"
+              className="quick-ledger-global-search-trigger"
+              onClick={() => {
+                setGlobalSearchSeed('');
+                setGlobalSearchOpen(true);
+              }}
+              title="بحث في كل التواريخ — إيصال، نوع بضاعة، مرسل، مستلم"
+            >
+              <Search size={16} />
+              <span>إيصال · نوع بضاعة · مرسل · مستلم — كل التواريخ المسجّلة...</span>
+            </button>
           </label>
           {canViewAllLedgerEntries ? (
             <span
@@ -4449,7 +4492,7 @@ export default function ShipmentQuickLedger() {
                 .filter(Boolean)
                 .join(' ');
               return (
-                <tr key={row.id} className={rowClassName} title={rowIssue}>
+                <tr key={row.id} className={rowClassName} title={rowIssue} data-ledger-row-id={row.id}>
                   {deleteMode && canLedgerDeleteRows && (
                     <td className="quick-ledger-select-col">
                       <input
@@ -4709,6 +4752,16 @@ export default function ShipmentQuickLedger() {
         defaultDateFrom={trip.date}
         defaultDateTo={trip.date}
         onReprint={handleReprintDispatchSaveLog}
+      />
+      <QuickLedgerGlobalSearchModal
+        open={globalSearchOpen}
+        onClose={() => setGlobalSearchOpen(false)}
+        initialQuery={globalSearchSeed}
+        branchId={activeBranchId ?? undefined}
+        allBranches={canViewAllLedgerEntries && ledgerBranchMode === 'all'}
+        includeLoaded={includeLoaded}
+        branches={branches}
+        onSelectRow={(row) => void handleGlobalSearchSelect(row)}
       />
       <QuickLedgerPostSavePrintPrompt
         open={postSavePrintOpen}
