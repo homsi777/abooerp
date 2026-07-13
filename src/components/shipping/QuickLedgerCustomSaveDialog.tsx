@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Save, X } from 'lucide-react';
 import { getBackendIdFromSynthetic } from '../../lib/api/phase15Gateway';
 import type { Driver, Vehicle } from '../../types';
@@ -174,7 +175,7 @@ export default function QuickLedgerCustomSaveDialog({
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div className="quick-ledger-dispatch-dialog-backdrop" role="presentation" onClick={onClose}>
       <div
         className="quick-ledger-dispatch-dialog quick-ledger-custom-save-dialog"
@@ -349,7 +350,8 @@ export default function QuickLedgerCustomSaveDialog({
           </button>
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

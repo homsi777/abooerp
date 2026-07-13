@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { Printer, X } from 'lucide-react';
 
 type Props = {
@@ -19,7 +20,7 @@ export default function QuickLedgerPostSavePrintPrompt({
 }: Props) {
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div className="quick-ledger-dispatch-dialog-backdrop" role="presentation">
       <div
         className="quick-ledger-post-save-print-prompt"
@@ -47,6 +48,7 @@ export default function QuickLedgerPostSavePrintPrompt({
           </button>
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

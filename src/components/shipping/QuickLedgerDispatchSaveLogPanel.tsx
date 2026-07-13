@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { FileText, Printer, Search, X } from 'lucide-react';
 import { useToast } from '../Toast';
 import { getBackendIdFromSynthetic, phase15Gateway } from '../../lib/api/phase15Gateway';
@@ -199,7 +200,7 @@ export default function QuickLedgerDispatchSaveLogPanel({
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div className="quick-ledger-dispatch-dialog-backdrop" role="presentation" onClick={onClose}>
       <div
         className="quick-ledger-dispatch-save-log-dialog"
@@ -429,6 +430,7 @@ export default function QuickLedgerDispatchSaveLogPanel({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
