@@ -2296,7 +2296,6 @@ export default function ShipmentQuickLedger() {
           feesAmountUsd: 0,
           transferServiceFeeUsd: parseUsd(latestRow.transferServiceFee),
           notes: latestRow.notes || null,
-          dispatchId: latestRow.dispatchId ?? null,
         });
         setRows((prev) => {
           const mapped = prev.map((r) => {
@@ -3335,7 +3334,15 @@ export default function ShipmentQuickLedger() {
 
     try {
       quickLedgerLog.log('info', 'prepare', 'مزامنة الأسطر قبل الحفظ الجماعي');
-      await flushPendingRowSaves();
+      const savingToAlternateDate = targetLedgerDate !== trip.date;
+      if (savingToAlternateDate) {
+        Object.values(saveTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+        saveTimersRef.current = {};
+        receiptEditingRowIdRef.current = null;
+        setReceiptEditingRowId(null);
+      } else {
+        await flushPendingRowSaves();
+      }
 
       const currentRows = rowsRef.current;
       const batchRows = currentRows;
@@ -3486,7 +3493,6 @@ export default function ShipmentQuickLedger() {
       }
 
       const dispatchIdForSave = activeDispatch.id;
-      const savingToAlternateDate = targetLedgerDate !== trip.date;
 
       let workingRows = [...currentRows];
       const upsertedRowIds: string[] = [];

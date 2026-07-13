@@ -307,13 +307,16 @@ export class DailyLedgerDispatchRepository {
   }
 }
 
-/** يُستخدم عند الحفظ لربط السطر بتعريف الإرسالية واستخراج السائق/المركبة */
+/** يُستخدم عند الحفظ لربط السطر بتعريف الإرسالية — مصدر الحقيقة لتاريخ/خط الإرسالية */
 export async function resolveFleetFromDispatchDefinition(
   client: PoolClient,
   companyId: string,
   dispatchId: string,
-  scope: { branchId: string; ledgerDate: string; lineLabel: string },
+  _scope: { branchId: string; ledgerDate: string; lineLabel: string },
 ): Promise<{
+  branchId: string;
+  ledgerDate: string;
+  lineLabel: string;
   driverId: string | null;
   vehicleId: string | null;
   driverLabel: string | null;
@@ -321,6 +324,9 @@ export async function resolveFleetFromDispatchDefinition(
   tripNo: string | null;
 }> {
   const result = await client.query<{
+    branch_id: string;
+    ledger_date: string;
+    line_label: string;
     driver_id: string | null;
     vehicle_id: string | null;
     driver_label: string | null;
@@ -328,23 +334,31 @@ export async function resolveFleetFromDispatchDefinition(
     trip_no: string | null;
   }>(
     `
-    select driver_id, vehicle_id, driver_label, vehicle_label, trip_no
+    select
+      branch_id,
+      ledger_date::text as ledger_date,
+      line_label,
+      driver_id,
+      vehicle_id,
+      driver_label,
+      vehicle_label,
+      trip_no
     from daily_ledger_dispatch_definitions
     where id = $1::uuid
       and company_id = $2::uuid
-      and branch_id = $3::uuid
-      and ledger_date = $4::date
-      and line_label = $5
       and deleted_at is null
     limit 1
     `,
-    [dispatchId, companyId, scope.branchId, scope.ledgerDate, scope.lineLabel],
+    [dispatchId, companyId],
   );
   const row = result.rows[0];
   if (!row) {
-    throw new HttpError(404, 'تعريف الإرسالية غير موجود أو لا يطابق التاريخ/الخط.');
+    throw new HttpError(404, 'تعريف الإرسالية غير موجود.');
   }
   return {
+    branchId: row.branch_id,
+    ledgerDate: row.ledger_date,
+    lineLabel: row.line_label,
     driverId: row.driver_id,
     vehicleId: row.vehicle_id,
     driverLabel: row.driver_label,

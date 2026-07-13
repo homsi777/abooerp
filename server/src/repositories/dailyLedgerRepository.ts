@@ -724,21 +724,18 @@ export class DailyLedgerRepository {
         }
       }
 
-      const ledgerScope = {
-        branchId: input.branchId,
-        ledgerDate: input.ledgerDate,
-        lineLabel: input.lineLabel,
-      };
-
       if (input.dispatchId) {
         const fleet = await resolveFleetFromDispatchDefinition(
           client,
           scope.companyId,
           input.dispatchId,
-          ledgerScope,
+          requestedScope,
         );
         input = {
           ...input,
+          branchId: fleet.branchId,
+          ledgerDate: fleet.ledgerDate,
+          lineLabel: fleet.lineLabel,
           driverId: fleet.driverId ?? input.driverId ?? null,
           vehicleId: fleet.vehicleId ?? input.vehicleId ?? null,
           driverLabel: fleet.driverLabel ?? input.driverLabel ?? null,
@@ -746,6 +743,12 @@ export class DailyLedgerRepository {
           tripNo: fleet.tripNo ?? input.tripNo ?? null,
         };
       }
+
+      const ledgerScope = {
+        branchId: input.branchId,
+        ledgerDate: input.ledgerDate,
+        lineLabel: input.lineLabel,
+      };
 
       await assertUniqueLedgerReceiptNo(
         client,
