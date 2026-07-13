@@ -1010,6 +1010,25 @@ export function createDailyLedgerRouter(
         const log = await service.createDispatchSaveLog(scope, {
           ...input,
           userId: scope.userId,
+          rowsSnapshot: input.rowsSnapshot?.map((row) => ({
+            rowId: row.rowId,
+            rowNo: row.rowNo,
+            receiptNo: row.receiptNo ?? null,
+            destination: row.destination,
+            parcelType: row.parcelType ?? '',
+            parcelCount: row.parcelCount ?? null,
+            weightKg: row.weightKg ?? null,
+            senderName: row.senderName ?? '',
+            receiverName: row.receiverName ?? '',
+            collectAmountUsd: row.collectAmountUsd ?? '0',
+            prepaidAmountUsd: row.prepaidAmountUsd ?? '0',
+            hawalaAmountUsd: row.hawalaAmountUsd ?? '0',
+            transferServiceFeeUsd: row.transferServiceFeeUsd ?? '0',
+            notes: row.notes ?? null,
+            driverLabel: row.driverLabel ?? null,
+            dispatchNo: row.dispatchNo ?? null,
+            ledgerDate: row.ledgerDate ?? null,
+          })),
         });
         res.json({ success: true, data: log });
       } catch (error) {
