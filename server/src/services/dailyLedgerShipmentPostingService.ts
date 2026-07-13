@@ -274,6 +274,15 @@ export class DailyLedgerShipmentPostingService {
       };
     }
 
+    if (filters.rowIds?.length) {
+      return {
+        sessionId: undefined,
+        branchId: filters.branchId,
+        ledgerDate: filters.ledgerDate,
+        lineLabel: filters.lineLabel,
+      };
+    }
+
     const sessionCount = await this.countActiveSessionsForLedger(scope, filters);
     if (sessionCount > 1) {
       throw new HttpError(400, 'DAILY_LEDGER_SESSION_REQUIRED');

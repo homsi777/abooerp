@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  FileText,
   HelpCircle,
   Plus,
   Printer,
@@ -13,6 +14,7 @@ import {
   Trash2,
   Truck,
   X,
+  ChevronDown,
 } from 'lucide-react';
 import {
   buildMahmoudPreprintedReceiptHtml,
@@ -97,6 +99,19 @@ import {
   savePrintDocumentation,
   type PrintDocumentationRowSnapshot,
 } from '../lib/shipping/dailyLedgerDocumentationGateway';
+import {
+  createDispatchSaveLog,
+  markDispatchSavePrinted,
+  type DispatchSaveLogDetail,
+  type DispatchSaveRowSnapshot,
+} from '../lib/shipping/dailyLedgerDispatchSaveGateway';
+import { dailyLedgerDispatchGateway } from '../lib/shipping/dailyLedgerDispatchGateway';
+import QuickLedgerCustomSaveDialog, {
+  resolveCustomSaveFleet,
+  type CustomSaveSubmit,
+} from '../components/shipping/QuickLedgerCustomSaveDialog';
+import QuickLedgerDispatchSaveLogPanel from '../components/shipping/QuickLedgerDispatchSaveLogPanel';
+import QuickLedgerPostSavePrintPrompt from '../components/shipping/QuickLedgerPostSavePrintPrompt';
 import {
   mergeLedgerRowWithAutoTariff,
   parseUsd,
@@ -658,6 +673,98 @@ function buildPrintRowsSnapshot(rows: RemoteDailyLedgerRow[]): PrintDocumentatio
   }));
 }
 
+type SaveBatchOptions = {
+  mode?: 'all' | 'custom';
+  displayRowIds?: number[];
+  targetDate?: string;
+  overrideFleet?: {
+    driverId: string | null;
+    vehicleId: string | null;
+    driverLabel: string | null;
+    vehicleLabel: string | null;
+  };
+};
+
+function buildDispatchSaveSnapshotFromLedgerRows(
+  rows: LedgerRow[],
+  savedDbIdByDisplayId: Map<number, string>,
+  dispatchNo: number | null | undefined,
+  ledgerDate: string,
+  drivers: Driver[],
+  trip: { driver: string; driverId: number },
+): DispatchSaveRowSnapshot[] {
+  return rows.map((row) => {
+    const driver = drivers.find((item) => item.id === (row.sessionDriverId ?? trip.driverId));
+    return {
+      rowId: savedDbIdByDisplayId.get(row.id) ?? row.dbId ?? String(row.id),
+      rowNo: row.serverRowNo ?? row.id,
+      receiptNo: row.receiptNo || null,
+      destination: row.destination ?? '',
+      parcelType: row.parcelType ?? '',
+      parcelCount: Number(row.parcelCount) || null,
+      weightKg: row.weightKg || null,
+      senderName: row.sender ?? '',
+      receiverName: row.receiver ?? '',
+      collectAmountUsd: String(parseUsd(row.collectAmount) || 0),
+      prepaidAmountUsd: String(parseUsd(row.prepaidAmount) || 0),
+      hawalaAmountUsd: String(parseUsd(row.receiverCollect) || 0),
+      transferServiceFeeUsd: String(parseUsd(row.transferServiceFee) || 0),
+      notes: row.notes || null,
+      driverLabel: driver?.name ?? trip.driver ?? null,
+      dispatchNo: dispatchNo ?? null,
+      ledgerDate,
+    };
+  });
+}
+
+function computeDispatchSaveTotals(rows: DispatchSaveRowSnapshot[]) {
+  return rows.reduce(
+    (acc, row) => {
+      acc.rowCount += 1;
+      acc.piecesCount += Number(row.parcelCount ?? 0) || 0;
+      acc.weightKg += Number(String(row.weightKg ?? '').replace(/[^\d.-]/g, '')) || 0;
+      acc.collectTotalUsd += Number(String(row.collectAmountUsd ?? '').replace(/[^\d.-]/g, '')) || 0;
+      acc.prepaidTotalUsd += Number(String(row.prepaidAmountUsd ?? '').replace(/[^\d.-]/g, '')) || 0;
+      acc.hawalaTotalUsd += Number(String(row.hawalaAmountUsd ?? '').replace(/[^\d.-]/g, '')) || 0;
+      acc.transferFeeTotalUsd += Number(String(row.transferServiceFeeUsd ?? '').replace(/[^\d.-]/g, '')) || 0;
+      return acc;
+    },
+    {
+      rowCount: 0,
+      piecesCount: 0,
+      weightKg: 0,
+      collectTotalUsd: 0,
+      prepaidTotalUsd: 0,
+      hawalaTotalUsd: 0,
+      transferFeeTotalUsd: 0,
+    },
+  );
+}
+
+function uniqueDestinationLabel(rows: Array<{ destination?: string | null }>): string {
+  const destinations = [...new Set(rows.map((row) => normalizeName(row.destination ?? '')).filter(Boolean))];
+  if (!destinations.length) return '—';
+  if (destinations.length <= 4) return destinations.join('، ');
+  return `${destinations.slice(0, 4).join('، ')}… (+${destinations.length - 4})`;
+}
+
+function dispatchSaveSnapshotToPrintRows(snapshot: DispatchSaveRowSnapshot[]): QuickLedgerPrintRow[] {
+  return snapshot.map((row) => ({
+    parcelType: row.parcelType,
+    parcelCount: String(row.parcelCount ?? ''),
+    weightKg: row.weightKg ?? '',
+    collectAmount: row.collectAmountUsd,
+    prepaidAmount: row.prepaidAmountUsd,
+    hawalaAmount: row.hawalaAmountUsd,
+    transferServiceFee: row.transferServiceFeeUsd,
+    sender: row.senderName,
+    receiver: row.receiverName,
+    destination: row.destination,
+    receiptNo: row.receiptNo ?? '',
+    notes: row.notes ?? '',
+  }));
+}
+
 function resolvePrintDriverLabel(
   rows: RemoteDailyLedgerRow[],
   activeSearch: string,
@@ -929,6 +1036,21 @@ export default function ShipmentQuickLedger() {
   }>({ loading: false, warnings: [], errors: [] });
   const [loadingRefs, setLoadingRefs] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveMenuOpen, setSaveMenuOpen] = useState(false);
+  const [customSaveOpen, setCustomSaveOpen] = useState(false);
+  const [dispatchSaveLogOpen, setDispatchSaveLogOpen] = useState(false);
+  const [postSavePrintOpen, setPostSavePrintOpen] = useState(false);
+  const [postSavePrinting, setPostSavePrinting] = useState(false);
+  const [postSavePrintContext, setPostSavePrintContext] = useState<{
+    dispatchNo: number | null;
+    driverLabel: string;
+    destinationLabel: string;
+    printRows: QuickLedgerPrintRow[];
+    saveLogId?: string;
+    ledgerDate: string;
+    lineLabel: string;
+    branchId: string;
+  } | null>(null);
   const [saveProgress, setSaveProgress] = useState<SaveProgressState>(createInitialSaveProgress);
   const [failedSaveRows, setFailedSaveRows] = useState<FailedSaveRowMap>({});
   const [agentHelpOpen, setAgentHelpOpen] = useState(false);
@@ -1223,6 +1345,7 @@ export default function ShipmentQuickLedger() {
   const canLedgerTransfer = hasPermission('daily_ledger.transfer.create');
   const canLedgerCloseSection = hasPermission('daily_ledger.close_section');
   const canLedgerSaveLog = hasPermission('daily_ledger.save_log');
+  const canLedgerDispatchSaveLog = hasPermission('daily_ledger.dispatch_save.read');
   const canLedgerViewLoaded = hasPermission('daily_ledger.view_loaded');
   const canLedgerDeleteRows = hasPermission('daily_ledger.delete_rows');
   const canLedgerPostShipments = hasPermission('daily_ledger.post_shipments');
@@ -3144,7 +3267,7 @@ export default function ShipmentQuickLedger() {
     setSaveProgress((prev) => applySaveProgressItemPatch(prev, key, patch));
   };
 
-  const saveRows = async () => {
+  const saveRows = async (options: SaveBatchOptions = { mode: 'all' }) => {
     if (!requireCloudConnection('حفظ الشحنات على السحابة يحتاج اتصالاً. ستبقى الصفوف محفوظة محلياً بانتظار المزامنة.')) {
       return;
     }
@@ -3156,9 +3279,11 @@ export default function ShipmentQuickLedger() {
       showToast('يرجى اختيار الخط / المصدر أولاً', 'error');
       return;
     }
+    const saveMode = options.mode ?? 'all';
+    const targetLedgerDate = options.targetDate ?? trip.date;
     const saveScope = {
       branchId: activeBranchId,
-      ledgerDate: trip.date,
+      ledgerDate: targetLedgerDate,
       lineLabel: trip.line,
     };
     const saveBranchId = resolveLedgerBranchId(saveScope.branchId);
@@ -3213,7 +3338,11 @@ export default function ShipmentQuickLedger() {
 
       const currentRows = rowsRef.current;
       const batchRows = currentRows;
-      const rowsToPost = batchRows.filter((row) => isRowComplete(row) && !row.postedShipmentId);
+      let rowsToPost = batchRows.filter((row) => isRowComplete(row) && !row.postedShipmentId);
+      if (options.displayRowIds?.length) {
+        const selected = new Set(options.displayRowIds);
+        rowsToPost = rowsToPost.filter((row) => selected.has(row.id));
+      }
       const alreadyPostedCount = batchRows.filter(
         (row) => isRowStarted(row) && row.postedShipmentId,
       ).length;
@@ -3298,6 +3427,7 @@ export default function ShipmentQuickLedger() {
       }
 
       const rowsMissingDriver = rowsToPost.filter((row) => {
+        if (options.overrideFleet?.driverId) return false;
         const fleet = resolveFleetForLedgerRow(row, trip, drivers, vehicles);
         return !fleet.driverId;
       });
@@ -3323,6 +3453,37 @@ export default function ShipmentQuickLedger() {
           : `حفظ الأسطر في الدفتر (0 / ${rowsToPost.length})...`,
       }));
 
+      let activeDispatch: Awaited<ReturnType<typeof dailyLedgerDispatchGateway.create>> | null = null;
+      try {
+        const dispatchList = await dailyLedgerDispatchGateway.list({
+          branchId: saveBranchId,
+          ledgerDate: targetLedgerDate,
+          lineLabel: saveScope.lineLabel,
+          suggestNext: true,
+        });
+        const sampleRow = rowsToPost[0];
+        const sampleFleet = options.overrideFleet
+          ?? (sampleRow ? resolveFleetForLedgerRow(sampleRow, trip, drivers, vehicles) : null);
+        activeDispatch = await dailyLedgerDispatchGateway.create({
+          branchId: saveBranchId,
+          ledgerDate: targetLedgerDate,
+          lineLabel: saveScope.lineLabel,
+          dispatchNo: dispatchList.nextDispatchNo ?? 1,
+          driverId: sampleFleet?.driverId ?? null,
+          vehicleId: sampleFleet?.vehicleId ?? null,
+          driverLabel: sampleFleet?.driverLabel ?? null,
+          vehicleLabel: sampleFleet?.vehicleLabel ?? null,
+          tripNo: trip.tripNo || null,
+          notes: saveMode === 'custom' ? 'حفظ مخصص' : 'حفظ الكل',
+        });
+      } catch (dispatchError) {
+        quickLedgerLog.log(
+          'warn',
+          'dispatch',
+          dispatchError instanceof Error ? dispatchError.message : 'تعذر إنشاء تعريف الإرسالية',
+        );
+      }
+
       let workingRows = [...currentRows];
       const upsertedRowIds: string[] = [];
       const savedDbIdByDisplayId = new Map<number, string>();
@@ -3339,14 +3500,16 @@ export default function ShipmentQuickLedger() {
             : `حفظ الأسطر في الدفتر (${index + 1} / ${rowsToPost.length})...`,
         }));
 
-        const fleet = resolveFleetForLedgerRow(row, trip, drivers, vehicles);
-        const effectiveDriverId = row.sessionDriverId ?? trip.driverId;
+        const fleet = options.overrideFleet ?? resolveFleetForLedgerRow(row, trip, drivers, vehicles);
+        const effectiveDriverId = options.overrideFleet?.driverId
+          ? drivers.find((driver) => getBackendIdFromSynthetic(driver.id) === options.overrideFleet?.driverId)?.id
+          : (row.sessionDriverId ?? trip.driverId);
         const rowNo =
-          row.serverRowNo ?? nextServerRowNoForDriver(workingRows, effectiveDriverId) ?? row.id;
+          row.serverRowNo ?? nextServerRowNoForDriver(workingRows, effectiveDriverId ?? trip.driverId) ?? row.id;
         try {
           const saved = await httpClient.post<RemoteDailyLedgerRow>('/daily-ledger/rows/upsert', {
             branchId: saveBranchId,
-            ledgerDate: saveScope.ledgerDate,
+            ledgerDate: targetLedgerDate,
             lineLabel: saveScope.lineLabel,
             originLabel: origin,
             tripNo: trip.tripNo || null,
@@ -3366,7 +3529,7 @@ export default function ShipmentQuickLedger() {
             feesAmountUsd: 0,
             transferServiceFeeUsd: parseUsd(row.transferServiceFee),
             notes: row.notes || null,
-            dispatchId: row.dispatchId ?? null,
+            dispatchId: activeDispatch?.id ?? row.dispatchId ?? null,
           });
           upsertedRowIds.push(saved.id);
           savedDbIdByDisplayId.set(row.id, saved.id);
@@ -3383,10 +3546,15 @@ export default function ShipmentQuickLedger() {
                   serverRowNo: saved.row_no,
                   sessionDriverId: saved.driver_id
                     ? syntheticEntityId(saved.driver_id)
-                    : trip.driverId || r.sessionDriverId,
+                    : (effectiveDriverId ?? trip.driverId ?? r.sessionDriverId),
                   sessionId: saved.session_id ?? r.sessionId,
-                  dispatchId: saved.dispatch_id ?? r.dispatchId,
-                  dispatchNo: saved.dispatch_no != null ? String(saved.dispatch_no) : r.dispatchNo,
+                  dispatchId: saved.dispatch_id ?? activeDispatch?.id ?? r.dispatchId,
+                  dispatchNo:
+                    saved.dispatch_no != null
+                      ? String(saved.dispatch_no)
+                      : activeDispatch?.dispatch_no != null
+                        ? String(activeDispatch.dispatch_no)
+                        : r.dispatchNo,
                 }
               : r,
           );
@@ -3421,7 +3589,7 @@ export default function ShipmentQuickLedger() {
         errors: Array<{ rowId: string; rowNo: number; message: string }>;
       }>('/daily-ledger/rows/post-shipments', {
         branchId: saveBranchId,
-        ledgerDate: saveScope.ledgerDate,
+        ledgerDate: targetLedgerDate,
         lineLabel: saveScope.lineLabel,
         rowIds: upsertedRowIds,
       });
@@ -3549,6 +3717,81 @@ export default function ShipmentQuickLedger() {
         );
       }
 
+      const postedLedgerRows = rowsToPost.filter((row) => {
+        const dbId = savedDbIdByDisplayId.get(row.id) ?? row.dbId;
+        return dbId ? postedByRowId.has(dbId) : false;
+      });
+      if (postedLedgerRows.length || rowsToPost.length) {
+        try {
+          const snapshot = buildDispatchSaveSnapshotFromLedgerRows(
+            postedLedgerRows.length ? postedLedgerRows : rowsToPost,
+            savedDbIdByDisplayId,
+            activeDispatch?.dispatch_no,
+            targetLedgerDate,
+            drivers,
+            trip,
+          );
+          const totals = computeDispatchSaveTotals(snapshot);
+          const fleetMeta = options.overrideFleet
+            ?? (postedLedgerRows[0]
+              ? resolveFleetForLedgerRow(postedLedgerRows[0], trip, drivers, vehicles)
+              : rowsToPost[0]
+                ? resolveFleetForLedgerRow(rowsToPost[0], trip, drivers, vehicles)
+                : null);
+          const saveLog = await createDispatchSaveLog({
+            branchId: saveBranchId,
+            dispatchId: activeDispatch?.id ?? null,
+            dispatchNo: activeDispatch?.dispatch_no ?? null,
+            ledgerDate: targetLedgerDate,
+            lineLabel: saveScope.lineLabel,
+            originLabel: origin,
+            driverId: fleetMeta?.driverId ?? null,
+            vehicleId: fleetMeta?.vehicleId ?? null,
+            driverLabel: fleetMeta?.driverLabel ?? null,
+            vehicleLabel: fleetMeta?.vehicleLabel ?? null,
+            tripNo: trip.tripNo || null,
+            destinationLabel: uniqueDestinationLabel(snapshot),
+            saveMode,
+            rowCount: totals.rowCount,
+            piecesCount: totals.piecesCount,
+            weightKg: totals.weightKg,
+            collectTotalUsd: totals.collectTotalUsd,
+            prepaidTotalUsd: totals.prepaidTotalUsd,
+            hawalaTotalUsd: totals.hawalaTotalUsd,
+            transferFeeTotalUsd: totals.transferFeeTotalUsd,
+            postedCount: result.posted.length,
+            errorCount: result.errors.length,
+            skippedCount: result.skipped.length,
+            receiptNos: snapshot.map((row) => row.receiptNo).filter((value): value is string => Boolean(value)),
+            rowIds: upsertedRowIds,
+            rowsSnapshot: snapshot,
+            outcome,
+            summary,
+          });
+          if (result.posted.length) {
+            setPostSavePrintContext({
+              dispatchNo: activeDispatch?.dispatch_no ?? saveLog.dispatch_no,
+              driverLabel: fleetMeta?.driverLabel ?? trip.driver ?? '—',
+              destinationLabel: uniqueDestinationLabel(snapshot),
+              printRows: dispatchSaveSnapshotToPrintRows(
+                snapshot.filter((row) => postedByRowId.has(row.rowId)),
+              ),
+              saveLogId: saveLog.id,
+              ledgerDate: targetLedgerDate,
+              lineLabel: saveScope.lineLabel,
+              branchId: saveBranchId,
+            });
+            setPostSavePrintOpen(true);
+          }
+        } catch (logError) {
+          quickLedgerLog.log(
+            'warn',
+            'dispatch-save-log',
+            logError instanceof Error ? logError.message : 'تعذر حفظ سجل الإرسالية',
+          );
+        }
+      }
+
       await loadRemoteRows();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'تعذر حفظ الشحنات';
@@ -3573,6 +3816,95 @@ export default function ShipmentQuickLedger() {
       : cloudStatus === 'checking'
         ? 'جاري فحص الاتصال بالسحابة...'
         : 'غير متصل بالسحابة — يمكنك متابعة الإدخال والمزامنة لاحقاً.';
+
+  const handleCustomSaveSubmit = (input: CustomSaveSubmit) => {
+    setCustomSaveOpen(false);
+    const fleet = resolveCustomSaveFleet(input.driverId, input.vehicleId, drivers, vehicles);
+    void saveRows({
+      mode: 'custom',
+      displayRowIds: input.rowIds,
+      targetDate: input.targetDate,
+      overrideFleet: fleet,
+    });
+  };
+
+  const handlePostSavePrintConfirm = async () => {
+    if (!postSavePrintContext) return;
+    setPostSavePrinting(true);
+    try {
+      const ctx = postSavePrintContext;
+      const html = buildQuickLedgerPrintHtml(ctx.printRows, {
+        title: 'قائمة الشحنات — إرسالية محفوظة',
+        destinationLabel: ctx.destinationLabel,
+        driverName: ctx.driverLabel,
+      });
+      await dispatchHtmlPrint(html, 'quick_ledger');
+      try {
+        const doc = await savePrintDocumentation({
+          branchId: ctx.branchId,
+          ledgerDate: ctx.ledgerDate,
+          lineLabel: ctx.lineLabel,
+          driverLabel: ctx.driverLabel,
+          destinationLabel: ctx.destinationLabel,
+          printType: 'shipments',
+          printScope: 'dispatch_save',
+          title: `إرسالية ${ctx.dispatchNo != null ? `#${ctx.dispatchNo}` : ''}`,
+          rowCount: ctx.printRows.length,
+          piecesCount: ctx.printRows.reduce((sum, row) => sum + (Number(row.parcelCount) || 0), 0),
+          weightKg: ctx.printRows.reduce((sum, row) => sum + (Number(String(row.weightKg).replace(/[^\d.-]/g, '')) || 0), 0),
+          collectTotalUsd: ctx.printRows.reduce((sum, row) => sum + (Number(String(row.collectAmount).replace(/[^\d.-]/g, '')) || 0), 0),
+          prepaidTotalUsd: ctx.printRows.reduce((sum, row) => sum + (Number(String(row.prepaidAmount).replace(/[^\d.-]/g, '')) || 0), 0),
+          hawalaTotalUsd: ctx.printRows.reduce((sum, row) => sum + (Number(String(row.hawalaAmount).replace(/[^\d.-]/g, '')) || 0), 0),
+          transferFeeTotalUsd: ctx.printRows.reduce((sum, row) => sum + (Number(String(row.transferServiceFee).replace(/[^\d.-]/g, '')) || 0), 0),
+          rowsSnapshot: ctx.printRows.map((row, index) => ({
+            rowId: ctx.saveLogId ?? `local-${index}`,
+            rowNo: index + 1,
+            receiptNo: row.receiptNo || null,
+            destination: row.destination,
+            parcelType: row.parcelType,
+            parcelCount: Number(row.parcelCount) || null,
+            weightKg: row.weightKg || null,
+            senderName: row.sender,
+            receiverName: row.receiver,
+            collectAmountUsd: row.collectAmount,
+            prepaidAmountUsd: row.prepaidAmount,
+            hawalaAmountUsd: row.hawalaAmount,
+            transferServiceFeeUsd: row.transferServiceFee,
+            notes: row.notes || null,
+            driverLabel: ctx.driverLabel,
+            sessionId: null,
+            ledgerDate: ctx.ledgerDate,
+          })),
+        });
+        if (ctx.saveLogId) {
+          await markDispatchSavePrinted(ctx.saveLogId, { printDocumentId: doc.id });
+        }
+      } catch {
+        /* توثيق الطباعة اختياري */
+      }
+      setPostSavePrintOpen(false);
+      setPostSavePrintContext(null);
+    } finally {
+      setPostSavePrinting(false);
+    }
+  };
+
+  const handleReprintDispatchSaveLog = async (detail: DispatchSaveLogDetail) => {
+    const printRows = dispatchSaveSnapshotToPrintRows(detail.rows_snapshot ?? []);
+    const html = buildQuickLedgerPrintHtml(printRows, {
+      title: `إرسالية ${detail.dispatch_no != null ? `#${detail.dispatch_no}` : ''}`,
+      destinationLabel: detail.destination_label ?? '—',
+      driverName: detail.driver_label ?? '—',
+    });
+    await dispatchHtmlPrint(html, 'quick_ledger');
+  };
+
+  useEffect(() => {
+    if (!saveMenuOpen) return;
+    const closeMenu = () => setSaveMenuOpen(false);
+    document.addEventListener('click', closeMenu);
+    return () => document.removeEventListener('click', closeMenu);
+  }, [saveMenuOpen]);
   const cloudStatusShort =
     cloudStatus === 'online'
       ? 'متصل'
@@ -3711,6 +4043,16 @@ export default function ShipmentQuickLedger() {
                 إغلاق القسم
               </button>
             ) : null}
+            {canLedgerDispatchSaveLog ? (
+              <button
+                type="button"
+                onClick={() => setDispatchSaveLogOpen(true)}
+                title="سجل حفظ إرساليات — مرجع للمدير والمحاسبة"
+              >
+                <FileText size={16} />
+                سجل حفظ إرساليات
+              </button>
+            ) : null}
             {canLedgerSaveLog ? (
               <button type="button" onClick={() => quickLedgerLog.download()} title="تنزيل سجل عمليات دفتر الشحن">
                 <ScrollText size={16} />
@@ -3718,20 +4060,56 @@ export default function ShipmentQuickLedger() {
               </button>
             ) : null}
             {canLedgerPostShipments ? (
-              <button
-                type="button"
-                className="primary"
-                onClick={() => void saveRows()}
-                disabled={saving || loadingRefs || isCloudOffline}
-                title={isCloudOffline ? 'الحفظ على السحابة يحتاج اتصالاً. الصفوف المحلية بانتظار المزامنة.' : undefined}
-              >
-                <Save size={16} />
-                {saving
-                  ? 'جاري الحفظ...'
-                  : stats.saved > 0 && stats.complete > 0
-                    ? `استكمال الحفظ (${stats.complete})`
-                    : 'حفظ الشحنات'}
-              </button>
+              <div className="quick-ledger-save-menu" onClick={(event) => event.stopPropagation()}>
+                <button
+                  type="button"
+                  className="primary quick-ledger-save-menu-main"
+                  onClick={() => void saveRows({ mode: 'all' })}
+                  disabled={saving || loadingRefs || isCloudOffline}
+                  title={isCloudOffline ? 'الحفظ على السحابة يحتاج اتصالاً. الصفوف المحلية بانتظار المزامنة.' : 'حفظ كل الأسطر المكتملة'}
+                >
+                  <Save size={16} />
+                  {saving
+                    ? 'جاري الحفظ...'
+                    : stats.saved > 0 && stats.complete > 0
+                      ? `استكمال الحفظ (${stats.complete})`
+                      : 'حفظ الكل'}
+                </button>
+                <button
+                  type="button"
+                  className="primary quick-ledger-save-menu-toggle"
+                  onClick={() => setSaveMenuOpen((open) => !open)}
+                  disabled={saving || loadingRefs || isCloudOffline}
+                  aria-label="خيارات الحفظ"
+                  aria-expanded={saveMenuOpen}
+                >
+                  <ChevronDown size={16} />
+                </button>
+                {saveMenuOpen ? (
+                  <div className="quick-ledger-save-menu-dropdown" role="menu">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setSaveMenuOpen(false);
+                        void saveRows({ mode: 'all' });
+                      }}
+                    >
+                      حفظ الكل
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setSaveMenuOpen(false);
+                        setCustomSaveOpen(true);
+                      }}
+                    >
+                      حفظ مخصص...
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
             <span
               className={`quick-ledger-cloud-pill is-${cloudStatus}`}
@@ -4051,7 +4429,7 @@ export default function ShipmentQuickLedger() {
               const rowIssue = failedSaveRows[row.id]
                 ?? (duplicateReceiptRowIds.has(row.id) ? 'رقم الإيصال مكرر' : undefined);
               const rowClassName = [
-                locked ? 'saved' : posted ? 'started' : activeRowId === row.id ? 'active' : started ? 'started' : '',
+                locked ? 'saved' : posted ? 'ledger-row-posted started' : activeRowId === row.id ? 'active' : started ? 'started' : '',
                 issueRowIds.has(row.id) ? 'ledger-row-error' : '',
               ]
                 .filter(Boolean)
@@ -4297,6 +4675,37 @@ export default function ShipmentQuickLedger() {
         busy={saving}
         onClose={() => setSaveProgress(createInitialSaveProgress())}
         onDownloadLog={() => quickLedgerLog.download()}
+      />
+      <QuickLedgerCustomSaveDialog
+        open={customSaveOpen}
+        onClose={() => setCustomSaveOpen(false)}
+        onSubmit={handleCustomSaveSubmit}
+        submitting={saving}
+        defaultDate={trip.date}
+        tripDriverId={trip.driverId || undefined}
+        drivers={drivers}
+        vehicles={vehicles}
+        candidateRows={rows}
+        isRowComplete={isRowComplete}
+      />
+      <QuickLedgerDispatchSaveLogPanel
+        open={dispatchSaveLogOpen}
+        onClose={() => setDispatchSaveLogOpen(false)}
+        defaultBranchId={activeBranchId ? resolveLedgerBranchId(activeBranchId) : undefined}
+        defaultDateFrom={trip.date}
+        defaultDateTo={trip.date}
+        onReprint={handleReprintDispatchSaveLog}
+      />
+      <QuickLedgerPostSavePrintPrompt
+        open={postSavePrintOpen}
+        dispatchNo={postSavePrintContext?.dispatchNo}
+        rowCount={postSavePrintContext?.printRows.length ?? 0}
+        onConfirmPrint={() => void handlePostSavePrintConfirm()}
+        onSkip={() => {
+          setPostSavePrintOpen(false);
+          setPostSavePrintContext(null);
+        }}
+        printing={postSavePrinting}
       />
       <QuickLedgerAgentHelpDialog
         open={agentHelpOpen}

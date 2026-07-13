@@ -949,5 +949,170 @@ export function createDailyLedgerRouter(
     },
   );
 
+  const dispatchSaveRowSchema = z.object({
+    rowId: z.string().uuid(),
+    rowNo: z.number().int(),
+    receiptNo: z.string().nullable().optional(),
+    destination: z.string(),
+    parcelType: z.string().optional(),
+    parcelCount: z.number().int().nullable().optional(),
+    weightKg: z.string().nullable().optional(),
+    senderName: z.string().optional(),
+    receiverName: z.string().optional(),
+    collectAmountUsd: z.string().optional(),
+    prepaidAmountUsd: z.string().optional(),
+    hawalaAmountUsd: z.string().optional(),
+    transferServiceFeeUsd: z.string().optional(),
+    notes: z.string().nullable().optional(),
+    driverLabel: z.string().nullable().optional(),
+    dispatchNo: z.number().int().nullable().optional(),
+    ledgerDate: z.string().nullable().optional(),
+  });
+
+  router.post(
+    '/dispatch-saves',
+    requireAnyPermissions(['daily_ledger.dispatch_save.read', 'daily_ledger.post_shipments']),
+    async (req, res) => {
+      const scope = parseDataScope(req);
+      const bodySchema = z.object({
+        branchId: uuid,
+        dispatchId: uuid.nullable().optional(),
+        dispatchNo: z.number().int().positive().nullable().optional(),
+        ledgerDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        lineLabel: z.string(),
+        originLabel: z.string().nullable().optional(),
+        driverId: uuid.nullable().optional(),
+        vehicleId: uuid.nullable().optional(),
+        driverLabel: z.string().nullable().optional(),
+        vehicleLabel: z.string().nullable().optional(),
+        tripNo: z.string().nullable().optional(),
+        destinationLabel: z.string().nullable().optional(),
+        saveMode: z.enum(['all', 'custom']),
+        rowCount: z.number().int().min(0).optional(),
+        piecesCount: z.number().int().min(0).optional(),
+        weightKg: z.number().min(0).optional(),
+        collectTotalUsd: z.number().min(0).optional(),
+        prepaidTotalUsd: z.number().min(0).optional(),
+        hawalaTotalUsd: z.number().min(0).optional(),
+        transferFeeTotalUsd: z.number().min(0).optional(),
+        postedCount: z.number().int().min(0).optional(),
+        errorCount: z.number().int().min(0).optional(),
+        skippedCount: z.number().int().min(0).optional(),
+        receiptNos: z.array(z.string()).optional(),
+        rowIds: z.array(uuid).optional(),
+        rowsSnapshot: z.array(dispatchSaveRowSchema).optional(),
+        outcome: z.enum(['success', 'partial', 'failed']).nullable().optional(),
+        summary: z.string().nullable().optional(),
+        notes: z.string().nullable().optional(),
+      });
+      try {
+        const input = bodySchema.parse(req.body);
+        const log = await service.createDispatchSaveLog(scope, {
+          ...input,
+          userId: scope.userId,
+        });
+        res.json({ success: true, data: log });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          res.status(error.statusCode).json({ success: false, error: error.message });
+          return;
+        }
+        res.status(500).json({
+          success: false,
+          error: error instanceof Error ? error.message : 'تعذر حفظ سجل الإرسالية.',
+        });
+      }
+    },
+  );
+
+  router.get(
+    '/dispatch-saves',
+    requireAnyPermissions(['daily_ledger.dispatch_save.read', 'shipments.read']),
+    async (req, res) => {
+      const scope = parseDataScope(req);
+      const querySchema = z.object({
+        branchId: uuid.optional(),
+        dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        driverId: uuid.optional(),
+        destination: z.string().optional(),
+        searchQuery: z.string().optional(),
+        saveMode: z.enum(['all', 'custom']).optional(),
+        limit: z.coerce.number().int().min(1).max(500).optional(),
+        offset: z.coerce.number().int().min(0).optional(),
+      });
+      try {
+        const q = querySchema.parse(req.query);
+        const rows = await service.listDispatchSaveLogs(scope, q);
+        res.json({ success: true, data: rows });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          res.status(error.statusCode).json({ success: false, error: error.message });
+          return;
+        }
+        res.status(500).json({
+          success: false,
+          error: error instanceof Error ? error.message : 'تعذر تحميل سجل حفظ الإرساليات.',
+        });
+      }
+    },
+  );
+
+  router.get(
+    '/dispatch-saves/:id',
+    requireAnyPermissions(['daily_ledger.dispatch_save.read', 'shipments.read']),
+    async (req, res) => {
+      const scope = parseDataScope(req);
+      const logId = uuid.parse(req.params.id);
+      try {
+        const log = await service.getDispatchSaveLog(scope, logId);
+        if (!log) {
+          res.status(404).json({ success: false, error: 'سجل الإرسالية غير موجود.' });
+          return;
+        }
+        res.json({ success: true, data: log });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          res.status(error.statusCode).json({ success: false, error: error.message });
+          return;
+        }
+        res.status(500).json({
+          success: false,
+          error: error instanceof Error ? error.message : 'تعذر تحميل تفاصيل سجل الإرسالية.',
+        });
+      }
+    },
+  );
+
+  router.post(
+    '/dispatch-saves/:id/mark-printed',
+    requireAnyPermissions(['daily_ledger.dispatch_save.read', 'shipments.read']),
+    async (req, res) => {
+      const scope = parseDataScope(req);
+      const logId = uuid.parse(req.params.id);
+      const bodySchema = z.object({
+        printDocumentId: uuid.nullable().optional(),
+      });
+      try {
+        const input = bodySchema.parse(req.body ?? {});
+        const log = await service.markDispatchSavePrinted(scope, logId, input);
+        if (!log) {
+          res.status(404).json({ success: false, error: 'سجل الإرسالية غير موجود.' });
+          return;
+        }
+        res.json({ success: true, data: log });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          res.status(error.statusCode).json({ success: false, error: error.message });
+          return;
+        }
+        res.status(500).json({
+          success: false,
+          error: error instanceof Error ? error.message : 'تعذر تحديث حالة الطباعة.',
+        });
+      }
+    },
+  );
+
   return router;
 }

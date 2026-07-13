@@ -14,6 +14,11 @@ import type {
   DailyLedgerDispatchUpdateInput,
 } from '../repositories/dailyLedgerDispatchRepository.js';
 import { DailyLedgerDispatchRepository } from '../repositories/dailyLedgerDispatchRepository.js';
+import type {
+  DispatchSaveLogInput,
+  DispatchSaveLogListFilters,
+} from '../repositories/dailyLedgerDispatchSaveRepository.js';
+import { DailyLedgerDispatchSaveRepository } from '../repositories/dailyLedgerDispatchSaveRepository.js';
 import type { DailyLedgerShipmentPostingService } from './dailyLedgerShipmentPostingService.js';
 
 export class DailyLedgerService {
@@ -21,6 +26,7 @@ export class DailyLedgerService {
     private repo: DailyLedgerRepository,
     private shipmentPosting?: DailyLedgerShipmentPostingService,
     private dispatchRepo: DailyLedgerDispatchRepository = new DailyLedgerDispatchRepository(),
+    private dispatchSaveRepo: DailyLedgerDispatchSaveRepository = new DailyLedgerDispatchSaveRepository(),
   ) {}
 
   listRows(scope: DataScope, filters: DailyLedgerRowListFilters) {
@@ -45,6 +51,22 @@ export class DailyLedgerService {
 
   deleteDispatchDefinition(scope: DataScope, id: string) {
     return this.dispatchRepo.deleteDefinition(scope, id, scope.userId);
+  }
+
+  createDispatchSaveLog(scope: DataScope, input: DispatchSaveLogInput) {
+    return this.dispatchSaveRepo.create(scope, input);
+  }
+
+  listDispatchSaveLogs(scope: DataScope, filters: DispatchSaveLogListFilters) {
+    return this.dispatchSaveRepo.list(scope, filters);
+  }
+
+  getDispatchSaveLog(scope: DataScope, id: string) {
+    return this.dispatchSaveRepo.getById(scope, id);
+  }
+
+  markDispatchSavePrinted(scope: DataScope, id: string, input: { printDocumentId?: string | null }) {
+    return this.dispatchSaveRepo.markPrinted(scope, id, input);
   }
 
   async upsertRow(scope: DataScope, input: DailyLedgerUpsertInput) {
