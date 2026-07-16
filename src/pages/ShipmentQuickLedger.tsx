@@ -1108,7 +1108,16 @@ export default function ShipmentQuickLedger() {
 
   const stats = useMemo(() => {
     const printable = filterPrintableDailyLedgerRows(remoteRowsRaw);
-    const filteredRemote = printable;
+    const needle = normalizeName(pageSearchQuery.trim());
+    const filteredRemote = needle
+      ? printable.filter(
+          (row) =>
+            normalizeName(row.destination ?? '').includes(needle) ||
+            normalizeName(row.sender_name ?? '').includes(needle) ||
+            normalizeName(row.receiver_name ?? '').includes(needle) ||
+            normalizeName(row.receipt_no ?? '').includes(needle),
+        )
+      : printable;
     const totals = computeTotalsFromRemoteRows(filteredRemote);
     const completeRows = rows.filter((row) => isRowComplete(row) && !row.postedShipmentId);
     return {
@@ -1120,10 +1129,10 @@ export default function ShipmentQuickLedger() {
       totalWeightKg: totals.weightKg,
       complete: completeRows.length,
       saved: filteredRemote.filter((row) => Boolean(row.posted_shipment_id)).length,
-      searchActive: false,
-      searchLabel: '',
+      searchActive: Boolean(needle),
+      searchLabel: pageSearchQuery.trim(),
     };
-  }, [remoteRowsRaw, rows]);
+  }, [remoteRowsRaw, rows, pageSearchQuery]);
 
   const rowsRef = useRef(rows);
   const customersRef = useRef(customers);
