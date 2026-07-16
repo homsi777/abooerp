@@ -1955,6 +1955,50 @@ body {
   min-width: min(420px, 100%);
 }
 
+.quick-ledger-page-search-field {
+  flex: 1 1 260px;
+  min-width: min(320px, 100%);
+}
+
+.quick-ledger-page-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #9fb0c4;
+  border-radius: 5px;
+  background: #fff;
+  color: #64748b;
+}
+
+.quick-ledger-page-search-row input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  background: transparent;
+  color: #0f172a;
+}
+
+.quick-ledger-page-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.quick-ledger-page-search-clear:hover {
+  color: #ef4444;
+}
+
 .quick-ledger-global-search-trigger {
   display: flex;
   align-items: center;

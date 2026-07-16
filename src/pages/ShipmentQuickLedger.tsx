@@ -929,6 +929,7 @@ export default function ShipmentQuickLedger() {
   const [globalSearchSeed, setGlobalSearchSeed] = useState('');
   const [duplicatesOpen, setDuplicatesOpen] = useState(false);
   const [destinationSort, setDestinationSort] = useState<'none' | 'asc' | 'desc'>('none');
+  const [pageSearchQuery, setPageSearchQuery] = useState('');
 
   const destinations = useMemo(
     () => (cities.length ? cities.map((city) => city.name) : fallbackDestinations),
@@ -972,7 +973,19 @@ export default function ShipmentQuickLedger() {
     let displayable = rows.filter(
       (row) => isRowStarted(row) || (trailingBlank != null && row.id === trailingBlank.id),
     );
-    const filtered = displayable;
+    const needle = normalizeName(pageSearchQuery.trim());
+    let filtered = displayable;
+    if (needle) {
+      filtered = displayable.filter((row) => {
+        if (trailingBlank != null && row.id === trailingBlank.id) return true;
+        return (
+          normalizeName(row.destination ?? '').includes(needle) ||
+          normalizeName(row.sender ?? '').includes(needle) ||
+          normalizeName(row.receiver ?? '').includes(needle) ||
+          normalizeName(row.receiptNo ?? '').includes(needle)
+        );
+      });
+    }
     if (destinationSort === 'none') return filtered;
     const entryRow =
       trailingBlank && filtered.some((row) => row.id === trailingBlank.id) ? trailingBlank : null;
@@ -988,7 +1001,7 @@ export default function ShipmentQuickLedger() {
       })
       .map(({ row }) => row);
     return entryRow ? [...sorted, entryRow] : sorted;
-  }, [rows, catalogAgents, destinationSort]);
+  }, [rows, catalogAgents, destinationSort, pageSearchQuery]);
 
   const deletableVisibleRows = useMemo(
     () => visibleRows.filter(isRowDeletable),
@@ -4144,6 +4157,28 @@ export default function ShipmentQuickLedger() {
               <option key={b.id} value={b.name} />
             ))}
           </datalist>
+          <label className="quick-ledger-trip-search quick-ledger-page-search-field">
+            <span>بحث في الصفحة</span>
+            <div className="quick-ledger-page-search-row">
+              <Search size={16} aria-hidden />
+              <input
+                value={pageSearchQuery}
+                onChange={(e) => setPageSearchQuery(e.target.value)}
+                placeholder="جهة، مرسل، مستلم، رقم إيصال — أسطر هذه الصفحة فقط..."
+                title="يبحث فقط ضمن الأسطر المعروضة حالياً في هذه الصفحة"
+              />
+              {pageSearchQuery.trim() ? (
+                <button
+                  type="button"
+                  className="quick-ledger-page-search-clear"
+                  onClick={() => setPageSearchQuery('')}
+                  aria-label="مسح البحث"
+                >
+                  <X size={14} />
+                </button>
+              ) : null}
+            </div>
+          </label>
           <label className="quick-ledger-trip-search quick-ledger-global-search-field">
             <span>بحث شامل</span>
             <button
@@ -4153,10 +4188,10 @@ export default function ShipmentQuickLedger() {
                 setGlobalSearchSeed('');
                 setGlobalSearchOpen(true);
               }}
-              title="بحث في كل التواريخ — الجهة، مرسل، مستلم، إشعار/إيصال، نوع بضاعة"
+              title="بحث في كل التواريخ — مرسل، مستلم، إشعار/إيصال، نوع بضاعة"
             >
               <Search size={16} />
-              <span>الجهة · مرسل · مستلم · إشعار/إيصال · نوع بضاعة — كل التواريخ...</span>
+              <span>مرسل · مستلم · إشعار/إيصال · نوع بضاعة — كل التواريخ...</span>
             </button>
           </label>
           {canViewAllLedgerEntries ? (
