@@ -102,7 +102,7 @@ export default function QuickLedgerGlobalSearchModal({
     const trimmed = query.trim();
     const input: LedgerGlobalSearchInput = { q: trimmed };
     if (!hasLedgerGlobalSearchCriteria(input)) {
-      setError('أدخل كلمة بحث واحدة على الأقل — اسم مرسل، مستلم، رقم إشعار/إيصال، أو نوع بضاعة.');
+      setError('أدخل كلمة بحث واحدة على الأقل — اسم جهة، مرسل، مستلم، رقم إشعار/إيصال، أو نوع بضاعة.');
       return;
     }
     setLoading(true);
@@ -173,7 +173,7 @@ export default function QuickLedgerGlobalSearchModal({
             <span className="quick-ledger-dispatch-dialog-eyebrow">دفتر الشحن اليومي</span>
             <h3 id="global-search-title">بحث شامل — كل التواريخ</h3>
             <p className="quick-ledger-dispatch-dialog-sub">
-              ابحث باسم المرسل أو المستلم أو رقم الإشعار/الإيصال أو نوع البضاعة — خانة واحدة تكفي.
+              ابحث باسم الجهة أو المرسل أو المستلم أو رقم الإشعار/الإيصال أو نوع البضاعة — خانة واحدة تكفي.
             </p>
           </div>
           <button type="button" className="quick-ledger-dispatch-dialog-close" onClick={onClose} aria-label="إغلاق">
@@ -189,7 +189,7 @@ export default function QuickLedgerGlobalSearchModal({
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="مرسل، مستلم، رقم إشعار/إيصال، نوع بضاعة..."
+                placeholder="اسم الجهة، مرسل، مستلم، رقم إشعار/إيصال، نوع بضاعة..."
                 onKeyDown={(e) => e.key === 'Enter' && void runSearch()}
                 autoFocus
               />
@@ -239,6 +239,7 @@ export default function QuickLedgerGlobalSearchModal({
                   <table className="quick-ledger-global-search-shipment-table">
                     <thead>
                       <tr>
+                        <th className="col-party">الجهة</th>
                         <th className="col-type">نوع البضاعة</th>
                         <th className="col-count">عدد الطرود</th>
                         <th className="col-weight">الوزن كغ</th>
@@ -261,6 +262,7 @@ export default function QuickLedgerGlobalSearchModal({
                           onClick={() => onSelectRow(row)}
                           title="اضغط للانتقال إلى السطر في الدفتر"
                         >
+                          <td className="col-party">{fmtCell(row.destination)}</td>
                           <td className="col-type">{fmtCell(row.parcel_type)}</td>
                           <td className="col-count">{fmtCell(row.parcel_count)}</td>
                           <td className="col-weight">{fmtCell(row.weight_kg)}</td>
