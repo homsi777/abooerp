@@ -3,10 +3,10 @@
  * ═════════════════════════════════════════════════════════════════════════════
  * 
  * يتحقق من:
- *   1. وجود ملف server/.env (لأنه سيتم نسخه إلى app-config.env في الموارد)
- *   2. وجود dist-server/server.cjs (السيرفر المجمع)
- *   3. وجود dist/ (واجهة المستخدم المبنية)
- *   4. وجود dist-electron/main.js (الـ Electron المترجم)
+ *   1. وجود dist-server/server.cjs (السيرفر المجمع)
+ *   2. وجود dist/ (واجهة المستخدم المبنية)
+ *   3. وجود dist-electron/main.js (الـ Electron المترجم)
+ * لا يعتمد التغليف على server/.env ولا ينسخه إلى موارد التطبيق.
  * 
  * يُستخدم في: npm run electron:package (قبل electron-builder)
  */
@@ -19,7 +19,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
 const checks = [
-  { name: 'server/.env', path: path.join(root, 'server', '.env'), critical: true },
   { name: 'dist-server/server.cjs', path: path.join(root, 'dist-server', 'server.cjs'), critical: true },
   { name: 'dist-server/server-wrapper.cjs', path: path.join(root, 'dist-server', 'server-wrapper.cjs'), critical: true },
   { name: 'dist/', path: path.join(root, 'dist'), critical: true, isDir: true },
@@ -58,16 +57,12 @@ if (!allOk) {
   console.error('╚════════════════════════════════════════════════════╝\x1b[0m\n');
   
   console.log('🔧 الخطوات المطلوبة:\n');
-  console.log('1️⃣  تأكد من وجود ملف server/.env');
-  console.log('   إذا لم يكن موجوداً، انسخه من server/.env.example:\n');
-  console.log('   $ cp server/.env.example server/.env\n');
-  
-  console.log('2️⃣  تأكد من تشغيل الأوامر التالية بالترتيب:\n');
+  console.log('1️⃣  تأكد من تشغيل الأوامر التالية بالترتيب:\n');
   console.log('   $ npm run build\n');
   console.log('   $ npm run electron:compile\n');
   console.log('   $ npm run server:bundle\n');
   
-  console.log('3️⃣  ثم أعد تشغيل أمر التغليف:\n');
+  console.log('2️⃣  ثم أعد تشغيل أمر التغليف:\n');
   console.log('   $ npm run electron:package\n');
   
   process.exit(1);

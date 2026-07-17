@@ -7,6 +7,7 @@ declare global {
       getVersion: () => Promise<string>;
       getConfig: () => Promise<{
         apiBaseUrl: string;
+        centralSyncApiBaseUrl?: string;
         environment: 'development' | 'production';
         runtimeMode: 'development' | 'local_production' | 'lan_node';
         backendResolutionMode: 'localhost' | 'manual_lan' | 'auto_lan';
@@ -110,6 +111,7 @@ declare global {
     fs: {
       readConfig: () => Promise<{
         apiBaseUrl: string;
+        centralSyncApiBaseUrl?: string;
         environment: 'development' | 'production';
         runtimeMode: 'development' | 'local_production' | 'lan_node';
         backendResolutionMode: 'localhost' | 'manual_lan' | 'auto_lan';
@@ -126,6 +128,7 @@ declare global {
         featureFlags?: Record<string, boolean>;
       }) => Promise<{
         apiBaseUrl: string;
+        centralSyncApiBaseUrl?: string;
         environment: 'development' | 'production';
         runtimeMode: 'development' | 'local_production' | 'lan_node';
         backendResolutionMode: 'localhost' | 'manual_lan' | 'auto_lan';
@@ -176,6 +179,12 @@ declare global {
         message: string;
         destPath?: string;
       }>;
+    };
+    desktopSetupRuntime: {
+      getStatus: () => Promise<{ configured: boolean; database: string }>;
+      configurePostgres: (password: string) => Promise<{ success: boolean; database?: string; error?: string }>;
+      listCentralBranches: () => Promise<{ success: boolean; error?: string; branches: Array<{ id: string; code: string; name: string }> }>;
+      activateSync: (payload: { username: string; password: string; branchId: string }) => Promise<{ success: boolean; error?: string; deviceId?: string }>;
     };
   }
 }

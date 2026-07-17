@@ -24,6 +24,8 @@ import {
   dailyLedgerRowAuditSnapshot,
   diffDailyLedgerRowSnapshots,
 } from '../utils/dailyLedgerAudit.js';
+import { env } from '../config/env.js';
+import { queuePostShipmentsAction } from '../sync/localDeferredActions.js';
 
 const uuid = z.string().uuid();
 
@@ -584,6 +586,20 @@ export function createDailyLedgerRouter(
 
       const createdByUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, permissions);
       try {
+        if (env.SYNC_NODE_ROLE === 'local') {
+          if (!scope.companyId) throw new HttpError(400, 'Company scope is required.');
+          const queued = await queuePostShipmentsAction({
+            companyId: scope.companyId,
+            branchId: input.branchId,
+            userId: createdByUserId ?? scope.userId,
+            payload: { ...input, createdByUserId },
+          });
+          res.status(202).json({ success: true, data: {
+            posted: [], skipped: [], errors: [], pendingCentral: true,
+            operationId: queued.operationId, queuedRowIds: input.rowIds ?? [],
+          } });
+          return;
+        }
         const result = await service.postPendingShipments(scope, { ...input, createdByUserId }, allowedBranchIds);
         const correlationId = (req as any).correlationId as string | undefined;
         const timestamp = new Date().toISOString();

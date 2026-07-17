@@ -31,6 +31,10 @@ const allowedInvokeChannels = new Set([
   'system-settings:set',
   'pdf:export',
   'csv:export',
+  'desktop-setup:get-status',
+  'desktop-setup:configure-postgres',
+  'desktop-setup:list-central-branches',
+  'desktop-setup:activate-sync',
 ]);
 
 function invokeAllowed(channel, ...args) {
@@ -94,6 +98,13 @@ const csvRuntime = {
   exportCsv: (payload) => invokeAllowed('csv:export', payload),
 };
 
+const desktopSetupRuntime = {
+  getStatus: () => invokeAllowed('desktop-setup:get-status'),
+  configurePostgres: (password) => invokeAllowed('desktop-setup:configure-postgres', { password }),
+  listCentralBranches: () => invokeAllowed('desktop-setup:list-central-branches'),
+  activateSync: (payload) => invokeAllowed('desktop-setup:activate-sync', payload),
+};
+
 contextBridge.exposeInMainWorld('runtime', runtimeBridge);
 contextBridge.exposeInMainWorld('diagnosticsRuntime', diagnosticsRuntime);
 contextBridge.exposeInMainWorld('systemSettingsRuntime', systemSettingsRuntime);
@@ -103,3 +114,4 @@ contextBridge.exposeInMainWorld('fs', filesystemRuntime);
 contextBridge.exposeInMainWorld('printer', printerRuntime);
 contextBridge.exposeInMainWorld('pdfRuntime', pdfRuntime);
 contextBridge.exposeInMainWorld('csvRuntime', csvRuntime);
+contextBridge.exposeInMainWorld('desktopSetupRuntime', desktopSetupRuntime);

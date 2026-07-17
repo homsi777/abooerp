@@ -35,6 +35,8 @@
     "test:daily-ledger-helpers": "tsx src/lib/shipping/dailyLedgerHelpers.selftest.ts",
     "test:daily-ledger-row-filter": "tsx src/lib/shipping/dailyLedgerRowFilter.selftest.ts",
     "test:daily-ledger-access": "tsx server/src/utils/dailyLedgerAccess.selftest.ts",
+    "test:offline-sync-integration": "tsx server/src/scripts/offlineSyncIntegrationSmoke.ts",
+    "offline:restore": "tsx server/src/scripts/restoreOfflineBackup.ts",
     "receipt:calibrate": "tsx scripts/open-mahmoud-receipt-test.ts",
     "server:inspect-driver": "node server/scripts/inspectDriverLedger.cjs",
     "server:assign-driver-session": "node server/scripts/assignDriverToOrphanSession.cjs",
@@ -82,6 +84,7 @@
     "electron:package": "npm run build && npm run electron:compile && npm run server:bundle && npm run validate:package && electron-builder --win nsis --publish never",
     "electron:package:next": "npm run build && npm run electron:compile && npm run server:bundle && npm run validate:package && electron-builder --win nsis --publish never --config.directories.output=dist-release-next",
     "electron:package:fresh": "npm run clean:packaging && npm run electron:package:next && set RELEASE_DIR=dist-release-next&& npm run verify:release",
+    "electron:smoke:packaged": "node scripts/packagedRuntimeSmoke.mjs",
     "electron:smoke:runtime": "npm run electron:compile && electron . --smoke-runtime"
   },
   "devDependencies": {
@@ -152,10 +155,6 @@
         "filter": [
           "**/*.sql"
         ]
-      },
-      {
-        "from": "server/.env",
-        "to": "app-config.env"
       }
     ],
     "win": {
@@ -175,7 +174,7 @@
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "shortcutName": "شركة عبو المحمود لنقل والخدمات الوجستية",
-      "deleteAppDataOnUninstall": true
+      "deleteAppDataOnUninstall": false
     }
   }
 }

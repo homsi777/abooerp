@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, copyFileSync, } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, } from 'node:fs';
 import { app, BrowserWindow, shell } from 'electron';
 import { clearStoredSession, loadRuntimeConfig, registerRuntimeConfigIpc, resolveMachineId } from './ipc/runtimeConfig.js';
 import { registerFilesystemIpc } from './ipc/filesystem.js';
@@ -15,9 +15,12 @@ import { registerPdfIpc } from './ipc/pdf.js';
 import { registerCsvIpc } from './ipc/csv.js';
 import { createMainWindow } from './windows/createMainWindow.js';
 import { createSplashWindow, setSplashStatus } from './windows/createSplashWindow.js';
+import { loadDesktopSecrets } from './security/desktopSecrets.js';
+import { ensureLocalPostgresReady } from './localPostgres.js';
+import { registerDesktopSetupIpc } from './ipc/desktopSetup.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const isSmokeMode = process.argv.includes('--smoke-runtime');
+const isSmokeMode = process.argv.includes('--smoke-runtime') || process.env.ELECTRON_SMOKE_RUNTIME === '1';
 if (!app.isPackaged) {
     app.setName('شركة عبو المحمود لنقل والخدمات الوجستية Dev');
     app.setPath('userData', path.join(app.getPath('appData'), 'شركة عبو المحمود لنقل والخدمات الوجستية Dev'));
@@ -41,6 +44,7 @@ function registerIpc() {
     registerSystemSettingsIpc();
     registerPdfIpc();
     registerCsvIpc();
+    registerDesktopSetupIpc();
 }
 async function runStartupHandshake() {
     try {
@@ -102,26 +106,29 @@ async function runElectronRuntimeSmoke() {
     app.exit(passed ? 0 : 1);
 }
 /** Spawns the bundled Express server when running as a packaged Electron app. */
-function spawnBundledServer() {
+async function spawnBundledServer() {
     // Use the CJS wrapper for reliable ESM loading on Windows via utilityProcess
     const serverWrapper = path.join(process.resourcesPath, 'server-wrapper.cjs');
     const migrationsDir = path.join(process.resourcesPath, 'migrations');
     const userDataDir = app.getPath('userData');
     const userEnvFile = path.join(userDataDir, 'server.env');
-    // app-config.env is copied from server/.env at build time (preserves installer credentials)
-    const bundledEnvFile = path.join(process.resourcesPath, 'app-config.env');
+    const runtime = await loadRuntimeConfig();
+    const machineId = await resolveMachineId();
+    const secrets = loadDesktopSecrets();
+    if (!secrets) {
+        throw new Error('LOCAL_POSTGRES_CREDENTIALS_REQUIRED');
+    }
     const fallbackEnvText = [
         'NODE_ENV=production',
         'PGHOST=127.0.0.1',
         'PGPORT=5432',
-        'PGDATABASE=almiya_hsahin',
+        'PGDATABASE=almiya_hsahin_offline',
         'PGUSER=postgres',
-        'PGPASSWORD=12345678',
         'PGSSL_ENABLED=false',
         'PGSSL_REJECT_UNAUTHORIZED=true',
-        'ALLOW_DB_SEED=true',
+        'ALLOW_DB_SEED=false',
         'LOCK_SERVER_PORT=1',
-        'SERVER_HOST=0.0.0.0',
+        'SERVER_HOST=127.0.0.1',
         'SERVER_PORT=4010',
         'AUTH_ACCESS_TOKEN_TTL=15m',
         'AUTH_REFRESH_TOKEN_TTL_DAYS=7',
@@ -131,20 +138,13 @@ function spawnBundledServer() {
         'DASHBOARD_CACHE_RESET_REQUIRE_CONFIRM=false',
         '',
     ].join('\n');
-    // Packaged runtime must always read config from userData/server.env.
-    // On first run we copy bundled app-config.env there; if both are missing we generate safe defaults.
+    // The file deliberately contains no password or central device credential.
     const ensureUserEnvFile = () => {
         try {
             mkdirSync(userDataDir, { recursive: true });
             if (!existsSync(userEnvFile)) {
-                if (existsSync(bundledEnvFile)) {
-                    copyFileSync(bundledEnvFile, userEnvFile);
-                    appendRuntimeLog('info', 'server_env_bootstrapped_from_bundle', { userEnvFile });
-                }
-                else {
-                    writeFileSync(userEnvFile, fallbackEnvText, 'utf-8');
-                    appendRuntimeLog('warn', 'server_env_generated_fallback', { userEnvFile });
-                }
+                writeFileSync(userEnvFile, fallbackEnvText, 'utf-8');
+                appendRuntimeLog('info', 'server_env_generated_without_secrets', { userEnvFile });
             }
         }
         catch (error) {
@@ -183,7 +183,7 @@ function spawnBundledServer() {
     const serverEnv = {
         NODE_ENV: 'production',
         ELECTRON_PACKAGED: '1',
-        SERVER_HOST: '0.0.0.0',
+        SERVER_HOST: '127.0.0.1',
         SERVER_PORT: '4010',
         LOCK_SERVER_PORT: '1',
         AUTH_JWT_SECRET: jwtSecret,
@@ -192,6 +192,19 @@ function spawnBundledServer() {
         MIGRATIONS_DIR: migrationsDir,
         SERVER_ENV_FILE: envFilePath,
         APPDATA: userDataDir,
+        PGHOST: '127.0.0.1',
+        PGPORT: '5432',
+        PGDATABASE: 'almiya_hsahin_offline',
+        PGUSER: secrets.postgresUser || 'postgres',
+        PGPASSWORD: secrets.postgresPassword,
+        LOCAL_BACKUP_KEY: secrets.backupKey,
+        SYNC_NODE_ROLE: 'local',
+        SYNC_DEVICE_ID: secrets.centralSyncDeviceId || machineId,
+        SYNC_DEVICE_NAME: runtime.deviceName,
+        SYNC_APP_VERSION: app.getVersion(),
+        SYNC_SCHEMA_VERSION: runtime.schemaVersion,
+        CENTRAL_SYNC_API_BASE_URL: runtime.centralSyncApiBaseUrl || '',
+        ...(secrets.centralSyncDeviceToken ? { CENTRAL_SYNC_DEVICE_TOKEN: secrets.centralSyncDeviceToken } : {}),
     };
     appendRuntimeLog('info', 'spawning_bundled_server', { serverWrapper, migrationsDir, envFilePath });
     logLine(`[start] wrapper=${serverWrapper} env=${envFilePath}`);
@@ -308,6 +321,26 @@ async function waitForServer(splash) {
     setSplashStatus(splash, 'فتح التطبيق...');
     await new Promise(r => setTimeout(r, 500));
 }
+async function waitForLocalSnapshot(splash) {
+    setSplashStatus(splash, 'جارٍ تنزيل بيانات الفرع المصرح بها...');
+    for (let attempt = 0; attempt < 45; attempt++) {
+        try {
+            const response = await fetch('http://127.0.0.1:4010/api/v1/sync/bootstrap-status', { signal: AbortSignal.timeout(2500) });
+            const body = await response.json().catch(() => null);
+            if (response.ok && body?.data?.ready) {
+                setSplashStatus(splash, 'اكتملت تهيئة البيانات المحلية — جارٍ فتح التطبيق...');
+                return;
+            }
+        }
+        catch { /* worker may still be starting */ }
+        if (attempt === 14)
+            setSplashStatus(splash, 'ما زالت مزامنة التهيئة جارية...');
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    appendRuntimeLog('warn', 'local_snapshot_wait_timeout');
+    setSplashStatus(splash, 'تعذر إكمال تنزيل بيانات الفرع. ستظهر حالة المزامنة داخل التطبيق.');
+    await new Promise((resolve) => setTimeout(resolve, 1800));
+}
 /** عند وضع LAN: انتظار استجابة /api/health على الخادم البعيد (لا يُشغّل خادماً محلياً). */
 async function waitForRemoteHealth(splash, healthUrl) {
     const maxAttempts = 20;
@@ -362,13 +395,21 @@ async function bootstrapDesktopRuntime() {
             }
             else if (allowLocalSpawn) {
                 try {
-                    spawnBundledServer();
+                    const postgres = await ensureLocalPostgresReady();
+                    if (!postgres.ready) {
+                        appendRuntimeLog('error', 'local_postgres_not_ready', { reason: postgres.reason });
+                        setSplashStatus(splash, 'تعذر تشغيل PostgreSQL المحلي — تحقق من تثبيت الخدمة ثم أعد المحاولة.');
+                        await new Promise(resolve => setTimeout(resolve, 2500));
+                        throw new Error(postgres.reason || 'LOCAL_POSTGRES_NOT_READY');
+                    }
+                    await spawnBundledServer();
                 }
                 catch (e) {
                     appendRuntimeLog('error', 'spawn_error', { e: String(e) });
                 }
                 try {
                     await waitForServer(splash);
+                    await waitForLocalSnapshot(splash);
                 }
                 catch (e) {
                     appendRuntimeLog('error', 'wait_server_error', { e: String(e) });
@@ -384,13 +425,17 @@ async function bootstrapDesktopRuntime() {
             appendRuntimeLog('error', 'bootstrap_config_error', { e: String(e) });
             if (existsSync(getLocalPackagedServerFlagPath())) {
                 try {
-                    spawnBundledServer();
+                    const postgres = await ensureLocalPostgresReady();
+                    if (!postgres.ready)
+                        throw new Error(postgres.reason || 'LOCAL_POSTGRES_NOT_READY');
+                    await spawnBundledServer();
                 }
                 catch (se) {
                     appendRuntimeLog('error', 'spawn_error_fallback', { e: String(se) });
                 }
                 try {
                     await waitForServer(splash);
+                    await waitForLocalSnapshot(splash);
                 }
                 catch (we) {
                     appendRuntimeLog('error', 'wait_server_error_fallback', { e: String(we) });

@@ -436,7 +436,7 @@ export default function Login() {
                       <tbody>
                         {[
                           ['اسم المستخدم', 'postgres', '#166534'],
-                          ['كلمة المرور', '12345678', '#991b1b'],
+                          ['كلمة المرور', 'اختر كلمة قوية خاصة بهذا الجهاز', '#991b1b'],
                           ['المنفذ (Port)', '5432', '#1e40af'],
                           ['Locale', 'Arabic, Saudi Arabia', '#374151'],
                         ].map(([label, value, color]) => (

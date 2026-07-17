@@ -33,6 +33,10 @@ const allowedInvokeChannels = new Set([
   'system-settings:list',
   'system-settings:get',
   'system-settings:set',
+  'desktop-setup:get-status',
+  'desktop-setup:configure-postgres',
+  'desktop-setup:list-central-branches',
+  'desktop-setup:activate-sync',
 ]);
 
 function invokeAllowed<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -103,12 +107,20 @@ const filesystemRuntime = {
   enableLocalPackagedServer: () => invokeAllowed<{ success: boolean }>('fs:enable-local-packaged-server'),
 };
 
+const desktopSetupRuntime = {
+  getStatus: () => invokeAllowed<{ configured: boolean; database: string }>('desktop-setup:get-status'),
+  configurePostgres: (password: string) => invokeAllowed<{ success: boolean; database?: string; error?: string }>('desktop-setup:configure-postgres', { password }),
+  listCentralBranches: () => invokeAllowed<{ success: boolean; error?: string; branches: Array<{ id: string; code: string; name: string }> }>('desktop-setup:list-central-branches'),
+  activateSync: (payload: { username: string; password: string; branchId: string }) => invokeAllowed<{ success: boolean; error?: string; deviceId?: string }>('desktop-setup:activate-sync', payload),
+};
+
 contextBridge.exposeInMainWorld('runtime', runtimeBridge);
 contextBridge.exposeInMainWorld('diagnosticsRuntime', diagnosticsRuntime);
 contextBridge.exposeInMainWorld('systemSettingsRuntime', systemSettingsRuntime);
 contextBridge.exposeInMainWorld('printerRuntime', printerRuntime);
 contextBridge.exposeInMainWorld('pdfRuntime', pdfRuntime);
 contextBridge.exposeInMainWorld('backupRuntime', backupRuntime);
+contextBridge.exposeInMainWorld('desktopSetupRuntime', desktopSetupRuntime);
 
 // Backward compatibility aliases
 contextBridge.exposeInMainWorld('fs', filesystemRuntime);

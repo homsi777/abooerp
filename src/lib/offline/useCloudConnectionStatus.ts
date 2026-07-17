@@ -35,7 +35,13 @@ export function useCloudConnectionStatus() {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
     try {
-      const baseUrl = await getResolvedApiBaseUrl();
+      let baseUrl = await getResolvedApiBaseUrl();
+      if (typeof window !== 'undefined' && window.runtime?.getConfig) {
+        const runtime = await window.runtime.getConfig();
+        if (runtime.runtimeMode === 'local_production' && runtime.centralSyncApiBaseUrl) {
+          baseUrl = runtime.centralSyncApiBaseUrl;
+        }
+      }
       const response = await fetch(healthUrlFromApiBase(baseUrl), {
         method: 'GET',
         cache: 'no-store',

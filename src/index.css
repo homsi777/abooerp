@@ -1242,6 +1242,16 @@ body {
   color: #991b1b;
 }
 
+.quick-ledger-sync-indicator { position: relative; display: inline-flex; }
+.quick-ledger-sync-indicator .quick-ledger-cloud-pill { border: 0; cursor: pointer; }
+.quick-ledger-sync-popover {
+  position: absolute; z-index: 50; inset-inline-end: 0; top: calc(100% + 8px); width: 280px;
+  display: grid; gap: 7px; padding: 12px; border: 1px solid #d8dee8; border-radius: 10px;
+  background: #fff; color: #273142; box-shadow: 0 12px 30px rgba(15,23,42,.16); font-size: 12px;
+}
+.quick-ledger-sync-popover .is-error { color: #b42318; }
+.quick-ledger-sync-popover button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+
 .quick-ledger-actions button,
 .quick-ledger-actions .quick-ledger-search,
 .quick-ledger-actions .quick-ledger-print-toggle,
