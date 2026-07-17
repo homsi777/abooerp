@@ -27,6 +27,14 @@ async function worker() {
     `insert into linked_devices(id,machine_id,device_name,company_id,branch_id,is_approved,approved_by,approved_at,registered_by,sync_state)
      values($1::uuid,$1::text,'Sync smoke',$2,$3,true,$4,now(),$4,'active')`, [id, companyId, branchId, userId],
   );
+  const activationParameterProbe = await pool.query<{ id: string }>(
+    `insert into linked_devices(id,machine_id,device_name,os_type,company_id,branch_id,is_approved,registered_by,app_version,local_schema_version,sync_state)
+     values($1::uuid,$1::text,'Activation parameter probe','windows',$2,$3,true,$4,'smoke','112_offline_sync_foundation','active')
+     on conflict(machine_id) do update set device_name=excluded.device_name,branch_id=excluded.branch_id,registered_by=excluded.registered_by,app_version=excluded.app_version,local_schema_version=excluded.local_schema_version,last_seen_at=now(),updated_at=now()
+     returning id`,
+    [deviceId, companyId, branchId, userId],
+  );
+  assert.equal(activationParameterProbe.rows[0]?.id, deviceId);
   const context = { companyId, userId, allowedBranchIds: [branchId] };
   const hash = async (payload: Record<string, unknown>) => (await pool.query<{ hash: string }>(`select encode(digest(convert_to($1::jsonb::text,'UTF8'),'sha256'),'hex') hash`, [JSON.stringify(payload)])).rows[0].hash;
   const sessionId = randomUUID();

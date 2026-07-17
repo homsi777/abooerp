@@ -72,7 +72,7 @@ export function createSyncRouter(){
     const isAdmin=['admin','general_manager'].includes(String(user.roleCode??''));
     const device=await pool.query<{id:string;is_approved:boolean;is_blocked:boolean;sync_state:string}>(
       `insert into linked_devices(id,machine_id,device_name,os_type,company_id,branch_id,is_approved,registered_by,app_version,local_schema_version,sync_state)
-       values($1,$1,$2,'windows',$3,$4,$5,$6,$7,$8,'active')
+       values($1::uuid,$1::text,$2,'windows',$3,$4,$5,$6,$7,$8,'active')
        on conflict(machine_id) do update set device_name=excluded.device_name,branch_id=excluded.branch_id,registered_by=excluded.registered_by,app_version=excluded.app_version,local_schema_version=excluded.local_schema_version,last_seen_at=now(),updated_at=now()
        returning id,is_approved,is_blocked,sync_state`,
       [body.machineId,body.deviceName,context.companyId,branchId,isAdmin,context.userId,body.appVersion,body.schemaVersion],
