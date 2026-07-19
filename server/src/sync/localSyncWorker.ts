@@ -74,7 +74,7 @@ const snapshotOrder=[
   'daily_ledger_rows','daily_ledger_row_transfer_items','daily_ledger_print_events','daily_ledger_print_documents',
 ];
 
-async function upsertSnapshotRow(client:PoolClient,table:string,row:Record<string,unknown>,includedIds:Map<string,Set<string>>){
+async function upsertSnapshotRow(client:PoolClient,table:string,row:Record<string,unknown>,includedIds:Map<string,Set<string>>):Promise<string|undefined>{
   const normalizedRow={...row};
   for(const foreignKey of await singleColumnForeignKeys(client,table)){
     const referencedIds=includedIds.get(foreignKey.referencedTable);const value=normalizedRow[foreignKey.columnName];
@@ -82,19 +82,20 @@ async function upsertSnapshotRow(client:PoolClient,table:string,row:Record<strin
       if(foreignKey.nullable)normalizedRow[foreignKey.columnName]=null;
       else{
         console.warn('[SYNC] Skipped scoped snapshot row with an unavailable required parent.',{table,id:normalizedRow.id,column:foreignKey.columnName,referencedTable:foreignKey.referencedTable});
-        return;
+        return undefined;
       }
     }
   }
   const allowed=await tableColumns(client,table);const entries=Object.entries(normalizedRow).filter(([key])=>allowed.has(key));
-  if(!entries.length)return;
+  if(!entries.length)return undefined;
   if(table==='manifest_shipments'){
     const keys=entries.map(([key])=>key);const values=entries.map(([,value])=>value);
-    await client.query(`insert into manifest_shipments(${keys.join(',')}) values(${values.map((_,i)=>`$${i+1}`).join(',')}) on conflict(manifest_id,shipment_id) do update set created_at=excluded.created_at`,values);return;
+    await client.query(`insert into manifest_shipments(${keys.join(',')}) values(${values.map((_,i)=>`$${i+1}`).join(',')}) on conflict(manifest_id,shipment_id) do update set created_at=excluded.created_at`,values);return undefined;
   }
-  const id=normalizedRow.id;if(!id)return;const withoutId=entries.filter(([key])=>key!=='id');const keys=['id',...withoutId.map(([key])=>key)];const values=[id,...withoutId.map(([,value])=>value)];
+  const id=normalizedRow.id;if(!id)return undefined;const withoutId=entries.filter(([key])=>key!=='id');const keys=['id',...withoutId.map(([key])=>key)];const values=[id,...withoutId.map(([,value])=>value)];
   const updates=withoutId.map(([key])=>`${key}=excluded.${key}`);
   await client.query(`insert into ${table}(${keys.join(',')}) values(${values.map((_,i)=>`$${i+1}`).join(',')}) on conflict(id) do update set ${updates.length?updates.join(','):'id=excluded.id'}`,values);
+  return String(id);
 }
 
 export async function applyScopedSnapshot(snapshot:any){
@@ -113,13 +114,19 @@ export async function applyScopedSnapshot(snapshot:any){
       await client.query(`truncate table companies,permissions,cities,goods_types restart identity cascade`);
       columnCache.clear();foreignKeyCache.clear();
     }
+    // Built incrementally, in snapshotOrder's dependency order, using only rows that were
+    // actually inserted — a row skipped for a missing parent (e.g. an inactive currency)
+    // must not appear as a valid parent for its own dependents (e.g. shipment_status_history),
+    // or the later insert trips a hard FK violation and rolls back the entire snapshot.
     const includedIds=new Map<string,Set<string>>();
-    for(const [table,rows] of Object.entries(snapshot.data??{})){
-      if(Array.isArray(rows))includedIds.set(table,new Set(rows.map((row:any)=>row?.id).filter(Boolean).map(String)));
-    }
     for(const table of snapshotOrder){
       const rows=Array.isArray(snapshot.data?.[table])?snapshot.data[table]:[];
-      for(const row of rows)await upsertSnapshotRow(client,table,row,includedIds);
+      const insertedIds=new Set<string>();
+      for(const row of rows){
+        const insertedId=await upsertSnapshotRow(client,table,row,includedIds);
+        if(insertedId)insertedIds.add(insertedId);
+      }
+      includedIds.set(table,insertedIds);
     }
     await client.query(
       `update sync_local_state set last_central_cursor=$1,offline_grant_expires_at=$2::timestamptz,
