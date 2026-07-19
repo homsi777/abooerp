@@ -87,6 +87,13 @@ export default function Login() {
 
   useEffect(() => {
     if (!loginBootstrapReady) return;
+    void httpClient.get<{ licenseActive?: boolean }>('/license/status')
+      .then((status) => setLicenseActive(status.licenseActive === true))
+      .catch(() => setLicenseActive(!!getStoredLicense()));
+  }, [loginBootstrapReady]);
+
+  useEffect(() => {
+    if (!loginBootstrapReady) return;
     if (user) {
       navigate('/dashboard');
       return;

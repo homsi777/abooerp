@@ -16,6 +16,7 @@ const softDeleteEntities = new Set([
 let timer: NodeJS.Timeout | null=null;let running=false;let forceRequested=false;
 let centralOnline:boolean|null=null;let lastCentralError:string|null=null;let lastCentralAttemptAt:string|null=null;
 const columnCache=new Map<string,Set<string>>();
+const foreignKeyCache=new Map<string,Array<{columnName:string;referencedTable:string;nullable:boolean}>>();
 
 async function tableColumns(client:PoolClient,table:string){
   const cached=columnCache.get(table);if(cached)return cached;
@@ -23,6 +24,22 @@ async function tableColumns(client:PoolClient,table:string){
     `select column_name from information_schema.columns where table_schema='public' and table_name=$1`,[table],
   );
   const columns=new Set(result.rows.map((row)=>row.column_name));columnCache.set(table,columns);return columns;
+}
+
+async function singleColumnForeignKeys(client:PoolClient,table:string){
+  const cached=foreignKeyCache.get(table);if(cached)return cached;
+  const result=await client.query<{column_name:string;referenced_table:string;nullable:boolean}>(
+    `select attribute.attname column_name,constraint_row.confrelid::regclass::text referenced_table,
+            not attribute.attnotnull nullable
+       from pg_constraint constraint_row
+       join pg_attribute attribute
+         on attribute.attrelid=constraint_row.conrelid and attribute.attnum=constraint_row.conkey[1]
+      where constraint_row.contype='f' and constraint_row.conrelid=$1::regclass
+        and array_length(constraint_row.conkey,1)=1`,
+    [table],
+  );
+  const rows=result.rows.map(row=>({columnName:row.column_name,referencedTable:row.referenced_table.replace(/^public\./,''),nullable:row.nullable}));
+  foreignKeyCache.set(table,rows);return rows;
 }
 
 async function applyAuthoritativeRow(client:PoolClient,entityType:string,entityId:string,payload:Record<string,unknown>|null,version:number,tombstone=false){
@@ -57,14 +74,25 @@ const snapshotOrder=[
   'daily_ledger_rows','daily_ledger_row_transfer_items','daily_ledger_print_events','daily_ledger_print_documents',
 ];
 
-async function upsertSnapshotRow(client:PoolClient,table:string,row:Record<string,unknown>){
-  const allowed=await tableColumns(client,table);const entries=Object.entries(row).filter(([key])=>allowed.has(key));
+async function upsertSnapshotRow(client:PoolClient,table:string,row:Record<string,unknown>,includedIds:Map<string,Set<string>>){
+  const normalizedRow={...row};
+  for(const foreignKey of await singleColumnForeignKeys(client,table)){
+    const referencedIds=includedIds.get(foreignKey.referencedTable);const value=normalizedRow[foreignKey.columnName];
+    if(referencedIds&&value!==null&&value!==undefined&&!referencedIds.has(String(value))){
+      if(foreignKey.nullable)normalizedRow[foreignKey.columnName]=null;
+      else{
+        console.warn('[SYNC] Skipped scoped snapshot row with an unavailable required parent.',{table,id:normalizedRow.id,column:foreignKey.columnName,referencedTable:foreignKey.referencedTable});
+        return;
+      }
+    }
+  }
+  const allowed=await tableColumns(client,table);const entries=Object.entries(normalizedRow).filter(([key])=>allowed.has(key));
   if(!entries.length)return;
   if(table==='manifest_shipments'){
     const keys=entries.map(([key])=>key);const values=entries.map(([,value])=>value);
     await client.query(`insert into manifest_shipments(${keys.join(',')}) values(${values.map((_,i)=>`$${i+1}`).join(',')}) on conflict(manifest_id,shipment_id) do update set created_at=excluded.created_at`,values);return;
   }
-  const id=row.id;if(!id)return;const withoutId=entries.filter(([key])=>key!=='id');const keys=['id',...withoutId.map(([key])=>key)];const values=[id,...withoutId.map(([,value])=>value)];
+  const id=normalizedRow.id;if(!id)return;const withoutId=entries.filter(([key])=>key!=='id');const keys=['id',...withoutId.map(([key])=>key)];const values=[id,...withoutId.map(([,value])=>value)];
   const updates=withoutId.map(([key])=>`${key}=excluded.${key}`);
   await client.query(`insert into ${table}(${keys.join(',')}) values(${values.map((_,i)=>`$${i+1}`).join(',')}) on conflict(id) do update set ${updates.length?updates.join(','):'id=excluded.id'}`,values);
 }
@@ -83,11 +111,15 @@ export async function applyScopedSnapshot(snapshot:any){
       // local mirror because business rows must carry the central UUIDs. The same
       // replacement also removes rows that left the device scope during resnapshot.
       await client.query(`truncate table companies,permissions,cities,goods_types restart identity cascade`);
-      columnCache.clear();
+      columnCache.clear();foreignKeyCache.clear();
+    }
+    const includedIds=new Map<string,Set<string>>();
+    for(const [table,rows] of Object.entries(snapshot.data??{})){
+      if(Array.isArray(rows))includedIds.set(table,new Set(rows.map((row:any)=>row?.id).filter(Boolean).map(String)));
     }
     for(const table of snapshotOrder){
       const rows=Array.isArray(snapshot.data?.[table])?snapshot.data[table]:[];
-      for(const row of rows)await upsertSnapshotRow(client,table,row);
+      for(const row of rows)await upsertSnapshotRow(client,table,row,includedIds);
     }
     await client.query(
       `update sync_local_state set last_central_cursor=$1,offline_grant_expires_at=$2::timestamptz,
@@ -225,7 +257,11 @@ export async function runLocalSyncCycle(){
     if(state.rows[0]?.snapshot_initialized_at&&state.rows[0]?.resnapshot_required)await pushOnce();
     if(!await ensureSnapshotReady())return;
     await pushOnce();await pullOnce();
-  }catch(error){centralOnline=false;lastCentralError=(error as Error).message}finally{running=false}
+  }catch(error){
+    centralOnline=false;
+    lastCentralError=(error as Error).message;
+    console.error('[SYNC] Local sync cycle failed.',lastCentralError);
+  }finally{running=false}
 }
 export function requestImmediateSync(){forceRequested=true;setTimeout(()=>{if(forceRequested){forceRequested=false;void runLocalSyncCycle()}},0)}
 export function startLocalSyncWorker(){if(!isLocalSyncNode()||timer)return;void runLocalSyncCycle();timer=setInterval(()=>void runLocalSyncCycle(),env.SYNC_POLL_INTERVAL_MS);timer.unref()}

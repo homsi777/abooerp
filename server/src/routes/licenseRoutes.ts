@@ -4,6 +4,8 @@ import { asyncHandler } from '../utils/http.js';
 import { HttpError } from '../utils/errors.js';
 import { LicenseRepository } from '../repositories/licenseRepository.js';
 import { sendActivationNotification } from '../services/telegramService.js';
+import { env } from '../config/env.js';
+import { pool } from '../db/pool.js';
 
 // ── License definition ────────────────────────────────────────────────────────
 interface LicenseDef {
@@ -146,6 +148,30 @@ export function createLicenseRouter(repo: LicenseRepository) {
   router.get(
     '/status',
     asyncHandler(async (req, res) => {
+      if (env.SYNC_NODE_ROLE === 'local') {
+        const state = await pool.query<{snapshot_initialized_at:string|null;offline_grant_expires_at:string|null}>(
+          `select snapshot_initialized_at,offline_grant_expires_at from sync_local_state where singleton=true`,
+        );
+        const grant = state.rows[0];
+        const grantActive = Boolean(
+          grant?.snapshot_initialized_at && grant.offline_grant_expires_at && Date.parse(grant.offline_grant_expires_at) > Date.now(),
+        );
+        res.json({
+          success: true,
+          data: {
+            licenseActive: grantActive,
+            licenseType: grantActive ? 'CENTRAL_OFFLINE_GRANT' : null,
+            cloudEnabled: true,
+            shipmentLimit: null,
+            deliveryLimit: null,
+            receiptLimit: null,
+            activatedAt: grant?.snapshot_initialized_at ?? null,
+            usage: { shipmentsUsed: 0, deliveriesUsed: 0, receiptsUsed: 0 },
+            quotaRemaining: { shipments: null, deliveries: null, receipts: null },
+          },
+        });
+        return;
+      }
       let companyId = (req as any).requestUserContext?.companyId as string | undefined;
       if (!companyId) companyId = (await repo.resolveDefaultCompanyId()) ?? undefined;
       if (!companyId) {

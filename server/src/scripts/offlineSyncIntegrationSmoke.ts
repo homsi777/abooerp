@@ -21,6 +21,8 @@ async function worker() {
   const otherBranchId = (await pool.query<{ id: string }>(`insert into branches(code,name,company_id) values($1,'Other branch',$2) returning id`, [`OTHER-${Date.now()}`, companyId])).rows[0].id;
   const roleId = (await pool.query<{ id: string }>(`insert into roles(code,name,company_id) values($1,'Sync role',$2) returning id`, [`sync-role-${Date.now()}`, companyId])).rows[0].id;
   const userId = (await pool.query<{ id: string }>(`insert into users(username,full_name,password_hash,role_id,role,company_id,branch_id) values($1,'Sync user','test-only',$2,'admin',$3,$4) returning id`, [`sync-${Date.now()}`, roleId, companyId, branchId])).rows[0].id;
+  const omittedAuditUserId = (await pool.query<{ id: string }>(`insert into users(username,full_name,password_hash,role_id,role,company_id,branch_id) values($1,'Omitted audit user','test-only',$2,'operator',$3,$4) returning id`, [`sync-omitted-${Date.now()}`, roleId, companyId, branchId])).rows[0].id;
+  const customerWithOmittedAuditUser = (await pool.query<{ id: string }>(`insert into customers(code,name,branch_id,status,company_id,created_by_user_id) values($1,'Scoped customer',$2,'active',$3,$4) returning id`, [`SYNC-CUSTOMER-${Date.now()}`, branchId, companyId, omittedAuditUserId])).rows[0].id;
   const deviceId = randomUUID();
   const secondDeviceId = randomUUID();
   for (const id of [deviceId, secondDeviceId]) await pool.query(
@@ -87,6 +89,9 @@ async function worker() {
   const snapshot = await createScopedSnapshot(context);
   assert.ok(Array.isArray(snapshot.data.daily_ledger_sessions));
   assert.ok((snapshot.data.branches as Array<Record<string, unknown>>).every((branch) => branch.id === branchId));
+  const scopedTransferId=randomUUID();const skippedOrphanTransferItemId=randomUUID();
+  snapshot.data.daily_ledger_row_transfers.push({id:scopedTransferId,company_id:companyId,transfer_no:`ORPHAN-${Date.now()}`,target_session_id:sessionId,rows_count:1,pieces_count:0,weight_kg:0,status:'completed'});
+  snapshot.data.daily_ledger_row_transfer_items.push({id:skippedOrphanTransferItemId,transfer_id:scopedTransferId,row_id:randomUUID(),financial_posted:false});
   const pulled = await pullChanges(context, { deviceId: secondDeviceId, lastCursor: 0, batchSize: 200 });
   assert.equal(pulled.deviceRejected, false);
   assert.ok(pulled.changes.length > 0);
@@ -113,6 +118,8 @@ async function worker() {
   assert.equal(Number((await pool.query(`select count(*) count from branches where id=$1`, [branchId])).rows[0].count), 1);
   assert.equal(Number((await pool.query(`select count(*) count from branches where id=$1`, [otherBranchId])).rows[0].count), 0);
   assert.equal(Number((await pool.query(`select count(*) count from daily_ledger_sessions where id=$1`, [sessionId])).rows[0].count), 1);
+  assert.equal((await pool.query<{created_by_user_id:string|null}>(`select created_by_user_id from customers where id=$1`,[customerWithOmittedAuditUser])).rows[0]?.created_by_user_id,null);
+  assert.equal(Number((await pool.query(`select count(*) count from daily_ledger_row_transfer_items where id=$1`,[skippedOrphanTransferItemId])).rows[0].count),0);
   const queued=await queuePostShipmentsAction({companyId,branchId,userId,payload:{branchId,ledgerDate:'2099-01-01',lineLabel:'queued',rowIds:[]}});
   assert.equal(Number((await pool.query(`select count(*) count from sync_outbox where operation_id=$1 and operation_type='ACTION'`,[queued.operationId])).rows[0].count),1);
   assert.equal(Number((await pool.query(`select count(*) count from sync_deferred_actions where operation_id=$1`,[queued.operationId])).rows[0].count),1);

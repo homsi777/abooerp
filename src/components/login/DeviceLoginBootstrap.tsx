@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { clearLanConnection, CLOUD_API_PORT, getLanPort, saveLanConnection } from '../../lib/api/httpClient';
+
+const LOCAL_DESKTOP_API_PORT = 4010;
 import { registerDesktopDevice, registrationStatusMessage } from '../../lib/deviceRegistration';
 
 export const DEVICE_BOOTSTRAP_STORAGE_KEY = 'erp.deviceBootstrap.v1';
@@ -145,7 +147,7 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
       await fsApi.writeConfig({
         backendResolutionMode: 'localhost',
         manualLanHost: '',
-        backendPort: port,
+        backendPort: LOCAL_DESKTOP_API_PORT,
       });
     }
     if (fsApi?.enableLocalPackagedServer) {

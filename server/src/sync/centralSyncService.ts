@@ -429,7 +429,10 @@ export async function createScopedSnapshot(context:SyncRequestContext){
     const sessionIds=(data.daily_ledger_sessions as Array<Record<string,unknown>>).map(row=>row.id);
     data.daily_ledger_row_transfers=sessionIds.length?await query(`select * from daily_ledger_row_transfers where company_id=$1 and target_session_id=any($2::uuid[])`,[context.companyId,sessionIds]):[];
     const transferIds=(data.daily_ledger_row_transfers as Array<Record<string,unknown>>).map(row=>row.id);
-    data.daily_ledger_row_transfer_items=transferIds.length?await query(`select * from daily_ledger_row_transfer_items where transfer_id=any($1::uuid[])`,[transferIds]):[];
+    const ledgerRowIds=(data.daily_ledger_rows as Array<Record<string,unknown>>).map(row=>row.id);
+    data.daily_ledger_row_transfer_items=transferIds.length&&ledgerRowIds.length
+      ?await query(`select * from daily_ledger_row_transfer_items where transfer_id=any($1::uuid[]) and row_id=any($2::uuid[])`,[transferIds,ledgerRowIds])
+      :[];
     data.daily_ledger_print_events=await query(`select e.* from daily_ledger_print_events e left join daily_ledger_sessions s on s.id=e.session_id where e.company_id=$1 and (e.session_id is null or s.branch_id=any($2::uuid[]))`,[context.companyId,branches]);
     data.daily_ledger_print_documents=await query(`select * from daily_ledger_print_documents where company_id=$1 and (branch_id is null or branch_id=any($2::uuid[]))`,[context.companyId,branches]);
     const cursor=await client.query<{cursor:string}>(`select coalesce(max(cursor_id),0)::text cursor from sync_change_feed where company_id=$1`,[context.companyId]);
