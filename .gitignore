@@ -2,6 +2,12 @@ server-dist/
 server-bundle/
 server/logs/
 resources/
+dist/
+dist-electron/
+dist-server/
+release/
+dist-release/
+dist-release-next/
 *.zip
 *.rar
 *.7z
