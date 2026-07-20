@@ -100,8 +100,8 @@ async function preferNewerLedgerSession(
   row:Record<string,unknown>,
 ):Promise<Record<string,unknown>>{
   if(!row.session_id)return row;
-  const local=await client.query<{session_id:string;ledger_date:string}>(
-    `select r.session_id::text session_id, s.ledger_date::text ledger_date
+  const local=await client.query<{session_id:string;ledger_date:string;row_no:number}>(
+    `select r.session_id::text session_id, s.ledger_date::text ledger_date, r.row_no
        from daily_ledger_rows r
        join daily_ledger_sessions s on s.id=r.session_id
       where r.id=$1::uuid and r.deleted_at is null and s.deleted_at is null`,
@@ -118,7 +118,9 @@ async function preferNewerLedgerSession(
       entityId,localSession:localRow.session_id,localDate:localRow.ledger_date,
       incomingSession:row.session_id,incomingDate,
     });
-    return {...row,session_id:localRow.session_id};
+    // Keep local row_no too — applying the old session's row_no into today's session
+    // hits uq_daily_ledger_rows_row_no and aborts the whole sync cycle.
+    return {...row,session_id:localRow.session_id,row_no:localRow.row_no};
   }
   return row;
 }

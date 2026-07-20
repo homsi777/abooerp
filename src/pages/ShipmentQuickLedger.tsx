@@ -564,11 +564,14 @@ function resolveFleetForLedgerRow(
   };
 }
 
-function nextServerRowNoForDriver(rows: LedgerRow[], driverId: number) {
-  if (!driverId) return undefined;
+/**
+ * Hint only — the server allocates the authoritative row_no on insert.
+ * Count every known serverRowNo in the open grid so we never suggest 1 after reload.
+ */
+function nextServerRowNoForDriver(rows: LedgerRow[], _driverId?: number) {
   const nums = rows
-    .filter((r) => r.sessionDriverId === driverId && r.serverRowNo)
-    .map((r) => r.serverRowNo as number);
+    .map((r) => r.serverRowNo)
+    .filter((n): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0);
   return nums.length ? Math.max(...nums) + 1 : 1;
 }
 
@@ -1455,6 +1458,7 @@ export default function ShipmentQuickLedger() {
       payload: Record<string, unknown>;
     };
     const items: BatchItem[] = [];
+    let nextBatchRowNoHint = nextServerRowNoForDriver(rowsRef.current);
 
     for (const target of targets) {
       const displayRowId = target.id;
@@ -1499,8 +1503,8 @@ export default function ShipmentQuickLedger() {
       const origin = resolveTripOrigin(rowScope.lineLabel);
       const latestFleet = resolveFleetForLedgerRow(latestRow, currentTrip, driversRef.current, vehiclesRef.current);
       const latestDriverId = latestRow.sessionDriverId ?? currentTrip.driverId;
-      const latestRowNo =
-        latestRow.serverRowNo ?? nextServerRowNoForDriver(rowsRef.current, latestDriverId) ?? latestRow.id;
+      // Distinct hints per batch item; server still allocates the real row_no on insert.
+      const latestRowNo = latestRow.serverRowNo ?? nextBatchRowNoHint++;
 
       items.push({
         displayRowId,

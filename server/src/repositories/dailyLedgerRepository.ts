@@ -180,6 +180,8 @@ async function ensureDriverSession(
 }
 
 async function nextRowNoForSession(client: PoolClient, sessionId: string): Promise<number> {
+  // Lock the session so concurrent inserts cannot allocate the same row_no.
+  await client.query(`select id from daily_ledger_sessions where id = $1::uuid for update`, [sessionId]);
   const result = await client.query<{ max_no: number | null }>(
     `select max(row_no) as max_no from daily_ledger_rows where session_id = $1::uuid and deleted_at is null`,
     [sessionId],
@@ -1243,6 +1245,9 @@ export class DailyLedgerRepository {
       );
 
       const sessionId = session.id;
+      // New rows always get a server-allocated row_no. Never ON CONFLICT DO UPDATE on
+      // (session_id, row_no) — that silently overwrote a previous receipt (e.g. 9572 → 12883).
+      const allocatedRowNo = await nextRowNoForSession(client, sessionId);
 
       const row = await client.query<DailyLedgerRowWithSession>(
         `
@@ -1267,25 +1272,6 @@ export class DailyLedgerRepository {
           updated_by
         )
         values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17)
-        on conflict (session_id, row_no) where deleted_at is null
-        do update set
-          receipt_no = excluded.receipt_no,
-          destination = excluded.destination,
-          parcel_type = excluded.parcel_type,
-          parcel_count = excluded.parcel_count,
-          weight_kg = excluded.weight_kg,
-          sender_name = excluded.sender_name,
-          receiver_name = excluded.receiver_name,
-          collect_amount_usd = excluded.collect_amount_usd,
-          prepaid_amount_usd = excluded.prepaid_amount_usd,
-          hawala_amount_usd = excluded.hawala_amount_usd,
-          fees_amount_usd = excluded.fees_amount_usd,
-          transfer_service_fee_usd = excluded.transfer_service_fee_usd,
-          notes = excluded.notes,
-          dispatch_id = excluded.dispatch_id,
-          updated_by = excluded.updated_by,
-          updated_at = now()
-        where $27::uuid is null or daily_ledger_rows.created_by = $27::uuid
         returning
           daily_ledger_rows.*,
           $18::uuid as branch_id,
@@ -1306,7 +1292,7 @@ export class DailyLedgerRepository {
         `,
         [
           sessionId,
-          input.rowNo,
+          allocatedRowNo,
           input.receiptNo ?? null,
           input.destination ?? '',
           input.parcelType ?? '',
@@ -1331,12 +1317,11 @@ export class DailyLedgerRepository {
           session.driver_label,
           session.driver_id,
           session.vehicle_id,
-          input.restrictToCreatedByUserId ?? null,
         ],
       );
 
-      if (!row.rows.length && input.restrictToCreatedByUserId) {
-        throw new HttpError(409, 'تعذر حفظ السطر — رقم السطر محجوز بإدخال موظف آخر.');
+      if (!row.rows.length) {
+        throw new HttpError(500, 'تعذر إنشاء سطر الدفتر.');
       }
 
       await markSessionReprintIfPrinted(client, sessionId, 'إضافة/تعديل سطر بعد الطباعة');
