@@ -4395,8 +4395,8 @@ export default function ShipmentQuickLedger() {
                 ) : null}
               </div>
             ) : null}
-            <ShippingSyncIndicator fallbackStatus={cloudStatus} pendingDrafts={pendingLocalDraftCount} />
           </div>
+          <ShippingSyncIndicator fallbackStatus={cloudStatus} pendingDrafts={pendingLocalDraftCount} />
         </section>
 
         <section className="quick-ledger-trip" aria-label="بيانات الرحلة">

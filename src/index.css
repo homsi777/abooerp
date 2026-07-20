@@ -1160,6 +1160,7 @@ body {
   min-height: 38px;
   flex-wrap: nowrap;
   min-width: 0;
+  overflow: visible;
 }
 
 .quick-ledger-title {
@@ -1205,6 +1206,7 @@ body {
   flex-wrap: nowrap;
   min-width: 0;
   overflow-x: auto;
+  overflow-y: hidden;
   padding-bottom: 2px;
   scrollbar-width: thin;
 }
@@ -1242,15 +1244,71 @@ body {
   color: #991b1b;
 }
 
-.quick-ledger-sync-indicator { position: relative; display: inline-flex; }
-.quick-ledger-sync-indicator .quick-ledger-cloud-pill { border: 0; cursor: pointer; }
-.quick-ledger-sync-popover {
-  position: absolute; z-index: 50; inset-inline-end: 0; top: calc(100% + 8px); width: 280px;
-  display: grid; gap: 7px; padding: 12px; border: 1px solid #d8dee8; border-radius: 10px;
-  background: #fff; color: #273142; box-shadow: 0 12px 30px rgba(15,23,42,.16); font-size: 12px;
+.quick-ledger-sync-indicator {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  z-index: 40;
 }
-.quick-ledger-sync-popover .is-error { color: #b42318; }
-.quick-ledger-sync-popover button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+
+.quick-ledger-sync-indicator .quick-ledger-cloud-pill {
+  border: 0;
+  cursor: pointer;
+}
+
+.quick-ledger-sync-popover {
+  position: absolute;
+  z-index: 80;
+  inset-inline-end: 0;
+  top: calc(100% + 8px);
+  width: min(320px, calc(100vw - 24px));
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid #d8dee8;
+  border-radius: 10px;
+  background: #fff;
+  color: #273142;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.quick-ledger-sync-popover strong {
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.quick-ledger-sync-popover .is-error {
+  color: #b42318;
+}
+
+.quick-ledger-sync-popover button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #0f172a;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.quick-ledger-sync-popover button:hover:not(:disabled) {
+  background: #eef2ff;
+  border-color: #94a3b8;
+}
+
+.quick-ledger-sync-popover button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
 
 .quick-ledger-actions button,
 .quick-ledger-actions .quick-ledger-search,
