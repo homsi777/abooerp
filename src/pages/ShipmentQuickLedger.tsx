@@ -459,10 +459,12 @@ function stampRowLedgerScope(
     resolveBranchBackendIdFromLine(row.origin, context.branchList) ||
     resolveDefaultAleppoBranchId(context.branchList) ||
     '';
-  const ledgerDate = row.sessionLedgerDate?.trim() || context.trip.date?.trim() || '';
+  // Always prefer the date currently selected in the trip bar. Stale sessionLedgerDate
+  // from a previous sync/apply must not hijack new edits onto older ledger days.
+  const ledgerDate = context.trip.date?.trim() || row.sessionLedgerDate?.trim() || '';
   const lineLabel =
-    row.sessionLineLabel?.trim() ||
     context.trip.line?.trim() ||
+    row.sessionLineLabel?.trim() ||
     row.origin?.trim() ||
     '';
   if (!resolvedBranch && !ledgerDate && !lineLabel) return row;
@@ -472,8 +474,8 @@ function stampRowLedgerScope(
     branchLabel:
       row.branchLabel ||
       (resolvedBranch ? resolveBranchLabelFromList(context.branchList, resolvedBranch) : undefined),
-    sessionLedgerDate: row.sessionLedgerDate || ledgerDate || undefined,
-    sessionLineLabel: row.sessionLineLabel || lineLabel || undefined,
+    sessionLedgerDate: ledgerDate || row.sessionLedgerDate || undefined,
+    sessionLineLabel: lineLabel || row.sessionLineLabel || undefined,
   };
 }
 
@@ -487,22 +489,22 @@ function resolveRowEditingScope(
   userBranchId?: string | null,
 ): DailyLedgerEditingScope | null {
   const ledgerDate =
-    row.sessionLedgerDate?.trim() ||
-    globalScope.ledgerDate?.trim() ||
     currentTrip.date?.trim() ||
+    globalScope.ledgerDate?.trim() ||
+    row.sessionLedgerDate?.trim() ||
     new Date().toISOString().slice(0, 10);
   const lineLabel =
-    row.sessionLineLabel?.trim() ||
-    globalScope.lineLabel?.trim() ||
     currentTrip.line?.trim() ||
+    globalScope.lineLabel?.trim() ||
+    row.sessionLineLabel?.trim() ||
     row.origin?.trim() ||
     branchList.find((item) => normalizeName(item.name).includes('حلب'))?.name ||
     branchList[0]?.name ||
     '';
   const branchId =
-    row.branchBackendId?.trim() ||
-    globalScope.branchId?.trim() ||
     activeBranchId?.trim() ||
+    globalScope.branchId?.trim() ||
+    row.branchBackendId?.trim() ||
     userBranchId?.trim() ||
     resolveBranchBackendIdFromLine(currentTrip.line, branchList) ||
     resolveBranchBackendIdFromLine(row.origin, branchList) ||
@@ -1408,6 +1410,16 @@ export default function ShipmentQuickLedger() {
     dispatchNo: remote.dispatch_no != null ? String(remote.dispatch_no) : undefined,
   });
 
+  /** Keep the top stats bar and print hub in sync immediately after a successful upsert. */
+  const mergeSavedRemoteRow = (saved: RemoteDailyLedgerRow) => {
+    setRemoteRowsRaw((prev) => {
+      const next = [...prev.filter((row) => row.id !== saved.id), saved];
+      const printableCount = filterPrintableDailyLedgerRows(next).length;
+      queueMicrotask(() => setRemoteSyncedCount(printableCount));
+      return next;
+    });
+  };
+
   /**
    * حفظ دفعي لعدة أسطر معلّقة عبر طلب HTTP واحد (POST /rows/upsert-batch) بدل حلقة تسلسلية من طلبات
    * فردية. يُعيد إنتاج نفس منطق التحقق/النطاق/كشف التكرار الموجود في saveRowToServer عمداً بدل
@@ -1552,6 +1564,7 @@ export default function ShipmentQuickLedger() {
           if (!result.success) return;
           const item = items[i];
           const saved = result.row;
+          mergeSavedRemoteRow(saved);
           mapped = mapped.map((r) => {
             if (r.id !== item.displayRowId) return r;
             const moneyStillMatches = ledgerMoneyMatchesSnapshot(r, item.moneySnapshot);
@@ -2498,6 +2511,7 @@ export default function ShipmentQuickLedger() {
           }
           return mapped;
         });
+        mergeSavedRemoteRow(saved);
 
         if (latestRow.clientRowId) {
           await markDailyLedgerDraftSynced(latestRow.clientRowId, saved.id);

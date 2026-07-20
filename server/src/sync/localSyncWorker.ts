@@ -93,6 +93,36 @@ async function normalizeMissingForeignKeys(client:PoolClient,table:string,row:Re
   return normalized;
 }
 
+/** Keep a local ledger row on its newer session when central tries to pull it onto an older date. */
+async function preferNewerLedgerSession(
+  client:PoolClient,
+  entityId:string,
+  row:Record<string,unknown>,
+):Promise<Record<string,unknown>>{
+  if(!row.session_id)return row;
+  const local=await client.query<{session_id:string;ledger_date:string}>(
+    `select r.session_id::text session_id, s.ledger_date::text ledger_date
+       from daily_ledger_rows r
+       join daily_ledger_sessions s on s.id=r.session_id
+      where r.id=$1::uuid and r.deleted_at is null and s.deleted_at is null`,
+    [entityId],
+  );
+  const incoming=await client.query<{ledger_date:string}>(
+    `select ledger_date::text ledger_date from daily_ledger_sessions where id=$1::uuid and deleted_at is null`,
+    [row.session_id],
+  );
+  const localRow=local.rows[0];
+  const incomingDate=incoming.rows[0]?.ledger_date;
+  if(localRow&&incomingDate&&localRow.session_id!==String(row.session_id)&&localRow.ledger_date>incomingDate){
+    console.warn('[SYNC] Refusing to move ledger row onto an older session date.',{
+      entityId,localSession:localRow.session_id,localDate:localRow.ledger_date,
+      incomingSession:row.session_id,incomingDate,
+    });
+    return {...row,session_id:localRow.session_id};
+  }
+  return row;
+}
+
 async function applyAuthoritativeRow(client:PoolClient,entityType:string,entityId:string,payload:Record<string,unknown>|null,version:number,tombstone=false){
   if(!writableEntities.has(entityType))return;
   await client.query(`select set_config('app.sync_suppress_feed','1',true)`);
@@ -103,7 +133,10 @@ async function applyAuthoritativeRow(client:PoolClient,entityType:string,entityI
     return;
   }
   const allowed=await tableColumns(client,entityType);
-  const sanitized=await normalizeMissingForeignKeys(client,entityType,payload);
+  let sanitized=await normalizeMissingForeignKeys(client,entityType,payload);
+  if(entityType==='daily_ledger_rows'){
+    sanitized=await preferNewerLedgerSession(client,entityId,sanitized);
+  }
   const entries=Object.entries(sanitized).filter(([key])=>key!=='id'&&key!=='sync_central_version'&&key!=='sync_version'&&allowed.has(key));
   const exists=await client.query(`select 1 from ${entityType} where id=$1::uuid`,[entityId]);
   // Ensure version columns appear once even when the central payload already carries them.
@@ -131,7 +164,7 @@ const snapshotOrder=[
 ];
 
 async function upsertSnapshotRow(client:PoolClient,table:string,row:Record<string,unknown>,includedKeys:Map<string,Map<string,Set<string>>>):Promise<Record<string,unknown>|undefined>{
-  const normalizedRow={...row};
+  let normalizedRow={...row};
   for(const foreignKey of await singleColumnForeignKeys(client,table)){
     const value=normalizedRow[foreignKey.columnName];
     if(!hasReferencedParent(includedKeys,foreignKey.referencedTable,foreignKey.referencedColumn,value)){
@@ -141,6 +174,9 @@ async function upsertSnapshotRow(client:PoolClient,table:string,row:Record<strin
         return undefined;
       }
     }
+  }
+  if(table==='daily_ledger_rows'&&normalizedRow.id){
+    normalizedRow=await preferNewerLedgerSession(client,String(normalizedRow.id),normalizedRow);
   }
   const allowed=await tableColumns(client,table);const entries=Object.entries(normalizedRow).filter(([key])=>allowed.has(key));
   if(!entries.length)return undefined;
