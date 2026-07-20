@@ -18,6 +18,11 @@ let centralOnline:boolean|null=null;let lastCentralError:string|null=null;let la
 const columnCache=new Map<string,Set<string>>();
 const foreignKeyCache=new Map<string,Array<{columnName:string;referencedTable:string;nullable:boolean}>>();
 
+function serializeValue(value:unknown):unknown{
+  if(value!==null&&typeof value==='object'&&!(value instanceof Date))return JSON.stringify(value);
+  return value;
+}
+
 async function tableColumns(client:PoolClient,table:string){
   const cached=columnCache.get(table);if(cached)return cached;
   const result=await client.query<{column_name:string}>(
