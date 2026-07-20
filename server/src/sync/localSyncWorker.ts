@@ -234,14 +234,25 @@ async function pushOnce():Promise<void>{
   if(!rows.length)return;
   const batchId=randomUUID();
   try{
+    // Re-hash from the payload object actually sent. The stored payload_hash can diverge after
+    // jsonb round-trips (numeric/text coercion), which made central reject with PAYLOAD_HASH_INVALID.
+    const operations=[];
+    for(const row of rows){
+      const payload=row.payload&&typeof row.payload==='object'?row.payload as Record<string,unknown>:{};
+      const hashResult=await pool.query<{hash:string}>(
+        `select encode(digest(convert_to($1::jsonb::text,'UTF8'),'sha256'),'hex') hash`,
+        [JSON.stringify(payload)],
+      );
+      operations.push({
+        operationId:row.operation_id,deviceId:row.device_id,deviceSequence:Number(row.device_sequence),
+        entityType:row.entity_type,entityId:row.entity_id,operation:row.operation_type,payload,
+        requestHash:hashResult.rows[0]?.hash??row.payload_hash,baseVersion:row.local_base_version==null?null:Number(row.local_base_version),
+        clientSchemaVersion:env.SYNC_SCHEMA_VERSION,appVersion:env.SYNC_APP_VERSION,
+      });
+    }
     const response=await fetch(`${env.CENTRAL_SYNC_API_BASE_URL.replace(/\/$/,'')}/sync/push`,{
       method:'POST',headers:{'content-type':'application/json',...(env.CENTRAL_SYNC_ACCESS_TOKEN?{authorization:`Bearer ${env.CENTRAL_SYNC_ACCESS_TOKEN}`}:{'x-sync-device-id':String(rows[0].device_id),'x-sync-device-token':env.CENTRAL_SYNC_DEVICE_TOKEN!}),'x-sync-batch-id':batchId},
-      body:JSON.stringify({batchId,operations:rows.map(row=>({
-        operationId:row.operation_id,deviceId:row.device_id,deviceSequence:Number(row.device_sequence),
-        entityType:row.entity_type,entityId:row.entity_id,operation:row.operation_type,payload:row.payload,
-        requestHash:row.payload_hash,baseVersion:row.local_base_version==null?null:Number(row.local_base_version),
-        clientSchemaVersion:env.SYNC_SCHEMA_VERSION,appVersion:env.SYNC_APP_VERSION,
-      }))}),
+      body:JSON.stringify({batchId,operations}),
     });
     if(!response.ok)throw new Error(`CENTRAL_HTTP_${response.status}`);centralOnline=true;lastCentralError=null;
     const body=await response.json() as any;const results=Array.isArray(body?.data?.results)?body.data.results:[];

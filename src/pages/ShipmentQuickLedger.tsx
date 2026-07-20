@@ -1942,7 +1942,12 @@ export default function ShipmentQuickLedger() {
     void (async () => {
       if (isElectronRuntime() && window.runtime?.getConfig) {
         const config = await window.runtime.getConfig();
-        const localNode = config.runtimeMode === 'local_production' && config.backendResolutionMode === 'localhost';
+        // electron:dev uses runtimeMode=development but still talks to the local API on localhost.
+        // Treating only packaged local_production as "local" forced IndexedDB drafts when the
+        // cloud probe went offline — rows vanished on refresh and typing became extremely slow.
+        const localNode =
+          config.backendResolutionMode === 'localhost' &&
+          (config.runtimeMode === 'local_production' || config.runtimeMode === 'development');
         if (cancelled) return;
         setIsLocalPersistenceNode(localNode);
         if (localNode) {
