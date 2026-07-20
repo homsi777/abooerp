@@ -3,6 +3,7 @@ import pg from 'pg';
 import { randomBytes } from 'node:crypto';
 import { loadDesktopSecrets, saveDesktopSecrets } from '../security/desktopSecrets.js';
 import { loadRuntimeConfig, resolveMachineId } from './runtimeConfig.js';
+import { ensureLocalPostgresReady } from '../localPostgres.js';
 
 const LOCAL_DATABASE = 'almiya_hsahin_offline';
 
@@ -21,6 +22,13 @@ export function registerDesktopSetupIpc() {
     const password = String(payload?.password ?? '');
     if (password.length < 8 || password.length > 256) {
       return { success: false, error: 'POSTGRES_PASSWORD_LENGTH_INVALID' };
+    }
+    // Fresh installs often leave the Windows service in "manual"/stopped state — give it a
+    // real chance to come up before failing, instead of surfacing a generic connection error
+    // for something that's just "the service hasn't started yet".
+    const readiness = await ensureLocalPostgresReady();
+    if (!readiness.ready) {
+      return { success: false, error: 'POSTGRES_SERVICE_NOT_RUNNING' };
     }
     const admin = new pg.Client({ host: '127.0.0.1', port: 5432, user: 'postgres', password, database: 'postgres', connectionTimeoutMillis: 5000 });
     try {
@@ -53,7 +61,15 @@ export function registerDesktopSetupIpc() {
         centralSyncDeviceToken: previous?.centralSyncDeviceToken,
       });
       return { success: true, database: LOCAL_DATABASE };
-    } catch {
+    } catch (error: any) {
+      // Distinguish the two most common fresh-install failures so the wizard can tell the
+      // user exactly what to fix instead of a single generic "connection failed" message.
+      if (error?.code === '28P01') {
+        return { success: false, error: 'POSTGRES_AUTH_FAILED' };
+      }
+      if (error?.code === 'ECONNREFUSED' || error?.code === 'ETIMEDOUT') {
+        return { success: false, error: 'POSTGRES_SERVICE_NOT_RUNNING' };
+      }
       return { success: false, error: 'POSTGRES_CONNECTION_FAILED' };
     } finally {
       await admin.end().catch(() => undefined);

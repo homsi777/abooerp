@@ -122,10 +122,15 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
     }
     const configured = await setup.configurePostgres(postgresPassword).catch(() => ({ success: false, error: 'POSTGRES_CONNECTION_FAILED' }));
     if (!configured?.success) {
-      const message = configured?.error === 'POSTGRES_NOT_LOOPBACK_ONLY'
-        ? 'PostgreSQL يستمع على الشبكة. اضبط listen_addresses على localhost فقط ثم أعد المحاولة.'
-        : 'تعذر الاتصال بـ PostgreSQL المحلي. تحقق من تشغيل الخدمة وصحة كلمة المرور.';
-      setPrimaryErr(message);
+      const postgresErrorMessages: Record<string, string> = {
+        POSTGRES_NOT_LOOPBACK_ONLY: 'PostgreSQL يستمع على الشبكة. اضبط listen_addresses على localhost فقط ثم أعد المحاولة.',
+        POSTGRES_SERVICE_NOT_RUNNING: 'خدمة PostgreSQL غير مُشغَّلة على هذا الجهاز. افتح "الخدمات" (services.msc) وابحث عن خدمة postgresql وشغّلها، ثم أعد المحاولة.',
+        POSTGRES_AUTH_FAILED: 'كلمة المرور غير صحيحة. أدخل نفس كلمة مرور مستخدم postgres التي حددتها أثناء تثبيت PostgreSQL — وليس بالضرورة نفس كلمة مرور التطبيق.',
+      };
+      setPrimaryErr(
+        postgresErrorMessages[String(configured?.error)] ??
+          'تعذر الاتصال بـ PostgreSQL المحلي. تحقق من تشغيل الخدمة وصحة كلمة المرور.',
+      );
       setPrimaryBusy(false);
       return;
     }
