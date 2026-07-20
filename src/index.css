@@ -1348,15 +1348,23 @@ body {
 
 .quick-ledger-trip {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
   border: 1px solid #9fb0c4;
   background: #edf4f2;
   border-radius: 8px;
-  overflow-x: auto;
-  scrollbar-width: thin;
+  overflow: visible;
+}
+
+.quick-ledger-trip-break {
+  flex: 0 0 100%;
+  width: 100%;
+  height: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
 }
 
 .quick-ledger-trip label {
@@ -1388,11 +1396,17 @@ body {
 }
 
 .quick-ledger-trip select {
-  max-width: 160px;
+  max-width: 170px;
+  min-width: 110px;
 }
 
 .quick-ledger-trip input[type='date'] {
-  width: 132px;
+  width: 138px;
+}
+
+.quick-ledger-trip input:not([type='date']) {
+  min-width: 88px;
+  max-width: 120px;
 }
 
 .quick-ledger-trip input.is-backdate {
@@ -1407,8 +1421,8 @@ body {
 
 .quick-ledger-scope-chip {
   flex: 0 0 auto;
-  height: 28px;
-  padding: 0 10px;
+  height: 30px;
+  padding: 0 12px;
   border-radius: 999px;
   border: 1px solid #86efac;
   background: #f0fdf4;
@@ -1418,6 +1432,8 @@ body {
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
+  position: relative;
+  z-index: 1;
 }
 
 .quick-ledger-scope-chip.is-warn {
@@ -1961,13 +1977,21 @@ body {
 }
 
 .quick-ledger-global-search-field {
-  flex: 1 1 320px;
-  min-width: min(420px, 100%);
+  flex: 1 1 280px;
+  min-width: min(260px, 100%);
+  max-width: 100%;
 }
 
 .quick-ledger-page-search-field {
-  flex: 1 1 260px;
-  min-width: min(320px, 100%);
+  flex: 1 1 280px;
+  min-width: min(260px, 100%);
+  max-width: 100%;
+}
+
+.quick-ledger-trip .quick-ledger-page-search-field,
+.quick-ledger-trip .quick-ledger-global-search-field {
+  /* Labels stay inline with their controls; fields share the second row evenly. */
+  white-space: normal;
 }
 
 .quick-ledger-page-search-row {

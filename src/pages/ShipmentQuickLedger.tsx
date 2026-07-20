@@ -4529,6 +4529,26 @@ export default function ShipmentQuickLedger() {
               <option key={b.id} value={b.name} />
             ))}
           </datalist>
+          {canViewAllLedgerEntries ? (
+            <span
+              className="quick-ledger-scope-chip"
+              title={
+                ledgerBranchMode === 'all'
+                  ? 'وضع المدير — كل فروع الشركة لنفس التاريخ'
+                  : `وضع المدير — فرع ${activeBranchDisplayName}`
+              }
+            >
+              {activeBranchDisplayName}
+              {' · '}
+              {remoteLoading ? '…' : `${remoteSyncedCount} سطر`}
+            </span>
+          ) : null}
+          {reprintRequired ? (
+            <span className="quick-ledger-scope-chip is-warn" title="تم تعديل الإرسالية بعد الطباعة">
+              أعد الطباعة
+            </span>
+          ) : null}
+          <div className="quick-ledger-trip-break" aria-hidden="true" />
           <label className="quick-ledger-trip-search quick-ledger-page-search-field">
             <span>بحث في الصفحة</span>
             <div className="quick-ledger-page-search-row">
@@ -4566,25 +4586,6 @@ export default function ShipmentQuickLedger() {
               <span>مرسل · مستلم · إشعار/إيصال · نوع بضاعة — كل التواريخ...</span>
             </button>
           </label>
-          {canViewAllLedgerEntries ? (
-            <span
-              className="quick-ledger-scope-chip"
-              title={
-                ledgerBranchMode === 'all'
-                  ? 'وضع المدير — كل فروع الشركة لنفس التاريخ'
-                  : `وضع المدير — فرع ${activeBranchDisplayName}`
-              }
-            >
-              {activeBranchDisplayName}
-              {' · '}
-              {remoteLoading ? '…' : `${remoteSyncedCount} سطر`}
-            </span>
-          ) : null}
-          {reprintRequired ? (
-            <span className="quick-ledger-scope-chip is-warn" title="تم تعديل الإرسالية بعد الطباعة">
-              أعد الطباعة
-            </span>
-          ) : null}
         </section>
       </header>
 
