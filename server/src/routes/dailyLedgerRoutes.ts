@@ -242,6 +242,105 @@ export function createDailyLedgerRouter(
     },
   );
 
+  const upsertRowBodySchema = z.object({
+    branchId: uuid,
+    ledgerDate: z.string().min(1),
+    lineLabel: z.string().min(1),
+    originLabel: z.string().optional(),
+    tripNo: z.string().nullable().optional(),
+    vehicleLabel: z.string().nullable().optional(),
+    driverLabel: z.string().nullable().optional(),
+    driverId: uuid.nullable().optional(),
+    vehicleId: uuid.nullable().optional(),
+    rowNo: z.coerce.number().int().min(1),
+    receiptNo: z.string().nullable().optional(),
+    destination: z.string().optional(),
+    parcelType: z.string().optional(),
+    parcelCount: z.coerce.number().int().min(1).nullable().optional(),
+    weightKg: z.coerce.number().nullable().optional(),
+    senderName: z.string().optional(),
+    receiverName: z.string().optional(),
+    collectAmountUsd: z.coerce.number().optional(),
+    prepaidAmountUsd: z.coerce.number().optional(),
+    hawalaAmountUsd: z.coerce.number().optional(),
+    feesAmountUsd: z.coerce.number().optional(),
+    transferServiceFeeUsd: z.coerce.number().optional(),
+    notes: z.string().nullable().optional(),
+    rowId: uuid.optional(),
+    dispatchId: uuid.nullable().optional(),
+    operationId: uuid.optional(),
+  });
+  type UpsertRowBody = z.infer<typeof upsertRowBodySchema>;
+
+  /** ينفّذ upsert سطر واحد مع كل قواعد التحقق/الصلاحيات الحالية — يُستخدم من المسار الفردي والدفعي معاً */
+  async function performRowUpsert(
+    req: express.Request,
+    input: UpsertRowBody,
+    ctx: {
+      scope: ReturnType<typeof parseDataScope>;
+      roleCode: string;
+      userType: string;
+      allowedBranchIds: string[];
+      lockedBranchId: string | null;
+      ownerUserId: string | null | undefined;
+    },
+  ) {
+    assertLedgerDateAllowed(ctx.roleCode, ctx.userType, input.ledgerDate, getRequestPermissions(req));
+    const branchBypass =
+      ctx.roleCode === 'admin' || ctx.userType === 'admin' || canAccessAnyCompanyBranch(ctx.roleCode, ctx.userType);
+    if (ctx.allowedBranchIds.length && !ctx.allowedBranchIds.includes(input.branchId) && !branchBypass) {
+      throw new HttpError(403, 'Requested branch scope is not allowed for this user.');
+    }
+    if (isDailyLedgerScopedOperator(ctx.roleCode) && ctx.lockedBranchId && input.branchId !== ctx.lockedBranchId) {
+      throw new HttpError(403, 'لا يمكن الحفظ على فرع مختلف عن الفرع التابع لك.');
+    }
+
+    const previousRows =
+      input.rowId != null ? await service.fetchRowAuditSnapshots(ctx.scope, [input.rowId]) : [];
+    const previousSnapshot =
+      previousRows[0] != null ? dailyLedgerRowAuditSnapshot(previousRows[0]) : null;
+    const row = await service.upsertRow(ctx.scope, {
+      ...input,
+      restrictToCreatedByUserId: ctx.ownerUserId ?? undefined,
+    });
+    const afterSnapshot = dailyLedgerRowAuditSnapshot(row);
+    const isUpdate = previousSnapshot != null;
+    const diff =
+      previousSnapshot != null
+        ? diffDailyLedgerRowSnapshots(previousSnapshot, afterSnapshot)
+        : { changedFields: [] as string[], changes: {} as Record<string, { before: unknown; after: unknown }> };
+    auditService.logAsync({
+      req,
+      context: { branchId: row.branch_id },
+      action: isUpdate ? 'DAILY_LEDGER_ROW_UPDATED' : 'DAILY_LEDGER_ROW_CREATED',
+      entityType: 'daily_ledger_row',
+      entityId: row.id,
+      metadata: {
+        summary: isUpdate
+          ? `تعديل سطر ${row.row_no}${row.receipt_no ? ` — إيصال ${row.receipt_no}` : ''}`
+          : `إدخال سطر ${row.row_no}${row.receipt_no ? ` — إيصال ${row.receipt_no}` : ''}`,
+        ledgerDate: row.ledger_date,
+        lineLabel: row.line_label,
+        rowNo: row.row_no,
+        receiptNo: row.receipt_no,
+        destination: row.destination,
+        senderName: row.sender_name,
+        receiverName: row.receiver_name,
+        collectUsd: afterSnapshot.collectUsd,
+        prepaidUsd: afterSnapshot.prepaidUsd,
+        ...(isUpdate
+          ? {
+              changedFields: diff.changedFields,
+              changes: diff.changes,
+              before: previousSnapshot,
+              after: afterSnapshot,
+            }
+          : { after: afterSnapshot }),
+      },
+    });
+    return row;
+  }
+
   router.post(
     '/rows/upsert',
     requirePermissions(['shipments.write']),
@@ -256,35 +355,7 @@ export function createDailyLedgerRouter(
         allowedBranchIds[0] ??
         null;
       const scope = parseDataScope(req);
-      const bodySchema = z.object({
-        branchId: uuid,
-        ledgerDate: z.string().min(1),
-        lineLabel: z.string().min(1),
-        originLabel: z.string().optional(),
-        tripNo: z.string().nullable().optional(),
-        vehicleLabel: z.string().nullable().optional(),
-        driverLabel: z.string().nullable().optional(),
-        driverId: uuid.nullable().optional(),
-        vehicleId: uuid.nullable().optional(),
-        rowNo: z.coerce.number().int().min(1),
-        receiptNo: z.string().nullable().optional(),
-        destination: z.string().optional(),
-        parcelType: z.string().optional(),
-        parcelCount: z.coerce.number().int().min(1).nullable().optional(),
-        weightKg: z.coerce.number().nullable().optional(),
-        senderName: z.string().optional(),
-        receiverName: z.string().optional(),
-        collectAmountUsd: z.coerce.number().optional(),
-        prepaidAmountUsd: z.coerce.number().optional(),
-        hawalaAmountUsd: z.coerce.number().optional(),
-        feesAmountUsd: z.coerce.number().optional(),
-        transferServiceFeeUsd: z.coerce.number().optional(),
-        notes: z.string().nullable().optional(),
-        rowId: uuid.optional(),
-        dispatchId: uuid.nullable().optional(),
-        operationId: uuid.optional(),
-      });
-      const input = bodySchema.parse(req.body);
+      const input = upsertRowBodySchema.parse(req.body);
       try {
         assertLedgerDateAllowed(roleCode, userType, input.ledgerDate, getRequestPermissions(req));
       } catch (dateError) {
@@ -294,61 +365,81 @@ export function createDailyLedgerRouter(
         });
         return;
       }
-      const branchBypass = roleCode === 'admin' || userType === 'admin' || canAccessAnyCompanyBranch(roleCode, userType);
-      if (allowedBranchIds.length && !allowedBranchIds.includes(input.branchId) && !branchBypass) {
-        res.status(403).json({ success: false, error: 'Requested branch scope is not allowed for this user.' });
-        return;
+      const ownerUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, getRequestPermissions(req));
+      try {
+        const row = await performRowUpsert(req, input, {
+          scope,
+          roleCode,
+          userType,
+          allowedBranchIds,
+          lockedBranchId,
+          ownerUserId,
+        });
+        res.json({ success: true, data: row });
+      } catch (error) {
+        // Branch-scope checks throw HttpError (same 403s the inline checks used to return directly);
+        // anything else (e.g. from deep inside service.upsertRow) is rethrown so Express 5's built-in
+        // async-rejection handling forwards it to the app-level error middleware unchanged, exactly
+        // as before this refactor (no local catch existed around service.upsertRow previously).
+        if (error instanceof HttpError) {
+          res.status(error.statusCode).json({ success: false, error: error.message });
+          return;
+        }
+        throw error;
       }
-      if (isDailyLedgerScopedOperator(roleCode) && lockedBranchId && input.branchId !== lockedBranchId) {
-        res.status(403).json({ success: false, error: 'لا يمكن الحفظ على فرع مختلف عن الفرع التابع لك.' });
-        return;
+    },
+  );
+
+  /**
+   * حفظ دفعي لعدة أسطر في طلب HTTP واحد — يُستخدم من flushPendingRowSaves() بدل N طلب متسلسل.
+   * كل سطر يمر بنفس التحقق/الصلاحيات/المعاملة (transaction) المستقلة الموجودة في performRowUpsert،
+   * بالتسلسل (وليس بالتوازي) للحفاظ على نفس سلوك فحص تكرار رقم الإيصال الحالي.
+   * فشل سطر واحد لا يوقف البقية — الاستجابة تتضمن نتيجة كل سطر على حدة.
+   */
+  router.post(
+    '/rows/upsert-batch',
+    requirePermissions(['shipments.write']),
+    async (req, res) => {
+      const userContext = (req as any).requestUserContext as any;
+      const allowedBranchIds: string[] = Array.isArray(userContext?.allowedBranchIds) ? userContext.allowedBranchIds : [];
+      const roleCode = String(userContext?.roleCode ?? '').toLowerCase();
+      const userType = String(userContext?.userType ?? '').toLowerCase();
+      const lockedBranchId =
+        (typeof userContext?.activeBranchId === 'string' ? userContext.activeBranchId : undefined) ??
+        (typeof userContext?.scope?.branchId === 'string' ? userContext.scope.branchId : undefined) ??
+        allowedBranchIds[0] ??
+        null;
+      const scope = parseDataScope(req);
+      const bodySchema = z.object({ rows: z.array(upsertRowBodySchema).min(1).max(500) });
+      const { rows: inputRows } = bodySchema.parse(req.body);
+      const ownerUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, getRequestPermissions(req));
+
+      const results: Array<
+        | { index: number; success: true; row: Awaited<ReturnType<typeof performRowUpsert>> }
+        | { index: number; success: false; error: string }
+      > = [];
+
+      for (let index = 0; index < inputRows.length; index += 1) {
+        try {
+          const row = await performRowUpsert(req, inputRows[index], {
+            scope,
+            roleCode,
+            userType,
+            allowedBranchIds,
+            lockedBranchId,
+            ownerUserId,
+          });
+          results.push({ index, success: true, row });
+        } catch (error) {
+          results.push({
+            index,
+            success: false,
+            error: error instanceof Error ? error.message : 'تعذر حفظ السطر.',
+          });
+        }
       }
 
-      const ownerUserId = dailyLedgerOwnerUserId(roleCode, userType, scope.userId, getRequestPermissions(req));
-      const previousRows =
-        input.rowId != null ? await service.fetchRowAuditSnapshots(scope, [input.rowId]) : [];
-      const previousSnapshot =
-        previousRows[0] != null ? dailyLedgerRowAuditSnapshot(previousRows[0]) : null;
-      const row = await service.upsertRow(scope, {
-        ...input,
-        restrictToCreatedByUserId: ownerUserId,
-      });
-      const afterSnapshot = dailyLedgerRowAuditSnapshot(row);
-      const isUpdate = previousSnapshot != null;
-      const diff =
-        previousSnapshot != null
-          ? diffDailyLedgerRowSnapshots(previousSnapshot, afterSnapshot)
-          : { changedFields: [] as string[], changes: {} as Record<string, { before: unknown; after: unknown }> };
-      auditService.logAsync({
-        req,
-        context: { branchId: row.branch_id },
-        action: isUpdate ? 'DAILY_LEDGER_ROW_UPDATED' : 'DAILY_LEDGER_ROW_CREATED',
-        entityType: 'daily_ledger_row',
-        entityId: row.id,
-        metadata: {
-          summary: isUpdate
-            ? `تعديل سطر ${row.row_no}${row.receipt_no ? ` — إيصال ${row.receipt_no}` : ''}`
-            : `إدخال سطر ${row.row_no}${row.receipt_no ? ` — إيصال ${row.receipt_no}` : ''}`,
-          ledgerDate: row.ledger_date,
-          lineLabel: row.line_label,
-          rowNo: row.row_no,
-          receiptNo: row.receipt_no,
-          destination: row.destination,
-          senderName: row.sender_name,
-          receiverName: row.receiver_name,
-          collectUsd: afterSnapshot.collectUsd,
-          prepaidUsd: afterSnapshot.prepaidUsd,
-          ...(isUpdate
-            ? {
-                changedFields: diff.changedFields,
-                changes: diff.changes,
-                before: previousSnapshot,
-                after: afterSnapshot,
-              }
-            : { after: afterSnapshot }),
-        },
-      });
-      res.json({ success: true, data: row });
+      res.json({ success: true, data: { results } });
     },
   );
 

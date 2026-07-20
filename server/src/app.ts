@@ -131,7 +131,9 @@ app.use(cors({
   credentials: true,
 }));
 
-app.use(express.json());
+// الحد الافتراضي لـ Express (100kb) لا يكفي لدفعة حفظ دفتر الشحن (حتى 500 سطر في طلب واحد
+// عبر /daily-ledger/rows/upsert-batch) — 2mb يمنح هامشاً مريحاً دون تخفيف حماية حقيقية.
+app.use(express.json({ limit: '2mb' }));
 app.use(correlationIdMiddleware);
 app.use(requestTracingMiddleware);
 app.use(requestContextMiddleware);

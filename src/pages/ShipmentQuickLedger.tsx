@@ -1,5 +1,6 @@
 ﻿import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   ArrowDown,
   ArrowUp,
@@ -1006,6 +1007,18 @@ export default function ShipmentQuickLedger() {
     return entryRow ? [...sorted, entryRow] : sorted;
   }, [rows, catalogAgents, destinationSort, pageSearchQuery]);
 
+  /** حاوية جدول الدفتر القابلة للتمرير — الجذر الذي يقيس ضمنه tanstack/react-virtual نطاق الأسطر المعروضة */
+  const tableShellRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: visibleRows.length,
+    getScrollElement: () => tableShellRef.current,
+    estimateSize: () => 34, // يطابق .quick-ledger-table td { height: 34px } في index.css
+    overscan: 8,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  /** حد أعلى آمن لعدد الأعمدة — يُستخدم فقط لـ colSpan على أسطر الحشو غير المرئية (لا حدود/بلا محتوى) */
+  const columnCount = 14;
+
   const deletableVisibleRows = useMemo(
     () => visibleRows.filter(isRowDeletable),
     [visibleRows],
@@ -1138,6 +1151,7 @@ export default function ShipmentQuickLedger() {
   }, [remoteRowsRaw, rows, pageSearchQuery]);
 
   const rowsRef = useRef(rows);
+  const visibleRowsRef = useRef(visibleRows);
   const customersRef = useRef(customers);
   const goodsTypesRef = useRef(goodsTypes);
   const userRef = useRef(user);
@@ -1165,6 +1179,10 @@ export default function ShipmentQuickLedger() {
   useEffect(() => {
     rowsRef.current = rows;
   }, [rows]);
+
+  useEffect(() => {
+    visibleRowsRef.current = visibleRows;
+  }, [visibleRows]);
 
   useEffect(() => {
     customersRef.current = customers;
@@ -1390,6 +1408,229 @@ export default function ShipmentQuickLedger() {
     dispatchNo: remote.dispatch_no != null ? String(remote.dispatch_no) : undefined,
   });
 
+  /**
+   * حفظ دفعي لعدة أسطر معلّقة عبر طلب HTTP واحد (POST /rows/upsert-batch) بدل حلقة تسلسلية من طلبات
+   * فردية. يُعيد إنتاج نفس منطق التحقق/النطاق/كشف التكرار الموجود في saveRowToServer عمداً بدل
+   * استدعائه مباشرة — كل سطر يبني حمولته بشكل مستقل هنا ثم تُرسل الدفعة كاملة مرة واحدة.
+   * saveRowToServer نفسها تبقى دون تغيير وتُستخدم للحفظ التلقائي الفردي لكل حقل (debounce/blur).
+   */
+  const saveRowsBatchToServer = async (targets: LedgerRow[]) => {
+    if (!targets.length) return;
+    const branchId = activeBranchIdRef.current;
+    const currentTrip = tripRef.current;
+    const saveScope = editingScopeRef.current;
+    const viewAllBranches = canViewAllLedgerEntriesRef.current && ledgerBranchModeRef.current === 'all';
+    const userBranchId = userRef.current?.branchId ?? userRef.current?.allowedBranchIds?.[0] ?? null;
+
+    if (isPersistenceOffline) {
+      for (const row of targets) {
+        await markDailyLedgerDraftPending(row.clientRowId, 'لا يوجد اتصال بالسحابة. تم حفظ السطر محلياً.').catch(() => undefined);
+      }
+      await refreshPendingDraftCount();
+      return;
+    }
+
+    // انتظار أي حفظ فردي (تلقائي عند فقدان التركيز) قيد التنفيذ حالياً لنفس الأسطر قبل بدء الدفعة
+    await Promise.all(
+      targets.map((row) => saveInFlightRef.current[row.id]?.catch(() => undefined) ?? Promise.resolve()),
+    );
+
+    type BatchItem = {
+      displayRowId: number;
+      clientRowId: string;
+      latestDriverId: number;
+      moneySnapshot: LedgerMoneySnapshot;
+      payload: Record<string, unknown>;
+    };
+    const items: BatchItem[] = [];
+
+    for (const target of targets) {
+      const displayRowId = target.id;
+      const row = rowsRef.current.find((r) => r.id === displayRowId);
+      if (!row) continue;
+      const stampedRow = stampRowLedgerScope(row, {
+        activeBranchId: branchId,
+        trip: currentTrip,
+        branchList: branchesRef.current,
+        userBranchId,
+      });
+      if (stampedRow !== row) {
+        setRows((prev) => prev.map((entry) => (entry.id === displayRowId ? stampedRow : entry)));
+        rowsRef.current = rowsRef.current.map((entry) => (entry.id === displayRowId ? stampedRow : entry));
+      }
+      const rowScope = resolveRowEditingScope(
+        stampedRow,
+        viewAllBranches,
+        saveScope,
+        branchId,
+        currentTrip,
+        branchesRef.current,
+        userBranchId,
+      );
+      if (!rowScope) {
+        if (shouldPersistRow(stampedRow)) {
+          showToast('تعذر حفظ السطر — تأكد من اختيار التاريخ وخط المصدر (الخط)', 'error');
+        }
+        continue;
+      }
+      editingScopeRef.current = rowScope;
+      const latestRow = rowsRef.current.find((r) => r.id === displayRowId);
+      if (!latestRow || !shouldPersistRow(latestRow)) continue;
+      const dup = findReceiptConflictForRow(latestRow, rowsRef.current);
+      if (dup) {
+        const message = describeReceiptConflict(rowsRef.current, latestRow, dup);
+        quickLedgerLog.log('warn', 'autosave', message, logRowContext(latestRow));
+        showToast(message, 'error');
+        continue;
+      }
+
+      const origin = resolveTripOrigin(rowScope.lineLabel);
+      const latestFleet = resolveFleetForLedgerRow(latestRow, currentTrip, driversRef.current, vehiclesRef.current);
+      const latestDriverId = latestRow.sessionDriverId ?? currentTrip.driverId;
+      const latestRowNo =
+        latestRow.serverRowNo ?? nextServerRowNoForDriver(rowsRef.current, latestDriverId) ?? latestRow.id;
+
+      items.push({
+        displayRowId,
+        clientRowId: latestRow.clientRowId,
+        latestDriverId,
+        moneySnapshot: snapshotLedgerMoney(latestRow),
+        payload: {
+          branchId: resolveLedgerBranchId(rowScope.branchId),
+          ledgerDate: rowScope.ledgerDate,
+          lineLabel: rowScope.lineLabel,
+          originLabel: origin,
+          tripNo: currentTrip.tripNo || null,
+          ...(latestRow.dbId ? { rowId: latestRow.dbId } : {}),
+          ...latestFleet,
+          rowNo: latestRowNo,
+          receiptNo: latestRow.receiptNo || null,
+          destination: latestRow.destination,
+          parcelType: latestRow.parcelType,
+          parcelCount: Number(latestRow.parcelCount) || null,
+          weightKg: parseWeightKg(latestRow.weightKg) ?? null,
+          senderName: latestRow.sender,
+          receiverName: latestRow.receiver,
+          collectAmountUsd: parseUsd(latestRow.collectAmount),
+          prepaidAmountUsd: parseUsd(latestRow.prepaidAmount),
+          hawalaAmountUsd: parseUsd(latestRow.receiverCollect),
+          feesAmountUsd: 0,
+          transferServiceFeeUsd: parseUsd(latestRow.transferServiceFee),
+          notes: latestRow.notes || null,
+        },
+      });
+    }
+
+    if (!items.length) return;
+
+    type BatchResult =
+      | { index: number; success: true; row: RemoteDailyLedgerRow }
+      | { index: number; success: false; error: string };
+
+    const task = (async () => {
+      let results: BatchResult[];
+      try {
+        const response = await httpClient.post<{ results: BatchResult[] }>('/daily-ledger/rows/upsert-batch', {
+          rows: items.map((item) => item.payload),
+        });
+        results = response.results;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'تعذر حفظ الأسطر';
+        for (const item of items) {
+          if (item.clientRowId) {
+            await markDailyLedgerDraftPending(item.clientRowId, message).catch(() => undefined);
+          }
+        }
+        await refreshPendingDraftCount();
+        showToast(message, 'error');
+        throw error;
+      }
+
+      setRows((prev) => {
+        let mapped = prev;
+        results.forEach((result, i) => {
+          if (!result.success) return;
+          const item = items[i];
+          const saved = result.row;
+          mapped = mapped.map((r) => {
+            if (r.id !== item.displayRowId) return r;
+            const moneyStillMatches = ledgerMoneyMatchesSnapshot(r, item.moneySnapshot);
+            const serverCollectLabel = remoteCollectAmountLabel(saved);
+            return {
+              ...r,
+              dbId: saved.id,
+              serverRowNo: saved.row_no,
+              sessionDriverId: saved.driver_id
+                ? syntheticEntityId(saved.driver_id)
+                : item.latestDriverId || r.sessionDriverId,
+              sessionId: saved.session_id ?? r.sessionId,
+              updatedAt: saved.updated_at,
+              postedShipmentId: saved.posted_shipment_id,
+              loadedAt: saved.loaded_at,
+              ...(moneyStillMatches
+                ? {
+                    collectAmount: serverCollectLabel || r.collectAmount,
+                    prepaidAmount: String(saved.prepaid_amount_usd ?? '') || r.prepaidAmount,
+                    receiverCollect: String(saved.hawala_amount_usd ?? '') || r.receiverCollect,
+                    transferServiceFee: String(saved.transfer_service_fee_usd ?? '') || r.transferServiceFee,
+                  }
+                : {}),
+              branchBackendId: saved.branch_id ?? r.branchBackendId,
+              sessionLedgerDate: saved.ledger_date ?? r.sessionLedgerDate,
+              sessionLineLabel: saved.line_label ?? r.sessionLineLabel,
+              dispatchId: saved.dispatch_id ?? r.dispatchId,
+              dispatchNo: saved.dispatch_no != null ? String(saved.dispatch_no) : r.dispatchNo,
+            };
+          });
+        });
+        const savedDisplayIds = new Set(
+          results.filter((r) => r.success).map((r) => items[r.index]?.displayRowId),
+        );
+        const stillSavable = mapped.some((r) => savedDisplayIds.has(r.id) && r.dbId && isRowSavable(r));
+        return stillSavable ? appendTrailingEntrySlot(mapped) : mapped;
+      });
+
+      for (let i = 0; i < items.length; i += 1) {
+        const item = items[i];
+        const result = results[i];
+        if (result?.success) {
+          if (item.clientRowId) {
+            await markDailyLedgerDraftSynced(item.clientRowId, result.row.id);
+          }
+          const latestRow = rowsRef.current.find((r) => r.id === item.displayRowId);
+          if (latestRow) syncPostedShipmentInBackground(latestRow, result.row, currentTrip);
+        } else {
+          const message = result?.error ?? 'تعذر حفظ السطر';
+          if (item.clientRowId) {
+            await markDailyLedgerDraftPending(item.clientRowId, message).catch(() => undefined);
+          }
+          const latestRow = rowsRef.current.find((r) => r.id === item.displayRowId);
+          quickLedgerLog.log(
+            'error',
+            'autosave',
+            message,
+            latestRow ? logRowContext(latestRow) : { details: { rowId: item.displayRowId } },
+          );
+          showToast(message, 'error');
+        }
+      }
+      await refreshPendingDraftCount();
+    })();
+
+    items.forEach((item) => {
+      saveInFlightRef.current[item.displayRowId] = task;
+    });
+    try {
+      await task;
+    } finally {
+      items.forEach((item) => {
+        if (saveInFlightRef.current[item.displayRowId] === task) {
+          delete saveInFlightRef.current[item.displayRowId];
+        }
+      });
+    }
+  };
+
   const flushPendingRowSaves = async (scopeSessionId?: string | null) => {
     Object.values(saveTimersRef.current).forEach((timer) => window.clearTimeout(timer));
     saveTimersRef.current = {};
@@ -1400,9 +1641,13 @@ export default function ShipmentQuickLedger() {
       if (scopeSessionId) return rowInActiveSessionScope(row, scopeSessionId);
       return true;
     });
-    for (const row of targets) {
-      await saveRowToServerRef.current(row.id, { force: true });
-    }
+    if (!targets.length) return;
+    // PERF_PROBE_TEMP: before/after fix verification — remove after measurement session.
+    const __flushStart = performance.now();
+    console.info('[PERF_PROBE][T1] flush_start', JSON.stringify({ count: targets.length, atIso: new Date().toISOString() }));
+    await saveRowsBatchToServer(targets);
+    console.info('[PERF_PROBE][T1] flush_end', JSON.stringify({ count: targets.length, totalDurationMs: Number((performance.now() - __flushStart).toFixed(3)) }));
+    // END PERF_PROBE_TEMP
   };
 
   useEffect(() => {
@@ -1643,17 +1888,31 @@ export default function ShipmentQuickLedger() {
         ? await restoreLocalDraftsForContext(draftContext, remoteValues, displayRows)
         : displayRows;
       if (generation !== loadGenerationRef.current) return;
+      // PERF_PROBE_TEMP: before/after fix verification — remove after measurement session.
+      const __beforeSetRows = performance.now();
       setRows(rowsWithDrafts);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          console.info('[PERF_PROBE][T5] render_complete', JSON.stringify({
+            rowCount: rowsWithDrafts.length,
+            setRowsToPaintMs: Number((performance.now() - __beforeSetRows).toFixed(3)),
+          }));
+        });
+      });
+      // END PERF_PROBE_TEMP
       const focusDbRowId = pendingFocusDbRowIdRef.current;
       if (focusDbRowId) {
         pendingFocusDbRowIdRef.current = null;
         const displayRow = rowsWithDrafts.find((entry) => entry.dbId === focusDbRowId);
         if (displayRow) {
           setActiveRowId(displayRow.id);
+          // مؤجَّل لإتاحة الوقت لإعادة حساب visibleRows بعد setRows أعلاه — الجدول افتراضي
+          // (virtualized) فالسطر الهدف قد لا يكون موجوداً في DOM حتى تنتقل الحاوية إليه.
           window.setTimeout(() => {
-            document
-              .querySelector(`[data-ledger-row-id="${displayRow.id}"]`)
-              ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            const targetIndex = visibleRowsRef.current.findIndex((entry) => entry.id === displayRow.id);
+            if (targetIndex >= 0) {
+              rowVirtualizer.scrollToIndex(targetIndex, { align: 'center', behavior: 'smooth' });
+            }
           }, 80);
         } else {
           showToast('تم فتح تاريخ السطر — لم يُعثر على السطر في العرض الحالي.', 'info');
@@ -2432,16 +2691,55 @@ export default function ShipmentQuickLedger() {
     inner?.focus();
   };
 
+  /**
+   * الجدول افتراضي (virtualized) — الأسطر خارج نطاق العرض الحالي (+ overscan) غير موجودة في DOM.
+   * عند الوصول لحافة الأسطر المُركَّبة، نمرّر الحاوية إلى الصف الهدف عبر rowVirtualizer.scrollToIndex
+   * أولاً، ثم نركّز الحقل المطلوب بعد أن يُركَّب ذلك الصف (تأخير قصير لإتاحة إعادة الرسم).
+   */
+  const focusFieldInVisibleRow = (
+    targetVisibleIndex: number,
+    pickField: (fields: HTMLElement[]) => HTMLElement | undefined,
+  ) => {
+    if (targetVisibleIndex < 0 || targetVisibleIndex >= visibleRowsRef.current.length) return;
+    const targetRowId = visibleRowsRef.current[targetVisibleIndex]?.id;
+    if (targetRowId == null) return;
+    const tryFocus = () => {
+      const mountedRow = document.querySelector<HTMLTableRowElement>(`tr[data-ledger-row-id="${targetRowId}"]`);
+      if (!mountedRow) return false;
+      const fields = Array.from(mountedRow.querySelectorAll<HTMLElement>('[data-ledger-field="true"]'));
+      const field = pickField(fields);
+      if (!field) return false;
+      focusEditable(field);
+      return true;
+    };
+    if (tryFocus()) return;
+    rowVirtualizer.scrollToIndex(targetVisibleIndex, { align: 'center' });
+    window.setTimeout(tryFocus, 60);
+  };
+
   const focusNext = (event: KeyboardEvent<HTMLInputElement | HTMLSelectElement>) => {
     const key = event.key;
     const allFields = () =>
       Array.from(document.querySelectorAll<HTMLElement>('[data-ledger-field="true"]'));
+    const currentRowVisibleIndex = () => {
+      const tr = (event.currentTarget as HTMLElement).closest('tr');
+      const attr = tr?.getAttribute('data-index');
+      return attr != null ? Number(attr) : NaN;
+    };
 
     if (key === 'Enter') {
       event.preventDefault();
       const fields = allFields();
       const currentIndex = fields.indexOf(event.currentTarget as HTMLElement);
-      focusEditable(fields[currentIndex + 1]);
+      const next = fields[currentIndex + 1];
+      if (next) {
+        focusEditable(next);
+        return;
+      }
+      const rowIndex = currentRowVisibleIndex();
+      if (!Number.isNaN(rowIndex)) {
+        focusFieldInVisibleRow(rowIndex + 1, (rowFields) => rowFields[0]);
+      }
       return;
     }
 
@@ -2466,7 +2764,18 @@ export default function ShipmentQuickLedger() {
       const idx = fields.indexOf(target);
       if (idx < 0) return;
       event.preventDefault();
-      focusEditable(key === 'ArrowLeft' ? fields[idx + 1] : fields[idx - 1]);
+      const next = key === 'ArrowLeft' ? fields[idx + 1] : fields[idx - 1];
+      if (next) {
+        focusEditable(next);
+        return;
+      }
+      const rowIndex = currentRowVisibleIndex();
+      if (!Number.isNaN(rowIndex)) {
+        focusFieldInVisibleRow(
+          key === 'ArrowLeft' ? rowIndex + 1 : rowIndex - 1,
+          (rowFields) => (key === 'ArrowLeft' ? rowFields[0] : rowFields[rowFields.length - 1]),
+        );
+      }
       return;
     }
 
@@ -2476,14 +2785,13 @@ export default function ShipmentQuickLedger() {
     const rowFields = Array.from(tr.querySelectorAll<HTMLElement>('[data-ledger-field="true"]'));
     const colIndex = rowFields.indexOf(target);
     if (colIndex < 0) return;
-    const bodyRows = Array.from(tr.parentElement?.querySelectorAll<HTMLTableRowElement>(':scope > tr') ?? []);
-    const rowIndex = bodyRows.indexOf(tr as HTMLTableRowElement);
-    const targetRow = key === 'ArrowDown' ? bodyRows[rowIndex + 1] : bodyRows[rowIndex - 1];
-    if (!targetRow) return;
-    const targetFields = Array.from(targetRow.querySelectorAll<HTMLElement>('[data-ledger-field="true"]'));
-    if (!targetFields.length) return;
+    const rowIndex = currentRowVisibleIndex();
+    if (Number.isNaN(rowIndex)) return;
     event.preventDefault();
-    focusEditable(targetFields[Math.min(colIndex, targetFields.length - 1)]);
+    focusFieldInVisibleRow(
+      key === 'ArrowDown' ? rowIndex + 1 : rowIndex - 1,
+      (targetFields) => (targetFields.length ? targetFields[Math.min(colIndex, targetFields.length - 1)] : undefined),
+    );
   };
 
   const dedupeAgentsList = (options: SuggestedAgent[]) => {
@@ -4328,7 +4636,7 @@ export default function ShipmentQuickLedger() {
         </section>
       )}
 
-      <section className="quick-ledger-table-shell">
+      <section className="quick-ledger-table-shell" ref={tableShellRef}>
         <table className="quick-ledger-table">
           <thead>
             <tr>
@@ -4410,7 +4718,14 @@ export default function ShipmentQuickLedger() {
             </tr>
           </thead>
           <tbody>
-            {visibleRows.map((row) => {
+            {virtualRows.length > 0 && (
+              <tr aria-hidden="true" className="quick-ledger-virtual-spacer">
+                <td style={{ height: virtualRows[0].start, padding: 0, border: 0 }} colSpan={columnCount} />
+              </tr>
+            )}
+            {virtualRows.map((virtualRow) => {
+              const row = visibleRows[virtualRow.index];
+              if (!row) return null;
               const started = isRowStarted(row);
               const locked = Boolean(row.loadedAt);
               const posted = Boolean(row.postedShipmentId);
@@ -4425,7 +4740,14 @@ export default function ShipmentQuickLedger() {
                 .filter(Boolean)
                 .join(' ');
               return (
-                <tr key={row.id} className={rowClassName} title={rowIssue} data-ledger-row-id={row.id}>
+                <tr
+                  key={row.id}
+                  ref={rowVirtualizer.measureElement}
+                  data-index={virtualRow.index}
+                  className={rowClassName}
+                  title={rowIssue}
+                  data-ledger-row-id={row.id}
+                >
                   {deleteMode && canLedgerDeleteRows && (
                     <td className="quick-ledger-select-col">
                       <input
@@ -4645,6 +4967,18 @@ export default function ShipmentQuickLedger() {
                 </tr>
               );
             })}
+            {virtualRows.length > 0 && (
+              <tr aria-hidden="true" className="quick-ledger-virtual-spacer">
+                <td
+                  style={{
+                    height: rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end,
+                    padding: 0,
+                    border: 0,
+                  }}
+                  colSpan={columnCount}
+                />
+              </tr>
+            )}
           </tbody>
         </table>
         <datalist id="ledger-destination-options">
