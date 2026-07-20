@@ -13,6 +13,7 @@ type RuntimeConfigPayload = {
 const CHANNEL_READ_CONFIG = 'fs:read-config';
 const CHANNEL_WRITE_CONFIG = 'fs:write-config';
 const CHANNEL_ENABLE_LOCAL_PACKAGED = 'fs:enable-local-packaged-server';
+const CHANNEL_RELAUNCH_APP = 'app:relaunch';
 
 const LOCAL_PACKAGED_SERVER_FLAG = '.erp-spawn-local-api';
 
