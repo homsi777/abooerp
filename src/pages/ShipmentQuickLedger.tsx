@@ -1632,14 +1632,22 @@ export default function ShipmentQuickLedger() {
   };
 
   const flushPendingRowSaves = async (scopeSessionId?: string | null) => {
+    // Capture debounce targets before clearing timers — already-synced remote rows must not be
+    // re-upserted on every refresh/visibility change (floods local outbox and used to 409 on batch).
+    const pendingDisplayIds = new Set(
+      Object.keys(saveTimersRef.current).map((key) => Number(key)).filter((id) => Number.isFinite(id)),
+    );
     Object.values(saveTimersRef.current).forEach((timer) => window.clearTimeout(timer));
     saveTimersRef.current = {};
     receiptEditingRowIdRef.current = null;
     setReceiptEditingRowId(null);
     const targets = rowsRef.current.filter((row) => {
       if (!shouldPersistRow(row)) return false;
-      if (scopeSessionId) return rowInActiveSessionScope(row, scopeSessionId);
-      return true;
+      if (scopeSessionId && !rowInActiveSessionScope(row, scopeSessionId)) return false;
+      if (!row.dbId) return true;
+      if (pendingDisplayIds.has(row.id)) return true;
+      if (saveInFlightRef.current[row.id]) return true;
+      return false;
     });
     if (!targets.length) return;
     // PERF_PROBE_TEMP: before/after fix verification — remove after measurement session.

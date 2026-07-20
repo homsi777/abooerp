@@ -6,6 +6,7 @@ const allowedLocalWritePaths=[
   /^\/api\/v1\/auth\//,
   /^\/api\/v1\/sync\/retry$/,
   /^\/api\/v1\/daily-ledger\/rows\/upsert$/,
+  /^\/api\/v1\/daily-ledger\/rows\/upsert-batch$/,
   /^\/api\/v1\/daily-ledger\/rows\/delete$/,
   /^\/api\/v1\/daily-ledger\/rows\/post-shipments$/,
   /^\/api\/v1\/daily-ledger\/sessions\/cancel$/,
