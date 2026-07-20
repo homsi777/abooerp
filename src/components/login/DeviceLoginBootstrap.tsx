@@ -159,7 +159,20 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
       await fsApi.enableLocalPackagedServer();
     }
     localStorage.setItem(DEVICE_BOOTSTRAP_STORAGE_KEY, 'primary');
-    window.location.reload();
+    // The bundled local API server is spawned exactly once, during the Electron main
+    // process's own startup sequence — decided by whether the ".erp-spawn-local-api"
+    // flag file exists AT THAT MOMENT. On first run (before this wizard finishes) it
+    // doesn't exist yet, so the server is never started this session. A renderer-only
+    // `location.reload()` cannot retroactively make the already-running main process
+    // spawn it — only a full app relaunch re-runs that startup check and actually
+    // brings the local server up. Without this, the app is left with license/API
+    // calls failing with "تعذر الاتصال بالسيرفر" right after a successful setup.
+    const runtimeApi = (window as any)?.runtime;
+    if (runtimeApi?.relaunchApp) {
+      await runtimeApi.relaunchApp();
+    } else {
+      window.location.reload();
+    }
   };
 
   const testBranchConnection = async () => {
