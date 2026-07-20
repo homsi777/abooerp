@@ -16,6 +16,7 @@ import type { SyncRequestContext } from './centralSyncService.js';
 const payloadSchema=z.object({
   action:z.literal('POST_DAILY_LEDGER_SHIPMENTS'),branchId:z.string().uuid(),ledgerDate:z.string().min(1),lineLabel:z.string().min(1),
   sessionId:z.string().uuid().optional(),rowIds:z.array(z.string().uuid()).optional(),createdByUserId:z.string().uuid().optional(),
+  saveOperationId:z.string().uuid().optional(),
 });
 
 let service:DailyLedgerService|null=null;
@@ -32,7 +33,15 @@ export async function executeCentralDeferredAction(context:SyncRequestContext,pa
   if(!context.allowedBranchIds.includes(input.branchId))throw new Error('DEFERRED_ACTION_SCOPE_REJECTED');
   return postingService().postPendingShipments(
     {companyId:context.companyId,branchId:input.branchId,userId:context.userId},
-    {branchId:input.branchId,ledgerDate:input.ledgerDate,lineLabel:input.lineLabel,sessionId:input.sessionId,rowIds:input.rowIds,createdByUserId:input.createdByUserId??context.userId},
+    {
+      branchId:input.branchId,
+      ledgerDate:input.ledgerDate,
+      lineLabel:input.lineLabel,
+      sessionId:input.sessionId,
+      rowIds:input.rowIds,
+      createdByUserId:input.createdByUserId??context.userId,
+      operationId:input.saveOperationId,
+    },
     context.allowedBranchIds,
   );
 }

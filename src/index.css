@@ -2952,6 +2952,147 @@ body {
 
 .quick-ledger-dispatch-save-log-detail-actions {
   margin-bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quick-ledger-dispatch-save-log-actions-cell {
+  white-space: nowrap;
+}
+
+.quick-ledger-dispatch-save-log-undo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid #fca5a5;
+  background: #fff1f2;
+  color: #9f1239;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.quick-ledger-dispatch-save-log-undo-btn:hover:not(:disabled) {
+  background: #ffe4e6;
+}
+
+.quick-ledger-dispatch-save-log-undo-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.quick-ledger-dispatch-save-log-undo-status {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.quick-ledger-dispatch-save-log-undo-status.is-undone {
+  color: #9f1239;
+}
+
+.quick-ledger-dispatch-save-log-undo-status.is-undoable {
+  color: #166534;
+}
+
+.quick-ledger-dispatch-undo-confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+  padding: 16px;
+}
+
+.quick-ledger-dispatch-undo-confirm {
+  width: min(440px, 100%);
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #cbd5e1;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.28);
+  padding: 16px 18px;
+}
+
+.quick-ledger-dispatch-undo-confirm header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.quick-ledger-dispatch-undo-confirm header h4 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.quick-ledger-dispatch-undo-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+}
+
+.quick-ledger-dispatch-undo-stats li {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.quick-ledger-dispatch-undo-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.quick-ledger-dispatch-undo-reason textarea {
+  resize: vertical;
+  min-height: 72px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.quick-ledger-dispatch-undo-blocker {
+  color: #9f1239;
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.quick-ledger-dispatch-undo-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.quick-ledger-dispatch-undo-confirm-actions .danger {
+  background: #be123c;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.quick-ledger-dispatch-undo-confirm-actions .danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .quick-ledger-dispatch-save-log-receipts h5 {

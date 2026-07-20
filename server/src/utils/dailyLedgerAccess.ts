@@ -18,6 +18,7 @@ export const DAILY_LEDGER_DELETE_ROWS_PERMISSION = 'daily_ledger.delete_rows';
 export const DAILY_LEDGER_POST_SHIPMENTS_PERMISSION = 'daily_ledger.post_shipments';
 export const DAILY_LEDGER_TRANSFER_CREATE_PERMISSION = 'daily_ledger.transfer.create';
 export const DAILY_LEDGER_CANCEL_SESSION_PERMISSION = 'daily_ledger.session.cancel';
+export const DAILY_LEDGER_DISPATCH_UNDO_PERMISSION = 'daily_ledger.dispatch_undo.execute';
 
 export function isDailyLedgerScopedOperator(roleCode: string): boolean {
   return DAILY_LEDGER_SCOPED_OPERATOR_ROLES.has(String(roleCode ?? '').toLowerCase());

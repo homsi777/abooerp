@@ -7,6 +7,7 @@ import type { DailyLedgerRepository } from '../repositories/dailyLedgerRepositor
 import type { ShipmentService } from '../services/shipmentService.js';
 import { resolveAgentDestinationLabel } from '../utils/agentDestination.js';
 import type { ShipmentFinancialInput, ShipmentFinancialPostingService } from './shipmentFinancialPostingService.js';
+import { DailyLedgerDispatchOperationRepository } from '../repositories/dailyLedgerDispatchOperationRepository.js';
 
 type LedgerRowRecord = {
   id: string;
@@ -488,7 +489,14 @@ export class DailyLedgerShipmentPostingService {
     scope: DataScope,
     rowId: string,
     allowedBranchIds: string[],
-  ): Promise<{ rowId: string; shipmentId: string; shipmentNo: string; agentId: string | null }> {
+  ): Promise<{
+    rowId: string;
+    shipmentId: string;
+    shipmentNo: string;
+    agentId: string | null;
+    disposition: 'CREATED' | 'REUSED' | 'EXISTING_POSTED';
+    financialPostedByOperation: boolean;
+  }> {
     const row = await this.loadRow(scope, rowId);
     if (!row) throw new HttpError(404, 'سطر الدفتر غير موجود.');
     if (row.posted_shipment_id) {
@@ -498,6 +506,8 @@ export class DailyLedgerShipmentPostingService {
         shipmentId: synced.shipmentId,
         shipmentNo: synced.shipmentNo,
         agentId: synced.agentId,
+        disposition: 'EXISTING_POSTED',
+        financialPostedByOperation: false,
       };
     }
     if (!isRowPostable(row)) {
@@ -595,6 +605,7 @@ export class DailyLedgerShipmentPostingService {
         [shipmentId],
       );
       const fs = shipmentFull.rows[0]?.financial_status;
+      let financialPostedByOperation = false;
       if (this.financialPosting && (!fs || fs === 'UNPOSTED')) {
         const client = await pool.connect();
         try {
@@ -612,6 +623,7 @@ export class DailyLedgerShipmentPostingService {
             [shipmentId, row.ledger_date ?? null],
           );
           await client.query('COMMIT');
+          financialPostedByOperation = true;
         } catch (e) {
           await client.query('ROLLBACK');
           throw e;
@@ -633,6 +645,8 @@ export class DailyLedgerShipmentPostingService {
         shipmentId,
         shipmentNo: String(existingShipment.rows[0].shipment_no ?? receiptNo),
         agentId,
+        disposition: 'REUSED',
+        financialPostedByOperation,
       };
     }
 
@@ -683,6 +697,8 @@ export class DailyLedgerShipmentPostingService {
       shipmentId: created.id,
       shipmentNo: String(created.shipment_no ?? ''),
       agentId,
+      disposition: 'CREATED',
+      financialPostedByOperation: true,
     };
   }
 
@@ -695,6 +711,7 @@ export class DailyLedgerShipmentPostingService {
       sessionId?: string;
       rowIds?: string[];
       createdByUserId?: string;
+      operationId?: string;
     },
     allowedBranchIds: string[],
   ) {
@@ -711,8 +728,16 @@ export class DailyLedgerShipmentPostingService {
       .filter((row) => !isRowPostable(row))
       .map((row) => ({ rowId: row.id, rowNo: row.row_no, reason: 'ناقص: إيصال أو جهة أو مرسل أو مستلم' }));
 
-    const posted: Array<{ rowId: string; rowNo: number; shipmentId: string; shipmentNo: string; agentId: string | null }> = [];
+    const posted: Array<{
+      rowId: string;
+      rowNo: number;
+      shipmentId: string;
+      shipmentNo: string;
+      agentId: string | null;
+      disposition: 'CREATED' | 'REUSED' | 'EXISTING_POSTED';
+    }> = [];
     const errors: Array<{ rowId: string; rowNo: number; message: string }> = [];
+    const operationRepo = filters.operationId ? new DailyLedgerDispatchOperationRepository() : null;
 
     for (const row of postable) {
       try {
@@ -723,7 +748,17 @@ export class DailyLedgerShipmentPostingService {
           shipmentId: result.shipmentId,
           shipmentNo: result.shipmentNo,
           agentId: result.agentId,
+          disposition: result.disposition,
         });
+        if (operationRepo && filters.operationId) {
+          await operationRepo.markPostedShipment(
+            filters.operationId,
+            result.rowId,
+            result.shipmentId,
+            result.disposition,
+            result.financialPostedByOperation || result.disposition === 'CREATED',
+          );
+        }
       } catch (error) {
         errors.push({
           rowId: row.id,

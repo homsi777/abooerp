@@ -99,6 +99,7 @@ import {
   type PrintDocumentationRowSnapshot,
 } from '../lib/shipping/dailyLedgerDocumentationGateway';
 import {
+  beginDispatchOperation,
   createDispatchSaveLog,
   markDispatchSavePrinted,
   type DispatchSaveLogDetail,
@@ -3385,6 +3386,38 @@ export default function ShipmentQuickLedger() {
 
       const dispatchIdForSave = activeDispatch.id;
 
+      let saveOperationId: string | null = null;
+      try {
+        const sampleRowForOp = rowsToPost[0];
+        const sampleFleetForOp = options.overrideFleet
+          ?? (sampleRowForOp ? resolveFleetForLedgerRow(sampleRowForOp, trip, drivers, vehicles) : null);
+        const existingRowIds = rowsToPost
+          .map((row) => row.dbId)
+          .filter((id): id is string => Boolean(id));
+        const operation = await beginDispatchOperation({
+          branchId: saveBranchId,
+          ledgerDate: targetLedgerDate,
+          lineLabel: saveScope.lineLabel,
+          originLabel: origin,
+          driverId: sampleFleetForOp?.driverId ?? null,
+          vehicleId: sampleFleetForOp?.vehicleId ?? null,
+          driverLabel: sampleFleetForOp?.driverLabel ?? null,
+          vehicleLabel: sampleFleetForOp?.vehicleLabel ?? null,
+          tripNo: trip.tripNo || null,
+          saveMode,
+          dispatchId: dispatchIdForSave,
+          existingRowIds,
+          idempotencyKey: `dispatch-save:${dispatchIdForSave}:${Date.now()}`,
+        });
+        saveOperationId = operation.id;
+      } catch (beginError) {
+        quickLedgerLog.log(
+          'warn',
+          'dispatch-operation',
+          beginError instanceof Error ? beginError.message : 'تعذر بدء سجل عملية الحفظ — المتابعة بدون إلغاء لاحق',
+        );
+      }
+
       let workingRows = [...currentRows];
       const upsertedRowIds: string[] = [];
       const savedDbIdByDisplayId = new Map<number, string>();
@@ -3431,6 +3464,7 @@ export default function ShipmentQuickLedger() {
             transferServiceFeeUsd: parseUsd(row.transferServiceFee),
             notes: row.notes || null,
             dispatchId: dispatchIdForSave,
+            ...(saveOperationId ? { operationId: saveOperationId } : {}),
           });
           upsertedRowIds.push(saved.id);
           savedDbIdByDisplayId.set(row.id, saved.id);
@@ -3496,6 +3530,7 @@ export default function ShipmentQuickLedger() {
         ledgerDate: targetLedgerDate,
         lineLabel: saveScope.lineLabel,
         rowIds: upsertedRowIds,
+        ...(saveOperationId ? { saveOperationId } : {}),
       });
 
       if (result.pendingCentral) {
@@ -3682,6 +3717,7 @@ export default function ShipmentQuickLedger() {
             rowsSnapshot: snapshot,
             outcome,
             summary,
+            operationId: saveOperationId,
           });
           if (result.posted.length) {
             setPostSavePrintContext({
@@ -4649,6 +4685,9 @@ export default function ShipmentQuickLedger() {
         defaultDateFrom={trip.date}
         defaultDateTo={trip.date}
         onReprint={handleReprintDispatchSaveLog}
+        onUndone={() => {
+          void loadRemoteRows();
+        }}
       />
       <QuickLedgerGlobalSearchModal
         open={globalSearchOpen}

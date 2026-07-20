@@ -9,6 +9,7 @@ import {
   DAILY_LEDGER_DELETE_ROWS_PERMISSION,
   DAILY_LEDGER_POST_SHIPMENTS_PERMISSION,
   DAILY_LEDGER_CANCEL_SESSION_PERMISSION,
+  DAILY_LEDGER_DISPATCH_UNDO_PERMISSION,
   DAILY_LEDGER_TRANSFER_CREATE_PERMISSION,
   DAILY_LEDGER_VIEW_LOADED_PERMISSION,
   isDailyLedgerScopedOperator,
@@ -281,6 +282,7 @@ export function createDailyLedgerRouter(
         notes: z.string().nullable().optional(),
         rowId: uuid.optional(),
         dispatchId: uuid.nullable().optional(),
+        operationId: uuid.optional(),
       });
       const input = bodySchema.parse(req.body);
       try {
@@ -557,6 +559,7 @@ export function createDailyLedgerRouter(
         lineLabel: z.string().min(1),
         sessionId: uuid.optional(),
         rowIds: z.array(uuid).optional(),
+        saveOperationId: uuid.optional(),
       });
       const input = bodySchema.parse(req.body);
       try {
@@ -600,7 +603,12 @@ export function createDailyLedgerRouter(
           } });
           return;
         }
-        const result = await service.postPendingShipments(scope, { ...input, createdByUserId }, allowedBranchIds);
+        const { saveOperationId, ...postInput } = input;
+        const result = await service.postPendingShipments(
+          scope,
+          { ...postInput, createdByUserId, operationId: saveOperationId },
+          allowedBranchIds,
+        );
         const correlationId = (req as any).correlationId as string | undefined;
         const timestamp = new Date().toISOString();
         for (const posted of result.posted) {
@@ -1096,6 +1104,7 @@ export function createDailyLedgerRouter(
         outcome: z.enum(['success', 'partial', 'failed']).nullable().optional(),
         summary: z.string().nullable().optional(),
         notes: z.string().nullable().optional(),
+        operationId: uuid.nullable().optional(),
       });
       try {
         const input = bodySchema.parse(req.body);
@@ -1220,6 +1229,107 @@ export function createDailyLedgerRouter(
         res.status(500).json({
           success: false,
           error: error instanceof Error ? error.message : 'تعذر تحديث حالة الطباعة.',
+        });
+      }
+    },
+  );
+
+  router.post(
+    '/dispatch-operations/begin',
+    requireAnyPermissions(['daily_ledger.post_shipments', 'shipments.write']),
+    async (req, res) => {
+      const scope = parseDataScope(req);
+      const bodySchema = z.object({
+        branchId: uuid,
+        ledgerDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        lineLabel: z.string(),
+        originLabel: z.string().nullable().optional(),
+        driverId: uuid.nullable().optional(),
+        vehicleId: uuid.nullable().optional(),
+        driverLabel: z.string().nullable().optional(),
+        vehicleLabel: z.string().nullable().optional(),
+        tripNo: z.string().nullable().optional(),
+        saveMode: z.enum(['all', 'custom']).optional(),
+        dispatchId: uuid.nullable().optional(),
+        idempotencyKey: z.string().min(8).max(120).optional(),
+        existingRowIds: z.array(uuid).optional(),
+      });
+      try {
+        const input = bodySchema.parse(req.body);
+        const operation = await service.beginDispatchOperation(scope, input);
+        res.json({ success: true, data: operation });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          res.status(error.statusCode).json({ success: false, error: error.message });
+          return;
+        }
+        res.status(500).json({
+          success: false,
+          error: error instanceof Error ? error.message : 'تعذر بدء عملية الحفظ.',
+        });
+      }
+    },
+  );
+
+  router.post(
+    '/dispatch-saves/:id/undo-preview',
+    requireAnyPermissions([DAILY_LEDGER_DISPATCH_UNDO_PERMISSION, 'daily_ledger.dispatch_save.read']),
+    async (req, res) => {
+      const userContext = (req as any).requestUserContext as any;
+      const roleCode = String(userContext?.roleCode ?? '').toLowerCase();
+      const userType = String(userContext?.userType ?? '').toLowerCase();
+      const permissions = getRequestPermissions(req);
+      if (!canUseDailyLedgerAction(roleCode, userType, permissions, DAILY_LEDGER_DISPATCH_UNDO_PERMISSION)) {
+        res.status(403).json({ success: false, error: 'لا تملك صلاحية إلغاء حفظ الإرسالية.' });
+        return;
+      }
+      const scope = parseDataScope(req);
+      const logId = uuid.parse(req.params.id);
+      try {
+        const preview = await service.previewDispatchSaveUndo(scope, logId);
+        res.json({ success: true, data: preview });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          res.status(error.statusCode).json({ success: false, error: error.message });
+          return;
+        }
+        res.status(500).json({
+          success: false,
+          error: error instanceof Error ? error.message : 'تعذر معاينة الإلغاء.',
+        });
+      }
+    },
+  );
+
+  router.post(
+    '/dispatch-saves/:id/undo',
+    requireAnyPermissions([DAILY_LEDGER_DISPATCH_UNDO_PERMISSION]),
+    async (req, res) => {
+      const userContext = (req as any).requestUserContext as any;
+      const roleCode = String(userContext?.roleCode ?? '').toLowerCase();
+      const userType = String(userContext?.userType ?? '').toLowerCase();
+      const permissions = getRequestPermissions(req);
+      if (!canUseDailyLedgerAction(roleCode, userType, permissions, DAILY_LEDGER_DISPATCH_UNDO_PERMISSION)) {
+        res.status(403).json({ success: false, error: 'لا تملك صلاحية إلغاء حفظ الإرسالية.' });
+        return;
+      }
+      const scope = parseDataScope(req);
+      const logId = uuid.parse(req.params.id);
+      const bodySchema = z.object({
+        reason: z.string().max(500).nullable().optional(),
+      });
+      try {
+        const input = bodySchema.parse(req.body ?? {});
+        const result = await service.undoDispatchSave(scope, logId, input);
+        res.json({ success: true, data: result });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          res.status(error.statusCode).json({ success: false, error: error.message });
+          return;
+        }
+        res.status(500).json({
+          success: false,
+          error: error instanceof Error ? error.message : 'تعذر إلغاء حفظ الإرسالية.',
         });
       }
     },

@@ -35,6 +35,8 @@
     "test:daily-ledger-helpers": "tsx src/lib/shipping/dailyLedgerHelpers.selftest.ts",
     "test:daily-ledger-row-filter": "tsx src/lib/shipping/dailyLedgerRowFilter.selftest.ts",
     "test:daily-ledger-access": "tsx server/src/utils/dailyLedgerAccess.selftest.ts",
+    "test:daily-ledger-dispatch-undo": "tsx src/lib/shipping/dailyLedgerDispatchUndo.selftest.ts",
+    "server:smoke:dispatch-undo": "tsx server/src/scripts/dailyLedgerDispatchUndoSmoke.ts",
     "test:offline-sync-integration": "tsx server/src/scripts/offlineSyncIntegrationSmoke.ts",
     "offline:restore": "tsx server/src/scripts/restoreOfflineBackup.ts",
     "receipt:calibrate": "tsx scripts/open-mahmoud-receipt-test.ts",

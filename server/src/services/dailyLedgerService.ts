@@ -19,14 +19,20 @@ import type {
   DispatchSaveLogListFilters,
 } from '../repositories/dailyLedgerDispatchSaveRepository.js';
 import { DailyLedgerDispatchSaveRepository } from '../repositories/dailyLedgerDispatchSaveRepository.js';
+import type { BeginDispatchOperationInput } from '../repositories/dailyLedgerDispatchOperationRepository.js';
+import { DailyLedgerDispatchOperationRepository } from '../repositories/dailyLedgerDispatchOperationRepository.js';
 import type { DailyLedgerShipmentPostingService } from './dailyLedgerShipmentPostingService.js';
+import { DailyLedgerDispatchUndoService } from './dailyLedgerDispatchUndoService.js';
 
 export class DailyLedgerService {
+  private dispatchUndo = new DailyLedgerDispatchUndoService();
+
   constructor(
     private repo: DailyLedgerRepository,
     private shipmentPosting?: DailyLedgerShipmentPostingService,
     private dispatchRepo: DailyLedgerDispatchRepository = new DailyLedgerDispatchRepository(),
     private dispatchSaveRepo: DailyLedgerDispatchSaveRepository = new DailyLedgerDispatchSaveRepository(),
+    private dispatchOpsRepo: DailyLedgerDispatchOperationRepository = new DailyLedgerDispatchOperationRepository(),
   ) {}
 
   listRows(scope: DataScope, filters: DailyLedgerRowListFilters) {
@@ -67,8 +73,32 @@ export class DailyLedgerService {
     return this.dispatchRepo.deleteDefinition(scope, id, scope.userId);
   }
 
-  createDispatchSaveLog(scope: DataScope, input: DispatchSaveLogInput) {
-    return this.dispatchSaveRepo.create(scope, input);
+  beginDispatchOperation(scope: DataScope, input: BeginDispatchOperationInput) {
+    return this.dispatchOpsRepo.begin(scope, input);
+  }
+
+  async createDispatchSaveLog(scope: DataScope, input: DispatchSaveLogInput & { operationId?: string | null }) {
+    const log = await this.dispatchSaveRepo.create(scope, input);
+    if (input.operationId) {
+      const status =
+        input.outcome === 'failed' ? 'FAILED' : input.outcome === 'partial' ? 'PARTIAL' : 'COMPLETED';
+      await this.dispatchOpsRepo.finalize(scope, input.operationId, {
+        saveLogId: log.id,
+        dispatchId: input.dispatchId ?? null,
+        status,
+        resultSummary: {
+          postedCount: input.postedCount ?? 0,
+          errorCount: input.errorCount ?? 0,
+          skippedCount: input.skippedCount ?? 0,
+          outcome: input.outcome ?? null,
+        },
+      });
+    }
+    const detailed = await this.dispatchSaveRepo.getById(scope, log.id);
+    if (!detailed) {
+      throw new HttpError(500, 'تعذر قراءة سجل حفظ الإرسالية بعد الإنشاء.');
+    }
+    return detailed;
   }
 
   listDispatchSaveLogs(scope: DataScope, filters: DispatchSaveLogListFilters) {
@@ -83,8 +113,27 @@ export class DailyLedgerService {
     return this.dispatchSaveRepo.markPrinted(scope, id, input);
   }
 
-  async upsertRow(scope: DataScope, input: DailyLedgerUpsertInput) {
+  previewDispatchSaveUndo(scope: DataScope, saveLogId: string) {
+    return this.dispatchUndo.preview(scope, saveLogId);
+  }
+
+  undoDispatchSave(scope: DataScope, saveLogId: string, input: { reason?: string | null }) {
+    return this.dispatchUndo.undo(scope, saveLogId, { reason: input.reason, userId: scope.userId });
+  }
+
+  async upsertRow(scope: DataScope, input: DailyLedgerUpsertInput & { operationId?: string }) {
     const row = await this.repo.upsertRow(scope, input);
+    if (input.operationId) {
+      try {
+        await this.dispatchOpsRepo.ensureRowForUpsert(scope, input.operationId, row.id);
+      } catch (error) {
+        console.warn(
+          '[daily-ledger] operation row journal failed',
+          row.id,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
     if (this.shipmentPosting && row.posted_shipment_id && !row.loaded_at) {
       try {
         await this.shipmentPosting.syncPostedShipmentFromLedgerRow(scope, row.id);
@@ -120,6 +169,7 @@ export class DailyLedgerService {
       sessionId?: string;
       rowIds?: string[];
       createdByUserId?: string;
+      operationId?: string;
     },
     allowedBranchIds: string[],
   ) {

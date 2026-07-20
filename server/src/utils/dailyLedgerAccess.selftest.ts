@@ -1,6 +1,8 @@
 import {
+  canUseDailyLedgerAction,
   canViewAllDailyLedgerEntries,
   dailyLedgerOwnerUserId,
+  DAILY_LEDGER_DISPATCH_UNDO_PERMISSION,
   DAILY_LEDGER_VIEW_ALL_PERMISSION,
   isDailyLedgerScopedOperator,
 } from './dailyLedgerAccess.js';
@@ -48,6 +50,28 @@ assert(
 assert(
   dailyLedgerOwnerUserId('shipment_auditor', 'employee', 'user-99', []) === undefined,
   'shipment_auditor must not filter to own user id',
+);
+
+assert(
+  canUseDailyLedgerAction('manager', 'employee', [], DAILY_LEDGER_DISPATCH_UNDO_PERMISSION),
+  'manager can undo dispatch save without explicit permission list',
+);
+assert(
+  !canUseDailyLedgerAction('data_entry', 'employee', [], DAILY_LEDGER_DISPATCH_UNDO_PERMISSION),
+  'data_entry cannot undo without permission',
+);
+assert(
+  canUseDailyLedgerAction(
+    'accountant',
+    'accountant',
+    [DAILY_LEDGER_DISPATCH_UNDO_PERMISSION],
+    DAILY_LEDGER_DISPATCH_UNDO_PERMISSION,
+  ),
+  'accountant with explicit undo permission can undo',
+);
+assert(
+  !canUseDailyLedgerAction('accountant', 'accountant', [], DAILY_LEDGER_DISPATCH_UNDO_PERMISSION),
+  'accountant without undo permission cannot undo',
 );
 
 console.log('dailyLedgerAccess.selftest: OK');

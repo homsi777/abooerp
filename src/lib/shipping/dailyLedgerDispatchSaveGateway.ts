@@ -51,6 +51,11 @@ export type DispatchSaveLogSummary = {
   saved_by_username: string | null;
   printed_at: string | null;
   print_count: number;
+  operation_id?: string | null;
+  undo_status?: string | null;
+  cancelled_at?: string | null;
+  cancellation_reason?: string | null;
+  can_undo?: boolean;
 };
 
 export type DispatchSaveLogDetail = DispatchSaveLogSummary & {
@@ -105,6 +110,52 @@ export type CreateDispatchSaveLogInput = {
   outcome?: 'success' | 'partial' | 'failed' | null;
   summary?: string | null;
   notes?: string | null;
+  operationId?: string | null;
+};
+
+export type BeginDispatchOperationInput = {
+  branchId: string;
+  ledgerDate: string;
+  lineLabel: string;
+  originLabel?: string | null;
+  driverId?: string | null;
+  vehicleId?: string | null;
+  driverLabel?: string | null;
+  vehicleLabel?: string | null;
+  tripNo?: string | null;
+  saveMode?: 'all' | 'custom';
+  dispatchId?: string | null;
+  idempotencyKey?: string;
+  existingRowIds?: string[];
+};
+
+export type DispatchOperationRecord = {
+  id: string;
+  status: string;
+  ledger_date: string;
+  line_label: string;
+};
+
+export type DispatchUndoPreview = {
+  undoable: boolean;
+  saveLogId: string;
+  operationId: string | null;
+  reason?: string;
+  blockers: string[];
+  rowCount: number;
+  shipmentCount: number;
+  createdShipmentCount: number;
+  movementCount: number;
+  transferCount: number;
+  rows: Array<{
+    rowId: string;
+    receiptNo: string | null;
+    beforeLedgerDate: string | null;
+    afterLedgerDate: string | null;
+    beforeRowNo: number | null;
+    afterRowNo: number | null;
+    shipmentDisposition: string | null;
+  }>;
 };
 
 export async function listDispatchSaveLogs(filters: DispatchSaveLogFilters): Promise<DispatchSaveLogSummary[]> {
@@ -136,6 +187,23 @@ export async function markDispatchSavePrinted(
   return httpClient.post<DispatchSaveLogDetail>(`/daily-ledger/dispatch-saves/${id}/mark-printed`, input);
 }
 
+export async function beginDispatchOperation(
+  input: BeginDispatchOperationInput,
+): Promise<DispatchOperationRecord> {
+  return httpClient.post<DispatchOperationRecord>('/daily-ledger/dispatch-operations/begin', input);
+}
+
+export async function previewDispatchSaveUndo(id: string): Promise<DispatchUndoPreview> {
+  return httpClient.post<DispatchUndoPreview>(`/daily-ledger/dispatch-saves/${id}/undo-preview`, {});
+}
+
+export async function undoDispatchSave(
+  id: string,
+  input: { reason?: string | null } = {},
+): Promise<{ saveLogId: string; operationId: string; restoredRows: number }> {
+  return httpClient.post(`/daily-ledger/dispatch-saves/${id}/undo`, input);
+}
+
 export function saveModeLabel(mode: 'all' | 'custom'): string {
   return mode === 'custom' ? 'حفظ مخصص' : 'حفظ الكل';
 }
@@ -145,4 +213,10 @@ export function outcomeLabel(outcome: string | null | undefined): string {
   if (outcome === 'partial') return 'جزئي';
   if (outcome === 'failed') return 'فاشل';
   return '—';
+}
+
+export function undoStatusLabel(row: Pick<DispatchSaveLogSummary, 'can_undo' | 'undo_status' | 'cancelled_at'>): string {
+  if (row.cancelled_at || row.undo_status === 'undone') return 'ملغى';
+  if (row.can_undo || row.undo_status === 'undoable') return 'قابل للإلغاء';
+  return 'غير قابل للإلغاء';
 }

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { FileText, Printer, Search, X } from 'lucide-react';
+import { FileText, Printer, RotateCcw, Search, X } from 'lucide-react';
 import { useToast } from '../Toast';
 import { getBackendIdFromSynthetic, phase15Gateway } from '../../lib/api/phase15Gateway';
 import {
@@ -8,9 +8,13 @@ import {
   listDispatchSaveLogs,
   markDispatchSavePrinted,
   outcomeLabel,
+  previewDispatchSaveUndo,
   saveModeLabel,
+  undoDispatchSave,
+  undoStatusLabel,
   type DispatchSaveLogDetail,
   type DispatchSaveLogSummary,
+  type DispatchUndoPreview,
 } from '../../lib/shipping/dailyLedgerDispatchSaveGateway';
 import type { Branch, Driver } from '../../types';
 
@@ -56,6 +60,17 @@ function fmtDateTime(value: string | null | undefined): string {
   }
 }
 
+function isUndoableRow(row: DispatchSaveLogSummary): boolean {
+  return Boolean(row.can_undo) && !row.cancelled_at && row.undo_status !== 'undone';
+}
+
+function undoDisabledReason(row: DispatchSaveLogSummary): string {
+  if (row.cancelled_at || row.undo_status === 'undone') return 'تم إلغاء هذا الحفظ مسبقاً';
+  if (row.operation_id && row.undo_status === 'not_undoable') return 'عملية الحفظ غير مكتملة — لا يمكن الإلغاء';
+  if (!row.operation_id) return 'هذا السجل سابق لنظام الاستعادة — الإلغاء متاح للحفظ الجديد فقط';
+  return 'غير قابل للإلغاء حالياً';
+}
+
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -63,6 +78,7 @@ type Props = {
   defaultDateFrom?: string;
   defaultDateTo?: string;
   onReprint: (detail: DispatchSaveLogDetail) => Promise<void>;
+  onUndone?: () => void;
 };
 
 export default function QuickLedgerDispatchSaveLogPanel({
@@ -72,6 +88,7 @@ export default function QuickLedgerDispatchSaveLogPanel({
   defaultDateFrom,
   defaultDateTo,
   onReprint,
+  onUndone,
 }: Props) {
   const { showToast } = useToast();
   const [dateFrom, setDateFrom] = useState(
@@ -90,6 +107,11 @@ export default function QuickLedgerDispatchSaveLogPanel({
   const [detail, setDetail] = useState<DispatchSaveLogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [reprinting, setReprinting] = useState(false);
+  const [undoingId, setUndoingId] = useState<string | null>(null);
+  const [undoConfirmId, setUndoConfirmId] = useState<string | null>(null);
+  const [undoPreview, setUndoPreview] = useState<DispatchUndoPreview | null>(null);
+  const [undoPreviewLoading, setUndoPreviewLoading] = useState(false);
+  const [undoReason, setUndoReason] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -154,6 +176,56 @@ export default function QuickLedgerDispatchSaveLogPanel({
   const closeDetail = () => {
     setSelectedId(null);
     setDetail(null);
+  };
+
+  const closeUndoConfirm = () => {
+    setUndoConfirmId(null);
+    setUndoPreview(null);
+    setUndoReason('');
+    setUndoPreviewLoading(false);
+  };
+
+  const openUndoConfirm = async (row: DispatchSaveLogSummary, event: MouseEvent) => {
+    event.stopPropagation();
+    if (!isUndoableRow(row) || undoingId) return;
+    setUndoConfirmId(row.id);
+    setUndoPreview(null);
+    setUndoReason('');
+    setUndoPreviewLoading(true);
+    try {
+      const preview = await previewDispatchSaveUndo(row.id);
+      setUndoPreview(preview);
+      if (!preview.undoable) {
+        showToast(preview.reason || 'لا يمكن إلغاء هذا الحفظ', 'error');
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر معاينة الإلغاء', 'error');
+      closeUndoConfirm();
+    } finally {
+      setUndoPreviewLoading(false);
+    }
+  };
+
+  const handleConfirmUndo = async () => {
+    if (!undoConfirmId || !undoPreview?.undoable) return;
+    setUndoingId(undoConfirmId);
+    try {
+      const result = await undoDispatchSave(undoConfirmId, {
+        reason: undoReason.trim() || null,
+      });
+      showToast(`تم إلغاء الحفظ واستعادة ${result.restoredRows} سطر`, 'success');
+      closeUndoConfirm();
+      await loadRows();
+      if (selectedId === undoConfirmId) {
+        const refreshed = await getDispatchSaveLog(undoConfirmId);
+        setDetail(refreshed);
+      }
+      onUndone?.();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'تعذر إلغاء حفظ الإرسالية', 'error');
+    } finally {
+      setUndoingId(null);
+    }
   };
 
   const handleReprint = async () => {
@@ -298,61 +370,83 @@ export default function QuickLedgerDispatchSaveLogPanel({
                     <th>تحصيل / مسبق / حوالة</th>
                     <th>الحفظ</th>
                     <th>الطباعة</th>
+                    <th>إجراء</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="quick-ledger-dispatch-save-log-empty">
+                      <td colSpan={9} className="quick-ledger-dispatch-save-log-empty">
                         {loading ? 'جاري التحميل...' : 'لا توجد سجلات في هذا النطاق.'}
                       </td>
                     </tr>
                   ) : (
-                    rows.map((row) => (
-                      <tr
-                        key={row.id}
-                        className={selectedId === row.id ? 'is-selected' : ''}
-                        onClick={() => void openDetail(row.id)}
-                      >
-                        <td>
-                          <strong>{row.dispatch_no != null ? `#${row.dispatch_no}` : '—'}</strong>
-                          <span className="quick-ledger-dispatch-save-log-mode">{saveModeLabel(row.save_mode)}</span>
-                        </td>
-                        <td>{fmtDate(row.ledger_date)}</td>
-                        <td>
-                          <div>{row.driver_label || '—'}</div>
-                          <div className="quick-ledger-dispatch-save-log-muted">{row.vehicle_label || '—'}</div>
-                        </td>
-                        <td>{row.destination_label || '—'}</td>
-                        <td>
-                          {row.row_count} / {row.pieces_count}
-                          <div className="quick-ledger-dispatch-save-log-muted">{fmtWeightKg(row.weight_kg)}</div>
-                        </td>
-                        <td>
-                          {fmtMoney(row.collect_total_usd)} / {fmtMoney(row.prepaid_total_usd)} / {fmtMoney(row.hawala_total_usd)}
-                        </td>
-                        <td>
-                          <div>{row.saved_by_name || row.saved_by_username || '—'}</div>
-                          <div className="quick-ledger-dispatch-save-log-muted">{fmtDateTime(row.saved_at)}</div>
-                          <span className={`quick-ledger-dispatch-save-log-outcome is-${row.outcome ?? 'none'}`}>
-                            {outcomeLabel(row.outcome)}
-                          </span>
-                        </td>
-                        <td>
-                          {row.printed_at ? (
-                            <>
-                              <span className="quick-ledger-dispatch-save-log-printed">طُبعت</span>
-                              <div className="quick-ledger-dispatch-save-log-muted">
-                                {fmtDateTime(row.printed_at)}
-                                {row.print_count > 1 ? ` (${row.print_count}×)` : ''}
+                    rows.map((row) => {
+                      const undoable = isUndoableRow(row);
+                      const busy = undoingId === row.id;
+                      return (
+                        <tr
+                          key={row.id}
+                          className={selectedId === row.id ? 'is-selected' : ''}
+                          onClick={() => void openDetail(row.id)}
+                        >
+                          <td>
+                            <strong>{row.dispatch_no != null ? `#${row.dispatch_no}` : '—'}</strong>
+                            <span className="quick-ledger-dispatch-save-log-mode">{saveModeLabel(row.save_mode)}</span>
+                          </td>
+                          <td>{fmtDate(row.ledger_date)}</td>
+                          <td>
+                            <div>{row.driver_label || '—'}</div>
+                            <div className="quick-ledger-dispatch-save-log-muted">{row.vehicle_label || '—'}</div>
+                          </td>
+                          <td>{row.destination_label || '—'}</td>
+                          <td>
+                            {row.row_count} / {row.pieces_count}
+                            <div className="quick-ledger-dispatch-save-log-muted">{fmtWeightKg(row.weight_kg)}</div>
+                          </td>
+                          <td>
+                            {fmtMoney(row.collect_total_usd)} / {fmtMoney(row.prepaid_total_usd)} / {fmtMoney(row.hawala_total_usd)}
+                          </td>
+                          <td>
+                            <div>{row.saved_by_name || row.saved_by_username || '—'}</div>
+                            <div className="quick-ledger-dispatch-save-log-muted">{fmtDateTime(row.saved_at)}</div>
+                            <span className={`quick-ledger-dispatch-save-log-outcome is-${row.outcome ?? 'none'}`}>
+                              {outcomeLabel(row.outcome)}
+                            </span>
+                            {(row.cancelled_at || row.undo_status) && (
+                              <div className={`quick-ledger-dispatch-save-log-undo-status is-${row.undo_status ?? 'none'}`}>
+                                {undoStatusLabel(row)}
                               </div>
-                            </>
-                          ) : (
-                            <span className="quick-ledger-dispatch-save-log-not-printed">لم تُطبع</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))
+                            )}
+                          </td>
+                          <td>
+                            {row.printed_at ? (
+                              <>
+                                <span className="quick-ledger-dispatch-save-log-printed">طُبعت</span>
+                                <div className="quick-ledger-dispatch-save-log-muted">
+                                  {fmtDateTime(row.printed_at)}
+                                  {row.print_count > 1 ? ` (${row.print_count}×)` : ''}
+                                </div>
+                              </>
+                            ) : (
+                              <span className="quick-ledger-dispatch-save-log-not-printed">لم تُطبع</span>
+                            )}
+                          </td>
+                          <td className="quick-ledger-dispatch-save-log-actions-cell">
+                            <button
+                              type="button"
+                              className="quick-ledger-dispatch-save-log-undo-btn"
+                              disabled={!undoable || Boolean(undoingId)}
+                              title={undoable ? 'إلغاء حفظ الإرسالية واستعادة الأسطر' : undoDisabledReason(row)}
+                              onClick={(event) => void openUndoConfirm(row, event)}
+                            >
+                              <RotateCcw size={14} />
+                              {busy ? 'جاري...' : 'إلغاء'}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -387,6 +481,10 @@ export default function QuickLedgerDispatchSaveLogPanel({
                     <div><dt>رسوم</dt><dd>{fmtMoney(detail.transfer_fee_total_usd)} $</dd></div>
                     <div><dt>الترحيل</dt><dd>{detail.posted_count} مُرحَّل · {detail.error_count} خطأ · {detail.skipped_count} تُخطّى</dd></div>
                     <div><dt>حُفظ بواسطة</dt><dd>{detail.saved_by_name || detail.saved_by_username || '—'} — {fmtDateTime(detail.saved_at)}</dd></div>
+                    <div><dt>حالة الإلغاء</dt><dd>{undoStatusLabel(detail)}</dd></div>
+                    {detail.cancellation_reason ? (
+                      <div><dt>سبب الإلغاء</dt><dd>{detail.cancellation_reason}</dd></div>
+                    ) : null}
                     {detail.summary ? (
                       <div className="quick-ledger-dispatch-save-log-summary"><dt>الملخص</dt><dd>{detail.summary}</dd></div>
                     ) : null}
@@ -395,6 +493,16 @@ export default function QuickLedgerDispatchSaveLogPanel({
                     <button type="button" className="primary" onClick={() => void handleReprint()} disabled={reprinting}>
                       <Printer size={16} />
                       {reprinting ? 'جاري الطباعة...' : 'إعادة طباعة'}
+                    </button>
+                    <button
+                      type="button"
+                      className="quick-ledger-dispatch-save-log-undo-btn"
+                      disabled={!isUndoableRow(detail) || Boolean(undoingId)}
+                      title={isUndoableRow(detail) ? 'إلغاء حفظ الإرسالية' : undoDisabledReason(detail)}
+                      onClick={(event) => void openUndoConfirm(detail, event)}
+                    >
+                      <RotateCcw size={16} />
+                      {undoingId === detail.id ? 'جاري الإلغاء...' : 'إلغاء الحفظ'}
                     </button>
                   </div>
                   <div className="quick-ledger-dispatch-save-log-receipts">
@@ -429,6 +537,76 @@ export default function QuickLedgerDispatchSaveLogPanel({
             </aside>
           </div>
         </div>
+
+        {undoConfirmId ? (
+          <div
+            className="quick-ledger-dispatch-undo-confirm-backdrop"
+            role="presentation"
+            onClick={closeUndoConfirm}
+          >
+            <div
+              className="quick-ledger-dispatch-undo-confirm"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="dispatch-undo-confirm-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <header>
+                <h4 id="dispatch-undo-confirm-title">تأكيد إلغاء حفظ الإرسالية</h4>
+                <button type="button" className="quick-ledger-dispatch-dialog-close" onClick={closeUndoConfirm} aria-label="إغلاق">
+                  <X size={18} />
+                </button>
+              </header>
+              {undoPreviewLoading ? (
+                <p>جاري معاينة الآثار...</p>
+              ) : undoPreview ? (
+                <>
+                  {!undoPreview.undoable ? (
+                    <p className="quick-ledger-dispatch-undo-blocker">
+                      {undoPreview.reason || 'لا يمكن إلغاء هذا الحفظ.'}
+                    </p>
+                  ) : (
+                    <>
+                      <p>
+                        سيتم إعادة الأسطر إلى مواضعها الأصلية وعكس الآثار المالية المرتبطة بهذا الحفظ فقط.
+                      </p>
+                      <ul className="quick-ledger-dispatch-undo-stats">
+                        <li><strong>{undoPreview.rowCount}</strong> أسطر</li>
+                        <li><strong>{undoPreview.shipmentCount}</strong> شحنات</li>
+                        <li><strong>{undoPreview.createdShipmentCount}</strong> شحنات أُنشئت</li>
+                        <li><strong>{undoPreview.movementCount}</strong> حركات مالية</li>
+                        <li><strong>{undoPreview.transferCount}</strong> حوالات</li>
+                      </ul>
+                      <label className="quick-ledger-dispatch-undo-reason">
+                        <span>سبب الإلغاء (اختياري)</span>
+                        <textarea
+                          value={undoReason}
+                          onChange={(e) => setUndoReason(e.target.value)}
+                          rows={3}
+                          maxLength={500}
+                          placeholder="مثال: حفظ بتاريخ خاطئ"
+                        />
+                      </label>
+                    </>
+                  )}
+                  <div className="quick-ledger-dispatch-undo-confirm-actions">
+                    <button type="button" onClick={closeUndoConfirm} disabled={Boolean(undoingId)}>
+                      رجوع
+                    </button>
+                    <button
+                      type="button"
+                      className="danger"
+                      disabled={!undoPreview.undoable || Boolean(undoingId)}
+                      onClick={() => void handleConfirmUndo()}
+                    >
+                      {undoingId ? 'جاري الإلغاء...' : 'تأكيد الإلغاء'}
+                    </button>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>,
     document.body,

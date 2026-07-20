@@ -97,6 +97,11 @@ export type DispatchSaveLogSummary = {
   saved_by_username: string | null;
   printed_at: string | null;
   print_count: number;
+  operation_id?: string | null;
+  undo_status?: string | null;
+  cancelled_at?: string | null;
+  cancellation_reason?: string | null;
+  can_undo?: boolean;
 };
 
 export type DispatchSaveLogListFilters = {
@@ -256,7 +261,16 @@ export class DailyLedgerDispatchSaveRepository {
         u.full_name as saved_by_name,
         u.username as saved_by_username,
         l.printed_at::text as printed_at,
-        l.print_count
+        l.print_count,
+        l.operation_id,
+        l.undo_status,
+        l.cancelled_at::text as cancelled_at,
+        l.cancellation_reason,
+        (
+          l.operation_id is not null
+          and coalesce(l.undo_status, '') = 'undoable'
+          and l.cancelled_at is null
+        ) as can_undo
       from daily_ledger_dispatch_save_logs l
       left join branches b on b.id = l.branch_id
       left join users u on u.id = l.saved_by
@@ -287,7 +301,16 @@ export class DailyLedgerDispatchSaveRepository {
         l.created_at::text as created_at,
         u.full_name as saved_by_name,
         u.username as saved_by_username,
-        b.name as branch_name
+        b.name as branch_name,
+        l.operation_id,
+        l.undo_status,
+        l.cancelled_at::text as cancelled_at,
+        l.cancellation_reason,
+        (
+          l.operation_id is not null
+          and coalesce(l.undo_status, '') = 'undoable'
+          and l.cancelled_at is null
+        ) as can_undo
       from daily_ledger_dispatch_save_logs l
       left join users u on u.id = l.saved_by
       left join branches b on b.id = l.branch_id
