@@ -907,9 +907,17 @@ export default function ShipmentQuickLedger() {
   const [remoteSyncedCount, setRemoteSyncedCount] = useState(0);
   const [pendingLocalDraftCount, setPendingLocalDraftCount] = useState(0);
   const [offlineStoreAvailable, setOfflineStoreAvailable] = useState(!isElectronRuntime());
-  const [isLocalPersistenceNode, setIsLocalPersistenceNode] = useState<boolean | null>(isElectronRuntime() ? null : false);
+  // Default optimistically to true for Electron — the desktop app talks to its own local
+  // server over loopback, which needs no internet at all. Starting at an ambiguous `null`
+  // meant that if the internet happened to be down at the exact moment this resolved (or a
+  // row was typed before the async IPC round-trip finished), rows were wrongly diverted to
+  // IndexedDB-only drafts instead of the local database — rows never reached local Postgres
+  // and could vanish from view on the next refresh. The effect below corrects this quickly
+  // for the rare real LAN-node setup.
+  const [isLocalPersistenceNode, setIsLocalPersistenceNode] = useState<boolean | null>(
+    isElectronRuntime() ? true : false,
+  );
   const loadGenerationRef = useRef(0);
-  const restoredDraftScopeRef = useRef<string>('');
   const canViewAllLedgerEntriesRef = useRef(false);
   const ledgerBranchModeRef = useRef<'all' | 'single'>('single');
   const [ledgerBranchMode, setLedgerBranchMode] = useState<'all' | 'single'>('single');
@@ -1676,14 +1684,28 @@ export default function ShipmentQuickLedger() {
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') flush();
+      else if (document.visibilityState === 'visible') flush();
     };
+    // Any row that never made it to the server (e.g. the local API was briefly unreachable)
+    // must retry automatically the moment connectivity returns — a user should never have to
+    // notice or manually poke a row to get it to save.
     window.addEventListener('beforeunload', flush);
+    window.addEventListener('online', flush);
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       window.removeEventListener('beforeunload', flush);
+      window.removeEventListener('online', flush);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, []);
+
+  const prevCloudStatusRef = useRef(cloudStatus);
+  useEffect(() => {
+    if (prevCloudStatusRef.current !== 'online' && cloudStatus === 'online') {
+      void flushPendingRowSaves();
+    }
+    prevCloudStatusRef.current = cloudStatus;
+  }, [cloudStatus]);
 
   const buildEntrySlotRows = (startId: number, origin: string, count = LEDGER_ENTRY_SLOTS) => {
     const scopeContext = {
@@ -1806,27 +1828,30 @@ export default function ShipmentQuickLedger() {
     baseRows: LedgerRow[],
   ) => {
     if (!offlineStoreAvailable) return baseRows;
-    const restoreKey = `${context.branchId}|${context.ledgerDate}|${context.lineLabel}|${context.sessionId ?? ''}`;
-    if (restoredDraftScopeRef.current === restoreKey) return baseRows;
 
     const serverIds = new Set(remoteValues.map((row) => row.id));
     const serverReceipts = new Set(
       remoteValues.map((row) => normalizeReceiptNo(row.receipt_no ?? '')).filter(Boolean),
     );
-    const localClientIds = new Set(baseRows.map((row) => row.clientRowId));
+    // Check against what is ACTUALLY on screen right now (not just this scope's server batch).
+    // A once-per-scope guard here previously meant an unsynced row that fell out of `rows` on
+    // any later refresh (e.g. after reconnecting) would never be re-merged back in and silently
+    // vanished, even though its data was still safe in the local draft store. Comparing against
+    // the live pre-reload rows instead guarantees any not-yet-synced row keeps reappearing on
+    // every reload until it truly syncs, while rows still visible are never duplicated.
+    const visibleClientIds = new Set(rowsRef.current.map((row) => row.clientRowId));
 
     try {
       const drafts = await listDailyLedgerDrafts(context);
       const restoreCandidates = drafts.filter((draft) => {
         if (draft.status === 'synced') return false;
-        if (localClientIds.has(draft.clientRowId)) return false;
+        if (visibleClientIds.has(draft.clientRowId)) return false;
         if (draft.serverRowId && serverIds.has(draft.serverRowId)) return false;
         const receipt = normalizeReceiptNo(draft.receiptNo ?? String(draft.payload.receiptNo ?? ''));
         if (receipt && serverReceipts.has(receipt)) return false;
         return true;
       });
       if (!restoreCandidates.length) {
-        restoredDraftScopeRef.current = restoreKey;
         await refreshPendingDraftCount(context);
         return baseRows;
       }
@@ -1835,7 +1860,6 @@ export default function ShipmentQuickLedger() {
       const maxId = nonPlaceholder.reduce((max, row) => Math.max(max, row.id), 0);
       const restoredRows = restoreCandidates.map((draft, index) => draftToLocalRow(draft, maxId + index + 1));
       const merged = appendTrailingEntrySlot([...nonPlaceholder, ...restoredRows]);
-      restoredDraftScopeRef.current = restoreKey;
       showToast(`تم استعادة ${restoredRows.length} صف محفوظ محلياً على هذا الجهاز.`, 'info');
       await addDailyLedgerSyncAudit({
         eventType: 'draft_restore',
