@@ -1,5 +1,7 @@
+# Build / packaging outputs — never publish to GitHub or cloud deploys from git
 server-dist/
 server-bundle/
+server/dist/
 server/logs/
 resources/
 dist/
@@ -8,6 +10,7 @@ dist-server/
 release/
 dist-release/
 dist-release-next/
+tmp/
 *.zip
 *.rar
 *.7z
