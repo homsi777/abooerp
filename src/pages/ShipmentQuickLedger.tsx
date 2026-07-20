@@ -1667,12 +1667,7 @@ export default function ShipmentQuickLedger() {
       return false;
     });
     if (!targets.length) return;
-    // PERF_PROBE_TEMP: before/after fix verification — remove after measurement session.
-    const __flushStart = performance.now();
-    console.info('[PERF_PROBE][T1] flush_start', JSON.stringify({ count: targets.length, atIso: new Date().toISOString() }));
     await saveRowsBatchToServer(targets);
-    console.info('[PERF_PROBE][T1] flush_end', JSON.stringify({ count: targets.length, totalDurationMs: Number((performance.now() - __flushStart).toFixed(3)) }));
-    // END PERF_PROBE_TEMP
   };
 
   useEffect(() => {
@@ -1913,18 +1908,7 @@ export default function ShipmentQuickLedger() {
         ? await restoreLocalDraftsForContext(draftContext, remoteValues, displayRows)
         : displayRows;
       if (generation !== loadGenerationRef.current) return;
-      // PERF_PROBE_TEMP: before/after fix verification — remove after measurement session.
-      const __beforeSetRows = performance.now();
       setRows(rowsWithDrafts);
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          console.info('[PERF_PROBE][T5] render_complete', JSON.stringify({
-            rowCount: rowsWithDrafts.length,
-            setRowsToPaintMs: Number((performance.now() - __beforeSetRows).toFixed(3)),
-          }));
-        });
-      });
-      // END PERF_PROBE_TEMP
       const focusDbRowId = pendingFocusDbRowIdRef.current;
       if (focusDbRowId) {
         pendingFocusDbRowIdRef.current = null;
@@ -2292,38 +2276,61 @@ export default function ShipmentQuickLedger() {
       const branchForRow = branchForOriginRow(originBranch);
       if (!branchForRow) return;
       try {
+        // Auto-posting on the server (dailyLedgerShipmentPostingService) already creates
+        // the sender/receiver/goods-type row itself when a receipt is first completed.
+        // This background sync can therefore race the server and try to create the same
+        // name again from a stale local cache — that must not throw a visible error,
+        // it must just re-read the authoritative list and reuse what the server made.
         const resolveCustomer = async (name: string, type: 'sender' | 'receiver') => {
-          const list = customersRef.current;
           const normalized = normalizeName(name);
-          const existing = list.find((customer) => normalizeName(customer.name) === normalized);
-          if (existing) return { customer: existing, list };
-          const created = await phase15Gateway.sendersReceivers.create({
-            name: normalized,
-            phone: '',
-            customerType: type,
-            address: '',
-            balance: 0,
-            creditLimit: 0,
-            notes: '',
-          });
-          const nextList = [...list, created];
-          setCustomers(nextList);
-          return { customer: created, list: nextList };
+          const findIn = (list: Customer[]) =>
+            list.find((customer) => normalizeName(customer.name) === normalized);
+          const existing = findIn(customersRef.current);
+          if (existing) return { customer: existing, list: customersRef.current };
+          try {
+            const created = await phase15Gateway.sendersReceivers.create({
+              name: normalized,
+              phone: '',
+              customerType: type,
+              address: '',
+              balance: 0,
+              creditLimit: 0,
+              notes: '',
+            });
+            const nextList = [...customersRef.current, created];
+            setCustomers(nextList);
+            return { customer: created, list: nextList };
+          } catch (createError) {
+            const refreshed = await phase15Gateway.sendersReceivers.getAll();
+            setCustomers(refreshed);
+            const match = findIn(refreshed);
+            if (match) return { customer: match, list: refreshed };
+            throw createError;
+          }
         };
 
         const resolveGoodsType = async (name: string) => {
-          const list = goodsTypesRef.current;
           const normalized = normalizeName(name);
-          const existing = list.find((item) => normalizeName(item.name) === normalized);
-          if (existing) return { goodsType: existing, list };
-          const created = await phase15Gateway.goodsTypes.create({
-            code: `GT-${Date.now()}`,
-            name: normalized,
-            description: '',
-          });
-          const nextList = [...list, created];
-          setGoodsTypes(nextList);
-          return { goodsType: created, list: nextList };
+          const findIn = (list: GoodsType[]) =>
+            list.find((item) => normalizeName(item.name) === normalized);
+          const existing = findIn(goodsTypesRef.current);
+          if (existing) return { goodsType: existing, list: goodsTypesRef.current };
+          try {
+            const created = await phase15Gateway.goodsTypes.create({
+              code: `GT-${Date.now()}`,
+              name: normalized,
+              description: '',
+            });
+            const nextList = [...goodsTypesRef.current, created];
+            setGoodsTypes(nextList);
+            return { goodsType: created, list: nextList };
+          } catch (createError) {
+            const refreshed = await phase15Gateway.goodsTypes.getAll();
+            setGoodsTypes(refreshed);
+            const match = findIn(refreshed);
+            if (match) return { goodsType: match, list: refreshed };
+            throw createError;
+          }
         };
 
         const senderResult = await resolveCustomer(row.sender, 'sender');
@@ -4834,32 +4841,47 @@ export default function ShipmentQuickLedger() {
                       onAddNew={(name) => {
                         void (async () => {
                           const normalized = normalizeName(name);
+                          const applyGoodsList = (nextGoods: GoodsType[]) => {
+                            setGoodsTypes(nextGoods);
+                            setRows((prevRows) =>
+                              prevRows.map((rr) =>
+                                rr.id === row.id
+                                  ? mergeRowWithAutoTariff(
+                                      { ...rr, parcelType: normalized },
+                                      tariffs,
+                                      cities,
+                                      branches,
+                                      nextGoods,
+                                      trip.date,
+                                    )
+                                  : rr,
+                              ),
+                            );
+                            flushRowSave(row.id);
+                          };
                           try {
                             const created = await phase15Gateway.goodsTypes.create({
                               code: `GT-${Date.now()}`,
                               name: normalized,
                               description: '',
                             });
-                            setGoodsTypes((prevGoods) => {
-                              const nextGoods = [...prevGoods, created];
-                              setRows((prevRows) =>
-                                prevRows.map((rr) =>
-                                  rr.id === row.id
-                                    ? mergeRowWithAutoTariff(
-                                        { ...rr, parcelType: normalized },
-                                        tariffs,
-                                        cities,
-                                        branches,
-                                        nextGoods,
-                                        trip.date,
-                                      )
-                                    : rr,
-                                ),
-                              );
-                              return nextGoods;
-                            });
-                            flushRowSave(row.id);
+                            applyGoodsList([...goodsTypesRef.current, created]);
                           } catch (error) {
+                            // Another save (e.g. auto-posting the receipt) may have already
+                            // created this exact name a moment earlier — reuse it instead of
+                            // surfacing a scary "modified from another device" toast.
+                            try {
+                              const refreshed = await phase15Gateway.goodsTypes.getAll();
+                              const match = refreshed.find(
+                                (item) => normalizeName(item.name) === normalized,
+                              );
+                              if (match) {
+                                applyGoodsList(refreshed);
+                                return;
+                              }
+                            } catch {
+                              /* fall through to the original error toast below */
+                            }
                             showToast(error instanceof Error ? error.message : 'تعذر إضافة نوع الطرد', 'error');
                           }
                         })();
