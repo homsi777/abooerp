@@ -74,6 +74,25 @@ async function singleColumnForeignKeys(client:PoolClient,table:string){
   foreignKeyCache.set(table,rows);return rows;
 }
 
+async function normalizeMissingForeignKeys(client:PoolClient,table:string,row:Record<string,unknown>){
+  const normalized={...row};
+  for(const foreignKey of await singleColumnForeignKeys(client,table)){
+    const value=normalized[foreignKey.columnName];
+    if(value===null||value===undefined)continue;
+    // Identifiers come from pg_catalog for tables we already sync; keep them quoted-safe.
+    if(!/^[a-z_][a-z0-9_]*$/i.test(foreignKey.referencedTable)||!/^[a-z_][a-z0-9_]*$/i.test(foreignKey.referencedColumn))continue;
+    const exists=await client.query(
+      `select 1 from ${foreignKey.referencedTable} where ${foreignKey.referencedColumn}=$1 limit 1`,
+      [value],
+    );
+    if(!exists.rowCount){
+      if(foreignKey.nullable)normalized[foreignKey.columnName]=null;
+      else throw new Error(`SYNC_DEPENDENCY_MISSING:${table}.${foreignKey.columnName}->${foreignKey.referencedTable}.${foreignKey.referencedColumn}`);
+    }
+  }
+  return normalized;
+}
+
 async function applyAuthoritativeRow(client:PoolClient,entityType:string,entityId:string,payload:Record<string,unknown>|null,version:number,tombstone=false){
   if(!writableEntities.has(entityType))return;
   await client.query(`select set_config('app.sync_suppress_feed','1',true)`);
@@ -84,13 +103,18 @@ async function applyAuthoritativeRow(client:PoolClient,entityType:string,entityI
     return;
   }
   const allowed=await tableColumns(client,entityType);
-  const entries=Object.entries(payload).filter(([key])=>key!=='id'&&allowed.has(key));
+  const sanitized=await normalizeMissingForeignKeys(client,entityType,payload);
+  const entries=Object.entries(sanitized).filter(([key])=>key!=='id'&&key!=='sync_central_version'&&key!=='sync_version'&&allowed.has(key));
   const exists=await client.query(`select 1 from ${entityType} where id=$1::uuid`,[entityId]);
-  const normalized={...payload,sync_central_version:version,sync_version:version};
-  const normalizedEntries=Object.entries(normalized).filter(([key])=>key!=='id'&&allowed.has(key));
+  // Ensure version columns appear once even when the central payload already carries them.
+  const updateEntries=Object.entries({
+    ...Object.fromEntries(entries),
+    sync_central_version:version,
+    sync_version:version,
+  });
   if(exists.rowCount){
-    const assignments=normalizedEntries.map(([key],index)=>`${key}=$${index+2}`);
-    await client.query(`update ${entityType} set ${assignments.join(',')} where id=$1::uuid`,[entityId,...normalizedEntries.map(([,value])=>serializeValue(value))]);
+    const assignments=updateEntries.map(([key],index)=>`${key}=$${index+2}`);
+    await client.query(`update ${entityType} set ${assignments.join(',')} where id=$1::uuid`,[entityId,...updateEntries.map(([,value])=>serializeValue(value))]);
   }else{
     const keys=['id',...entries.map(([key])=>key),'sync_central_version','sync_version'];
     const values=[entityId,...entries.map(([,value])=>serializeValue(value)),version,version];
