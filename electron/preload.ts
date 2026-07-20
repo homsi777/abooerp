@@ -15,6 +15,7 @@ const allowedInvokeChannels = new Set([
   'fs:read-config',
   'fs:write-config',
   'fs:enable-local-packaged-server',
+  'app:relaunch',
   'printer:list',
   'printer:get-default',
   'printer:print',
@@ -58,6 +59,7 @@ const runtimeBridge = {
   getLanAddresses: () => invokeAllowed<string[]>('runtime:get-lan-addresses'),
   getServerMode: () => invokeAllowed<string>('runtime:get-server-mode'),
   testLanServer: (ip: string, port: number) => invokeAllowed<{ ok: boolean; data?: unknown; error?: string }>('runtime:test-lan-server', ip, port),
+  relaunchApp: () => invokeAllowed<{ success: boolean }>('app:relaunch'),
 };
 
 const diagnosticsRuntime = {

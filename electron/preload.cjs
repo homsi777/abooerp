@@ -12,6 +12,7 @@ const allowedInvokeChannels = new Set([
   'fs:read-config',
   'fs:write-config',
   'fs:enable-local-packaged-server',
+  'app:relaunch',
   'printer:list',
   'printer:get-default',
   'printer:print',
@@ -53,6 +54,7 @@ const runtimeBridge = {
   getActiveBranch: () => invokeAllowed('runtime:get-active-branch'),
   setActiveBranch: (branchId) => invokeAllowed('runtime:set-active-branch', branchId),
   getMachineId: () => invokeAllowed('runtime:get-machine-id'),
+  relaunchApp: () => invokeAllowed('app:relaunch'),
 };
 
 const diagnosticsRuntime = {
