@@ -405,7 +405,9 @@ export async function createScopedSnapshot(context:SyncRequestContext){
     data.senders_receivers=await query(`select * from senders_receivers where status='active' and (branch_id is null or branch_id=any($1::uuid[])) and ($2::uuid is null or agent_id is null or agent_id=$2::uuid)`,[branches,context.agentId??null]);
     data.customers=await query(`select * from customers where status='active' and (company_id is null or company_id=$1) and (branch_id is null or branch_id=any($2::uuid[])) and ($3::uuid is null or agent_id is null or agent_id=$3::uuid)`,[context.companyId,branches,context.agentId??null]);
     data.cities=await query(`select * from cities where is_active=true`);
-    data.currencies=await query(`select * from currencies where company_id=$1 and is_active=true`,[context.companyId]);
+    // Include inactive currencies too: shipments/history still reference them, and
+    // scoped snapshot apply skips any child whose required parent UUID is absent.
+    data.currencies=await query(`select * from currencies where company_id=$1`,[context.companyId]);
     data.goods_types=await query(`select * from goods_types where is_active=true`);
     data.tariffs=await query(`select * from tariffs where is_active=true`);
     data.drivers=await query(`select * from drivers where status='active' and (branch_id is null or branch_id=any($1::uuid[])) and ($2::uuid is null or agent_id is null or agent_id=$2::uuid)`,[branches,context.agentId??null]);

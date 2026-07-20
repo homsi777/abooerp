@@ -16,11 +16,31 @@ const softDeleteEntities = new Set([
 let timer: NodeJS.Timeout | null=null;let running=false;let forceRequested=false;
 let centralOnline:boolean|null=null;let lastCentralError:string|null=null;let lastCentralAttemptAt:string|null=null;
 const columnCache=new Map<string,Set<string>>();
-const foreignKeyCache=new Map<string,Array<{columnName:string;referencedTable:string;nullable:boolean}>>();
+const foreignKeyCache=new Map<string,Array<{columnName:string;referencedTable:string;referencedColumn:string;nullable:boolean}>>();
 
 function serializeValue(value:unknown):unknown{
   if(value!==null&&typeof value==='object'&&!(value instanceof Date))return JSON.stringify(value);
   return value;
+}
+
+function rememberInsertedKeys(target:Map<string,Map<string,Set<string>>>,table:string,row:Record<string,unknown>){
+  let columns=target.get(table);
+  if(!columns){columns=new Map();target.set(table,columns)}
+  for(const [column,value] of Object.entries(row)){
+    if(value===null||value===undefined||typeof value==='object')continue;
+    let values=columns.get(column);
+    if(!values){values=new Set();columns.set(column,values)}
+    values.add(String(value));
+  }
+}
+
+function hasReferencedParent(included:Map<string,Map<string,Set<string>>>,table:string,column:string,value:unknown){
+  const values=included.get(table)?.get(column);
+  // Parent table absent from the snapshot scope → do not block (legacy behaviour for
+  // tables outside snapshotOrder). Parent present but key missing → block/skip.
+  if(!included.has(table))return true;
+  if(value===null||value===undefined)return true;
+  return Boolean(values?.has(String(value)));
 }
 
 async function tableColumns(client:PoolClient,table:string){
@@ -33,17 +53,24 @@ async function tableColumns(client:PoolClient,table:string){
 
 async function singleColumnForeignKeys(client:PoolClient,table:string){
   const cached=foreignKeyCache.get(table);if(cached)return cached;
-  const result=await client.query<{column_name:string;referenced_table:string;nullable:boolean}>(
+  const result=await client.query<{column_name:string;referenced_table:string;referenced_column:string;nullable:boolean}>(
     `select attribute.attname column_name,constraint_row.confrelid::regclass::text referenced_table,
-            not attribute.attnotnull nullable
+            referenced.attname referenced_column, not attribute.attnotnull nullable
        from pg_constraint constraint_row
        join pg_attribute attribute
          on attribute.attrelid=constraint_row.conrelid and attribute.attnum=constraint_row.conkey[1]
+       join pg_attribute referenced
+         on referenced.attrelid=constraint_row.confrelid and referenced.attnum=constraint_row.confkey[1]
       where constraint_row.contype='f' and constraint_row.conrelid=$1::regclass
         and array_length(constraint_row.conkey,1)=1`,
     [table],
   );
-  const rows=result.rows.map(row=>({columnName:row.column_name,referencedTable:row.referenced_table.replace(/^public\./,''),nullable:row.nullable}));
+  const rows=result.rows.map(row=>({
+    columnName:row.column_name,
+    referencedTable:row.referenced_table.replace(/^public\./,''),
+    referencedColumn:row.referenced_column,
+    nullable:row.nullable,
+  }));
   foreignKeyCache.set(table,rows);return rows;
 }
 
@@ -63,10 +90,10 @@ async function applyAuthoritativeRow(client:PoolClient,entityType:string,entityI
   const normalizedEntries=Object.entries(normalized).filter(([key])=>key!=='id'&&allowed.has(key));
   if(exists.rowCount){
     const assignments=normalizedEntries.map(([key],index)=>`${key}=$${index+2}`);
-    await client.query(`update ${entityType} set ${assignments.join(',')} where id=$1::uuid`,[entityId,...normalizedEntries.map(([,value])=>value)]);
+    await client.query(`update ${entityType} set ${assignments.join(',')} where id=$1::uuid`,[entityId,...normalizedEntries.map(([,value])=>serializeValue(value))]);
   }else{
     const keys=['id',...entries.map(([key])=>key),'sync_central_version','sync_version'];
-    const values=[entityId,...entries.map(([,value])=>value),version,version];
+    const values=[entityId,...entries.map(([,value])=>serializeValue(value)),version,version];
     await client.query(`insert into ${entityType}(${keys.join(',')}) values(${values.map((_,i)=>`$${i+1}`).join(',')})`,values);
   }
 }
@@ -79,14 +106,14 @@ const snapshotOrder=[
   'daily_ledger_rows','daily_ledger_row_transfer_items','daily_ledger_print_events','daily_ledger_print_documents',
 ];
 
-async function upsertSnapshotRow(client:PoolClient,table:string,row:Record<string,unknown>,includedIds:Map<string,Set<string>>):Promise<string|undefined>{
+async function upsertSnapshotRow(client:PoolClient,table:string,row:Record<string,unknown>,includedKeys:Map<string,Map<string,Set<string>>>):Promise<Record<string,unknown>|undefined>{
   const normalizedRow={...row};
   for(const foreignKey of await singleColumnForeignKeys(client,table)){
-    const referencedIds=includedIds.get(foreignKey.referencedTable);const value=normalizedRow[foreignKey.columnName];
-    if(referencedIds&&value!==null&&value!==undefined&&!referencedIds.has(String(value))){
+    const value=normalizedRow[foreignKey.columnName];
+    if(!hasReferencedParent(includedKeys,foreignKey.referencedTable,foreignKey.referencedColumn,value)){
       if(foreignKey.nullable)normalizedRow[foreignKey.columnName]=null;
       else{
-        console.warn('[SYNC] Skipped scoped snapshot row with an unavailable required parent.',{table,id:normalizedRow.id,column:foreignKey.columnName,referencedTable:foreignKey.referencedTable});
+        console.warn('[SYNC] Skipped scoped snapshot row with an unavailable required parent.',{table,id:normalizedRow.id,column:foreignKey.columnName,referencedTable:foreignKey.referencedTable,referencedColumn:foreignKey.referencedColumn});
         return undefined;
       }
     }
@@ -94,13 +121,13 @@ async function upsertSnapshotRow(client:PoolClient,table:string,row:Record<strin
   const allowed=await tableColumns(client,table);const entries=Object.entries(normalizedRow).filter(([key])=>allowed.has(key));
   if(!entries.length)return undefined;
   if(table==='manifest_shipments'){
-    const keys=entries.map(([key])=>key);const values=entries.map(([,value])=>value);
+    const keys=entries.map(([key])=>key);const values=entries.map(([,value])=>serializeValue(value));
     await client.query(`insert into manifest_shipments(${keys.join(',')}) values(${values.map((_,i)=>`$${i+1}`).join(',')}) on conflict(manifest_id,shipment_id) do update set created_at=excluded.created_at`,values);return undefined;
   }
-  const id=normalizedRow.id;if(!id)return undefined;const withoutId=entries.filter(([key])=>key!=='id');const keys=['id',...withoutId.map(([key])=>key)];const values=[id,...withoutId.map(([,value])=>value)];
+  const id=normalizedRow.id;if(!id)return undefined;const withoutId=entries.filter(([key])=>key!=='id');const keys=['id',...withoutId.map(([key])=>key)];const values=[id,...withoutId.map(([,value])=>serializeValue(value))];
   const updates=withoutId.map(([key])=>`${key}=excluded.${key}`);
   await client.query(`insert into ${table}(${keys.join(',')}) values(${values.map((_,i)=>`$${i+1}`).join(',')}) on conflict(id) do update set ${updates.length?updates.join(','):'id=excluded.id'}`,values);
-  return String(id);
+  return normalizedRow;
 }
 
 export async function applyScopedSnapshot(snapshot:any){
@@ -120,18 +147,20 @@ export async function applyScopedSnapshot(snapshot:any){
       columnCache.clear();foreignKeyCache.clear();
     }
     // Built incrementally, in snapshotOrder's dependency order, using only rows that were
-    // actually inserted — a row skipped for a missing parent (e.g. an inactive currency)
+    // actually inserted — a row skipped for a missing parent (e.g. currency code USD)
     // must not appear as a valid parent for its own dependents (e.g. shipment_status_history),
     // or the later insert trips a hard FK violation and rolls back the entire snapshot.
-    const includedIds=new Map<string,Set<string>>();
+    // Keys are tracked by referenced column (id AND code, etc.) because some FKs point at
+    // unique business keys rather than UUID primary keys.
+    const includedKeys=new Map<string,Map<string,Set<string>>>();
     for(const table of snapshotOrder){
       const rows=Array.isArray(snapshot.data?.[table])?snapshot.data[table]:[];
-      const insertedIds=new Set<string>();
+      // Mark the table as in-scope even when empty so dependents cannot slip through.
+      if(!includedKeys.has(table))includedKeys.set(table,new Map());
       for(const row of rows){
-        const insertedId=await upsertSnapshotRow(client,table,row,includedIds);
-        if(insertedId)insertedIds.add(insertedId);
+        const inserted=await upsertSnapshotRow(client,table,row,includedKeys);
+        if(inserted)rememberInsertedKeys(includedKeys,table,inserted);
       }
-      includedIds.set(table,insertedIds);
     }
     await client.query(
       `update sync_local_state set last_central_cursor=$1,offline_grant_expires_at=$2::timestamptz,
