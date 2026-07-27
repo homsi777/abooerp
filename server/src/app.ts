@@ -16,8 +16,10 @@ import { createDeliveryRouter } from './routes/deliveryRoutes.js';
 import { CenterReceiptRepository } from './repositories/centerReceiptRepository.js';
 import { CenterReceiptService } from './services/centerReceiptService.js';
 import { createCenterReceiptRouter } from './routes/centerReceiptRoutes.js';
+import { createExportRouter } from './routes/exportRoutes.js';
 import { HttpError } from './utils/errors.js';
 import { requestContextMiddleware } from './middleware/requestContext.js';
+import { localOfflinePolicyMiddleware } from './middleware/localOfflinePolicy.js';
 import { FinanceRepository } from './repositories/financeRepository.js';
 import { FinanceService } from './services/financeService.js';
 import { createFinanceRouter } from './routes/financeRoutes.js';
@@ -85,7 +87,10 @@ import { TransfersService } from './services/transfersService.js';
 import { createTransfersRouter } from './routes/transfers.js';
 import { DailyLedgerRepository } from './repositories/dailyLedgerRepository.js';
 import { DailyLedgerService } from './services/dailyLedgerService.js';
+import { DailyLedgerShipmentPostingService } from './services/dailyLedgerShipmentPostingService.js';
+import { DailyLedgerTransferService } from './services/dailyLedgerTransferService.js';
 import { createDailyLedgerRouter } from './routes/dailyLedgerRoutes.js';
+import { createSyncRouter } from './routes/syncRoutes.js';
 import { pool } from './db/pool.js';
 import customerRouter from './routes/customerRoutes.js';
 import partiesRouter from './routes/partiesRoutes.js';
@@ -101,12 +106,20 @@ const STATIC_ALLOWED_ORIGINS = new Set([
   'app://electron',
 ]);
 
+const WEB_PUBLIC_ORIGINS = new Set(
+  String(process.env.WEB_PUBLIC_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+);
+
 const LAN_ORIGIN_RE = /^http:\/\/(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)\d+\.\d+(:\d+)?$/;
 
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true); // Electron renderer / curl / health checks
     if (STATIC_ALLOWED_ORIGINS.has(origin)) return callback(null, true);
+    if (WEB_PUBLIC_ORIGINS.has(origin)) return callback(null, true);
     if (LAN_ORIGIN_RE.test(origin)) return callback(null, true);
     // Allow same server's own LAN IPs dynamically
     const serverLanIps = getLocalLanAddresses();
@@ -118,10 +131,13 @@ app.use(cors({
   credentials: true,
 }));
 
-app.use(express.json());
+// الحد الافتراضي لـ Express (100kb) لا يكفي لدفعة حفظ دفتر الشحن (حتى 500 سطر في طلب واحد
+// عبر /daily-ledger/rows/upsert-batch) — 2mb يمنح هامشاً مريحاً دون تخفيف حماية حقيقية.
+app.use(express.json({ limit: '2mb' }));
 app.use(correlationIdMiddleware);
 app.use(requestTracingMiddleware);
 app.use(requestContextMiddleware);
+app.use(localOfflinePolicyMiddleware);
 
 const referenceRouters = createReferenceRouters();
 const inventoryService = new InventoryService();
@@ -131,11 +147,25 @@ const shipmentRepository = new ShipmentRepository();
 const financeRepository = new FinanceRepository();
 const shipmentFinancialPostingService = new ShipmentFinancialPostingService(shipmentRepository, financeRepository);
 const transfersService = new TransfersService(new TransfersRepository(pool), financeRepository);
-const dailyLedgerService = new DailyLedgerService(new DailyLedgerRepository());
 const agentRepository = new AgentRepository();
-const shipmentService = new ShipmentService(shipmentRepository, inventoryService, shipmentFinancialPostingService, transfersService, agentRepository);
+const shipmentService = new ShipmentService(
+  shipmentRepository,
+  inventoryService,
+  shipmentFinancialPostingService,
+  transfersService,
+  agentRepository,
+);
+const dailyLedgerRepository = new DailyLedgerRepository();
+const dailyLedgerShipmentPostingService = new DailyLedgerShipmentPostingService(
+  dailyLedgerRepository,
+  shipmentService,
+  agentRepository,
+  shipmentFinancialPostingService,
+);
+const dailyLedgerService = new DailyLedgerService(dailyLedgerRepository, dailyLedgerShipmentPostingService);
+const dailyLedgerTransferService = new DailyLedgerTransferService();
 const manifestService = new ManifestService(new ManifestRepository());
-const financeService = new FinanceService(financeRepository);
+const financeService = new FinanceService(financeRepository, agentRepository);
 const authService = new AuthService();
 const deliveryService = new DeliveryService(new DeliveryRepository(), financeService, inventoryService);
 const centerReceiptService = new CenterReceiptService(new CenterReceiptRepository());
@@ -190,7 +220,7 @@ const employeeRepositorySingleton = new EmployeeRepository();
 app.use('/api/v1/employees', createEmployeeRouter(employeeRepositorySingleton));
 app.use(
   '/api/v1',
-  createSalaryRouter(new SalaryRepository(), new ExchangeRateRepository(), employeeRepositorySingleton),
+  createSalaryRouter(new SalaryRepository(), new ExchangeRateRepository(), employeeRepositorySingleton, financeRepository),
 );
 app.use('/api/v1/system', createLinkedDeviceRouter(new LinkedDeviceRepository()));
 app.use('/api/v1/license', createLicenseRouter(new LicenseRepository()));
@@ -208,11 +238,13 @@ app.use('/api/v1/cities', referenceRouters.cities);
 app.use('/api/v1/goods-types', referenceRouters.goodsTypes);
 app.use('/api/v1/tariffs', referenceRouters.tariffs);
 app.use('/api/v1/shipments', createShipmentRouter(shipmentService));
-app.use('/api/v1/daily-ledger', createDailyLedgerRouter(dailyLedgerService));
-app.use('/api/v1/agent-portal', createAgentPortalRouter(shipmentService, financeService, new AgentRepository()));
+app.use('/api/v1/daily-ledger', createDailyLedgerRouter(dailyLedgerService, dailyLedgerTransferService));
+app.use('/api/v1/sync', createSyncRouter());
+app.use('/api/v1/agent-portal', createAgentPortalRouter(shipmentService, financeService, transfersService, new AgentRepository(), dailyLedgerService));
 app.use('/api/v1/dashboard', createDashboardRouter());
 app.use('/api/v1/manifests', createManifestRouter(manifestService));
 app.use('/api/v1/center-receipts', createCenterReceiptRouter(centerReceiptService));
+app.use('/api/v1/export', createExportRouter());
 app.use('/api/v1/deliveries', createDeliveryRouter(deliveryService));
 app.use('/api/v1', createFinanceRouter(financeService));
 app.use('/api/v1/transfers', createTransfersRouter(transfersService));

@@ -370,3 +370,25 @@ export async function sendTestMessage(
     return { ok: false, error: err?.message ?? 'خطأ غير متوقع' };
   }
 }
+
+/** Notify company staff (accountant / manager) via Telegram when configured — never throws. */
+export async function sendCompanyNotification(companyId: string, text: string): Promise<void> {
+  try {
+    const dbNotifBot = await notifBotRepo.getFirstActive(companyId);
+    const botToken = dbNotifBot?.bot_token ?? process.env.TELEGRAM_NOTIFICATION_BOT_TOKEN;
+    const chatId =
+      process.env.TELEGRAM_STAFF_NOTIFICATION_CHAT_ID ??
+      process.env.TELEGRAM_ACTIVATION_CHAT_ID;
+    if (!botToken || !chatId) return;
+
+    const result = await sendTelegramMessage(botToken, chatId, text);
+    auditService.logAsync({
+      req: null as any,
+      action: result.ok ? 'TELEGRAM_COMPANY_NOTIFICATION_SENT' : 'TELEGRAM_SEND_FAILED',
+      entityType: 'telegram',
+      metadata: { companyId, chatId, error: result.error },
+    });
+  } catch {
+    // non-blocking
+  }
+}

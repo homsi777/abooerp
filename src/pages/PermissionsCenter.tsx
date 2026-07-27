@@ -63,7 +63,7 @@ const simplifiedUserTypeChoices: Array<{ value: UserType; label: string }> = [
   { value: 'viewer', label: 'مشاهدة فقط' },
 ];
 
-const mainRoleCodes = new Set(['admin', 'agent_user', 'accountant', 'data_entry', 'viewer']);
+const mainRoleCodes = new Set(['admin', 'agent_user', 'accountant', 'data_entry', 'shipment_auditor', 'viewer']);
 const legacyRoleCodes = new Set(['general_manager', 'branch_manager', 'field_accountant']);
 
 const categoryOrder = [
@@ -86,6 +86,63 @@ const permissionArabicMeta: Record<string, { label: string; description: string;
   'shipments.write': { label: 'إضافة وتعديل الشحنات', description: 'يسمح بإنشاء أو تعديل بيانات الشحنات.' },
   'shipments.create': { label: 'إنشاء شحنة', description: 'يسمح بإنشاء شحنة جديدة.' },
   'shipments.update': { label: 'تعديل شحنة', description: 'يسمح بتعديل بيانات الشحنة.' },
+  'shipments.ledger.past_dates': {
+    label: 'تعديل تاريخ دفتر الشحن',
+    description: 'يسمح لمدخل البيانات بفتح دفتر يوم سابق وتعديل أسطره (وليس اليوم فقط).',
+  },
+  'shipments.ledger.future_dates': {
+    label: 'تاريخ مستقبلي لدفتر الشحن',
+    description: 'يسمح بفتح دفتر بتاريخ الغد أو لاحقاً — عند تحميل البضائع اليوم وسفر المركبة في الرحلة القادمة (دوريات الجمارك).',
+  },
+  'daily_ledger.view_all_entries': {
+    label: 'عرض كل إدخالات دفتر الشحن',
+    description: 'للمدير ومدقق الشحنات: يرى إدخالات جميع موظفي الإدخال. بدونها يرى مدخل البيانات إدخالاته فقط.',
+  },
+  'daily_ledger.export_pdf': {
+    label: 'تصدير PDF لدفتر الشحن',
+    description: 'يسمح بزر تصدير PDF — لمدقق الشحنات والمدير (ليس لمدخل البيانات).',
+  },
+  'daily_ledger.close_section': {
+    label: 'إغلاق قسم دفتر الشحن',
+    description: 'يسمح بزر إغلاق القسم في دفتر الشحن اليومي.',
+  },
+  'daily_ledger.save_log': {
+    label: 'سجل حفظ دفتر الشحن',
+    description: 'يسمح بتنزيل سجل عمليات الحفظ في دفتر الشحن اليومي.',
+  },
+  'daily_ledger.view_loaded': {
+    label: 'إظهار المحمّلة',
+    description: 'يسمح بخيار إظهار الأسطر المحمّلة على البيان في دفتر الشحن اليومي.',
+  },
+  'daily_ledger.delete_rows': {
+    label: 'حذف أسطر دفتر الشحن',
+    description: 'يسمح بحذف أسطر من دفتر الشحن اليومي.',
+  },
+  'daily_ledger.post_shipments': {
+    label: 'حفظ الشحنات',
+    description: 'يسمح بزر حفظ الشحنات (ترحيل الأسطر) من دفتر الشحن اليومي.',
+  },
+  'daily_ledger.transfer.create': {
+    label: 'نقل إرسالية',
+    description: 'يسمح بإنشاء نقل إرسالية بين تواريخ أو سائقين في دفتر الشحن.',
+  },
+  'daily_ledger.transfer.confirm': {
+    label: 'تأكيد نقل إرسالية',
+    description: 'يسمح بتأكيد نقل الإرسالية بعد التحقق.',
+  },
+  'daily_ledger.session.cancel': {
+    label: 'إلغاء إرسالية',
+    description: 'يسمح بحلّ إرسالية وإرجاع أسطرها إلى العرض العام دون حذف البيانات.',
+  },
+  'daily_ledger.dispatch_undo.execute': {
+    label: 'إلغاء حفظ إرسالية',
+    description: 'يسمح بإلغاء عملية حفظ من سجل الإرساليات واستعادة الأسطر وعكس الآثار المالية بأمان.',
+  },
+  'drivers.view': { label: 'عرض السائقين', description: 'يسمح برؤية قائمة السائقين.' },
+  'drivers.manage': { label: 'إدارة السائقين', description: 'يسمح بإضافة وتعديل السائقين.' },
+  'vehicles.view': { label: 'عرض المركبات', description: 'يسمح برؤية قائمة المركبات.' },
+  'vehicles.manage': { label: 'إدارة المركبات', description: 'يسمح بإضافة وتعديل المركبات.' },
+  'parties.manage': { label: 'إدارة الأطراف', description: 'يسمح بإدارة المرسلين والمستلمين والسائقين والمركبات.' },
   'shipments.confirm': { label: 'تأكيد الشحنة', description: 'يسمح بتأكيد الشحنة ضمن دورة العمل.' },
   'shipments.cancel': { label: 'إلغاء الشحنة', description: 'يسمح بإلغاء الشحنة عند توفر شروط الإلغاء.' },
   'shipments.handover_agent': { label: 'تسليم الشحنة للوكيل', description: 'يسمح بتحويل الشحنة إلى الوكيل المسؤول.' },
@@ -123,6 +180,7 @@ const permissionArabicMeta: Record<string, { label: string; description: string;
   'finance.vouchers.create': { label: 'إنشاء السندات', description: 'إنشاء سندات قبض أو دفع جديدة.' },
   'finance.vouchers.view': { label: 'عرض السندات', description: 'عرض قائمة السندات وسندات القبض والدفع ضمن النطاق.' },
   'finance.vouchers.update': { label: 'تعديل السندات', description: 'تعديل أو تأكيد أو إلغاء السندات بعد الإنشاء.' },
+  'finance.vouchers.backdate': { label: 'سندات بتاريخ سابق', description: 'إنشاء وتعديل سندات قبض/دفع بتاريخ سابق (مسودة).' },
   'finance.vouchers.delete': { label: 'حذف السندات', description: 'حذف السندات (إن كان مسموحاً في النظام).' },
   'finance.debit_credit.view': { label: 'عرض الدائن والمدين', description: 'يسمح بفتح مركز الدائن والمدين.' },
   'finance.account_statement.view': { label: 'عرض كشف الحساب', description: 'يسمح بفتح كشف الحساب التفصيلي.' },
@@ -184,16 +242,60 @@ const roleTemplates: PermissionTemplate[] = [
     name: 'مدخل البيانات',
     roleCode: 'data_entry',
     userType: 'employee',
-    description: 'إدخال وتعديل الشحنات ضمن الفروع المسموحة، مع الحوالات التشغيلية عند منح الصلاحية.',
-    modules: ['دفتر الشحن اليومي', 'إدخال شحنة', 'قائمة الشحنات', 'الحوالات'],
+    description:
+      'إدخال أسطر الشحنات ضمن الفرع — دون أزرار دفتر الشحن المتقدمة (PDF، نقل، حذف، حفظ الشحنات، …). تلك الأزرار لمدقق الشحنات والمدير.',
+    modules: ['دفتر الشحن اليومي', 'إدخال شحنة', 'قائمة الشحنات', 'المركبات والسائقون', 'الحوالات'],
     permissionCodes: [
       'shipments.read',
       'shipments.write',
       'shipments.view',
       'shipments.create',
       'shipments.update',
+      'shipments.ledger.past_dates',
+      'shipments.ledger.future_dates',
+      'drivers.view',
+      'drivers.manage',
+      'vehicles.view',
+      'vehicles.manage',
+      'parties.manage',
       'transfers.read',
       'transfers.write',
+    ],
+  },
+  {
+    code: 'shipment_auditor',
+    name: 'مدقق شحنات',
+    roleCode: 'shipment_auditor',
+    userType: 'employee',
+    description:
+      'مراجعة وإدخال الشحنات ضمن الفرع — نفس أقسام مدخل البيانات مع كل أزرار دفتر الشحن (تصدير PDF، نقل إرسالية، حذف، حفظ الشحنات، …).',
+    modules: ['دفتر الشحن اليومي', 'إدخال شحنة', 'قائمة الشحنات', 'المركبات والسائقون', 'الحوالات'],
+    permissionCodes: [
+      'shipments.read',
+      'shipments.write',
+      'shipments.view',
+      'shipments.create',
+      'shipments.update',
+      'shipments.ledger.past_dates',
+      'shipments.ledger.future_dates',
+      'drivers.view',
+      'drivers.manage',
+      'vehicles.view',
+      'vehicles.manage',
+      'parties.manage',
+      'transfers.read',
+      'transfers.write',
+      'daily_ledger.export_pdf',
+      'daily_ledger.close_section',
+      'daily_ledger.save_log',
+      'daily_ledger.view_loaded',
+      'daily_ledger.delete_rows',
+      'daily_ledger.post_shipments',
+      'daily_ledger.transfer.create',
+      'daily_ledger.transfer.confirm',
+      'daily_ledger.session.cancel',
+      'daily_ledger.dispatch_undo.execute',
+      'daily_ledger.view_all_entries',
     ],
   },
   {
@@ -201,9 +303,18 @@ const roleTemplates: PermissionTemplate[] = [
     name: 'المحاسب',
     roleCode: 'accountant',
     userType: 'accountant',
-    description: 'المالية والسندات وكشف الحساب والدائن والمدين مع عرض الشحنات كمرجع.',
-    modules: ['المالية', 'السندات', 'الصناديق', 'الدائن والمدين', 'كشف الحساب', 'التقارير المالية'],
-    permissionCodes: ['finance.read','finance.write','finance.view','finance.vouchers.read','finance.vouchers.write','finance.vouchers.manage','finance.debit_credit.view','finance.account_statement.view','finance.cashbox.read','finance.cashbox.write','reports.view','shipments.read','shipments.view'],
+    description: 'المالية والسندات (بما فيها التاريخ السابق) والوكلاء (عرض) وشحن المراكز (عرض ومتابعة) والتقارير وإدارة العملاء الحسابيين.',
+    modules: ['المالية', 'السندات', 'الصناديق', 'الدائن والمدين', 'كشف الحساب', 'التقارير المالية', 'شحن المراكز', 'العملاء', 'الوكلاء'],
+    permissionCodes: [
+      'finance.read','finance.write','finance.view','finance.vouchers.read','finance.vouchers.write','finance.vouchers.manage',
+      'finance.vouchers.backdate',
+      'finance.debit_credit.view','finance.account_statement.view','finance.cashbox.read','finance.cashbox.write',
+      'reports.view','shipments.read','shipments.view','shipments.ledger.future_dates',
+      'deliveries.read',
+      'customers.view','customers.manage','customers.account.view','customers.account.manage',
+      'settings.agents.read','agents.view',
+      'daily_ledger.dispatch_undo.execute',
+    ],
   },
   {
     code: 'viewer',
@@ -254,11 +365,13 @@ function categoryForPermission(code: string) {
   if (code.startsWith('branches') || code.includes('settings.branches')) return 'الفروع';
   if (code.includes('debit_credit')) return 'الدائن والمدين';
   if (code.includes('account_statement')) return 'كشف الحساب';
+  if (code.startsWith('customers')) return 'العملاء';
   if (code.startsWith('finance')) return 'المالية';
   if (code.startsWith('reports')) return 'التقارير';
   if (code.startsWith('settings')) return 'الإعدادات';
   if (code.startsWith('users') || code.startsWith('permissions') || code.includes('settings.users') || code.includes('settings.roles')) return 'المستخدمون والصلاحيات';
   if (code.startsWith('agent_portal')) return 'بوابة الوكيل';
+  if (code.startsWith('drivers') || code.startsWith('vehicles') || code.startsWith('parties')) return 'المركبات والسائقون';
   if (code.startsWith('admin.')) return 'الإدارة العليا';
   return 'أخرى';
 }

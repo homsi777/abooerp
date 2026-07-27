@@ -80,6 +80,20 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => ['true', '1', 'yes', 'on'].includes((value || '').toLowerCase())),
+  SYNC_NODE_ROLE: z.enum(['disabled', 'central', 'local']).default('central'),
+  SYNC_DEVICE_ID: z.string().uuid().optional(),
+  SYNC_DEVICE_NAME: z.string().min(1).max(255).optional(),
+  CENTRAL_SYNC_API_BASE_URL: z.string().url().optional(),
+  CENTRAL_SYNC_ACCESS_TOKEN: z.string().min(20).optional(),
+  CENTRAL_SYNC_DEVICE_TOKEN: z.string().min(32).optional(),
+  SYNC_POLL_INTERVAL_MS: z.coerce.number().int().min(1000).max(300000).default(5000),
+  SYNC_PUSH_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(50),
+  SYNC_PULL_BATCH_SIZE: z.coerce.number().int().min(1).max(500).default(200),
+  SYNC_APP_VERSION: z.string().max(64).default('development'),
+  SYNC_SCHEMA_VERSION: z.string().max(128).default('112_offline_sync_foundation'),
+  OFFLINE_AUTH_MAX_AGE_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(72),
+  LOCAL_BACKUP_KEY: z.string().optional(),
+  LOCAL_BACKUP_INTERVAL_HOURS: z.coerce.number().int().min(1).max(168).default(6),
 });
 
 const parsed = envSchema.safeParse(process.env);

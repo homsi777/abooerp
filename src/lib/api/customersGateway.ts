@@ -27,6 +27,8 @@ export type CustomerRecord = {
   status: 'active' | 'inactive';
   created_at: string;
   updated_at: string;
+  opening_balance_amount?: number;
+  opening_balance_side?: 'debit' | 'credit';
 };
 
 export type CustomerCreateInput = {
@@ -38,6 +40,8 @@ export type CustomerCreateInput = {
   is_account_customer?: boolean;
   credit_limit?: number;
   default_currency_code?: string;
+  opening_balance_amount?: number;
+  opening_balance_side?: 'debit' | 'credit';
   city?: string;
   area?: string;
   address?: string;
@@ -64,6 +68,31 @@ export type CustomerListResponse = {
   total: number;
   page: number;
   limit: number;
+};
+
+export type CustomerFinancialSummary = {
+  isAccountCustomer: boolean;
+  currencyCode: string;
+  openingBalanceAmount?: number;
+  openingBalanceSide?: 'debit' | 'credit';
+  totalDebit: number;
+  totalCredit: number;
+  balance: number;
+  movementCount: number;
+  shipmentCount: number;
+};
+
+export type CustomerShipmentRow = {
+  id: string;
+  shipment_no: string;
+  status: string;
+  financial_status: string | null;
+  original_amount: number;
+  currency_code: string;
+  created_at: string;
+  destination_city: string | null;
+  sender_name: string | null;
+  receiver_name: string | null;
 };
 
 export type CustomerFilters = {
@@ -120,6 +149,14 @@ export const customersGateway = {
 
   search: async (q: string): Promise<CustomerRecord[]> => {
     return httpClient.get<CustomerRecord[]>(`/customers/search?q=${encodeURIComponent(q)}`);
+  },
+
+  getFinancialSummary: async (id: string): Promise<CustomerFinancialSummary> => {
+    return httpClient.get<CustomerFinancialSummary>(`/customers/${id}/financial-summary`);
+  },
+
+  getShipments: async (id: string): Promise<CustomerShipmentRow[]> => {
+    return httpClient.get<CustomerShipmentRow[]>(`/customers/${id}/shipments`);
   },
 
   smartSearch: async (query: string): Promise<SmartPartyResult[]> => {

@@ -1,5 +1,8 @@
 import type { Branch, City, Customer, Delivery, Driver, GoodsType, Manifest, Shipment, Tariff, Vehicle } from '../../types';
+import { getBackendIdFromSynthetic, syntheticEntityId } from './syntheticEntityId';
 import { httpClient } from './httpClient';
+
+export { getBackendIdFromSynthetic, syntheticEntityId } from './syntheticEntityId';
 import {
   normalizeShipmentStatus,
   shipmentStatusLabelAr,
@@ -19,6 +22,7 @@ type BackendRefRecord = {
   capacity_kg?: number;
   plate_number?: string;
   license_number?: string;
+  driver_id?: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -48,9 +52,11 @@ type BackendShipmentRecord = {
   freight_charge?: number;
   transfer_fee?: number;
   additional_charges?: number;
+  hawala_amount?: number;
   prepaid_amount?: number;
   discount_amount?: number;
   transfer_service_fee?: number;
+  effective_date?: string;
 };
 
 type BackendShipmentHistoryRow = {
@@ -123,16 +129,12 @@ type BackendTariffRecord = {
   code: string;
   from_city_id: string;
   to_city_id: string;
-  goods_type_id: string;
+  goods_type_id: string | null;
   price_per_kg: number;
   minimum_charge: number;
   valid_from: string;
   valid_to?: string;
 };
-
-const stringIdToNumber = new Map<string, number>();
-const numberIdToString = new Map<number, string>();
-let nextSyntheticId = 100000;
 
 const customerLookup = new Map<number, Customer>();
 const driverLookup = new Map<number, Driver>();
@@ -141,28 +143,6 @@ const branchLookup = new Map<number, Branch>();
 const cityLookup = new Map<number, City>();
 const goodsTypeLookup = new Map<number, GoodsType>();
 const shipmentLookup = new Map<number, Shipment>();
-
-function toSyntheticId(id: string): number {
-  const existing = stringIdToNumber.get(id);
-  if (existing) return existing;
-  nextSyntheticId += 1;
-  stringIdToNumber.set(id, nextSyntheticId);
-  numberIdToString.set(nextSyntheticId, id);
-  return nextSyntheticId;
-}
-
-function toBackendId(id: number): string | undefined {
-  return numberIdToString.get(id);
-}
-
-export function getBackendIdFromSynthetic(id: number): string | undefined {
-  return toBackendId(id);
-}
-
-/** Stable synthetic numeric id for a backend UUID (used when prefilling agent row from session). */
-export function syntheticEntityId(backendUuid: string): number {
-  return toSyntheticId(backendUuid);
-}
 
 function mapShipmentStatusToFrontend(status: BackendShipmentRecord['status']): Shipment['status'] {
   const normalized = normalizeShipmentStatus(status);
@@ -205,7 +185,7 @@ function mapDeliveryStatusToBackend(status: Delivery['deliveryStatus']): Backend
 
 function mapCustomer(record: BackendRefRecord): Customer {
   const mapped: Customer = {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     code: record.code,
     name: record.name ?? record.full_name ?? '',
     phone: record.phone ?? '',
@@ -222,7 +202,7 @@ function mapCustomer(record: BackendRefRecord): Customer {
 
 function mapDriver(record: BackendRefRecord): Driver {
   const mapped: Driver = {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     code: record.code,
     name: record.full_name ?? record.name ?? '',
     phone: record.phone ?? '',
@@ -236,14 +216,17 @@ function mapDriver(record: BackendRefRecord): Driver {
 }
 
 function mapVehicle(record: BackendRefRecord): Vehicle {
+  const driverId = record.driver_id ? syntheticEntityId(record.driver_id) : undefined;
   const mapped: Vehicle = {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     plateNumber: record.plate_number ?? '',
     type: 'شاحنة',
     model: record.model ?? '',
     capacity: Number(record.capacity_kg ?? 0),
     isActive: record.status !== 'inactive',
     notes: '',
+    driverId,
+    driverName: driverId ? driverLookup.get(driverId)?.name : undefined,
   };
   vehicleLookup.set(mapped.id, mapped);
   return mapped;
@@ -251,7 +234,7 @@ function mapVehicle(record: BackendRefRecord): Vehicle {
 
 function mapBranch(record: BackendRefRecord): Branch {
   const mapped: Branch = {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     code: record.code,
     name: record.name ?? '',
     nameEn: '',
@@ -264,7 +247,7 @@ function mapBranch(record: BackendRefRecord): Branch {
 
 function mapCity(record: BackendCityRecord): City {
   const mapped: City = {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     code: record.code,
     name: record.name,
     region: record.region || '',
@@ -276,7 +259,7 @@ function mapCity(record: BackendCityRecord): City {
 
 function mapGoodsType(record: BackendGoodsTypeRecord): GoodsType {
   const mapped: GoodsType = {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     code: record.code,
     name: record.name,
     description: record.description || '',
@@ -286,18 +269,18 @@ function mapGoodsType(record: BackendGoodsTypeRecord): GoodsType {
 }
 
 function mapTariff(record: BackendTariffRecord): Tariff {
-  const fromCityId = toSyntheticId(record.from_city_id);
-  const toCityId = toSyntheticId(record.to_city_id);
-  const goodsTypeId = toSyntheticId(record.goods_type_id);
+  const fromCityId = syntheticEntityId(record.from_city_id);
+  const toCityId = syntheticEntityId(record.to_city_id);
+  const goodsTypeId = record.goods_type_id ? syntheticEntityId(record.goods_type_id) : undefined;
 
   return {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     fromCityId,
     fromCityName: cityLookup.get(fromCityId)?.name || '',
     toCityId,
     toCityName: cityLookup.get(toCityId)?.name || '',
     goodsTypeId,
-    goodsTypeName: goodsTypeLookup.get(goodsTypeId)?.name || '',
+    goodsTypeName: goodsTypeId ? goodsTypeLookup.get(goodsTypeId)?.name || '' : '',
     pricePerKg: Number(record.price_per_kg),
     minimumCharge: Number(record.minimum_charge),
     validFrom: record.valid_from?.split('T')[0] || record.valid_from,
@@ -306,15 +289,15 @@ function mapTariff(record: BackendTariffRecord): Tariff {
 }
 
 function mapShipment(record: BackendShipmentRecord): Shipment {
-  const senderId = record.sender_id ? toSyntheticId(record.sender_id) : 0;
-  const receiverId = record.receiver_id ? toSyntheticId(record.receiver_id) : 0;
-  const branchId = record.branch_id ? toSyntheticId(record.branch_id) : 0;
-  const agentId = record.agent_id ? toSyntheticId(record.agent_id) : 0;
+  const senderId = record.sender_id ? syntheticEntityId(record.sender_id) : 0;
+  const receiverId = record.receiver_id ? syntheticEntityId(record.receiver_id) : 0;
+  const branchId = record.branch_id ? syntheticEntityId(record.branch_id) : 0;
+  const agentId = record.agent_id ? syntheticEntityId(record.agent_id) : 0;
 
   const mapped: Shipment = {
-    id: toSyntheticId(record.id),
+    id: syntheticEntityId(record.id),
     shipmentNo: record.shipment_no,
-    date: record.created_at.split('T')[0],
+    date: record.effective_date ?? record.created_at.split('T')[0],
     branchId,
     branchName: branchLookup.get(branchId)?.name ?? '',
     agentId: agentId || undefined,
@@ -337,6 +320,7 @@ function mapShipment(record: BackendShipmentRecord): Shipment {
     freightCharge: Number(record.freight_charge ?? record.original_amount ?? 0),
     transferFee: Number(record.transfer_fee ?? 0),
     additionalCharges: Number(record.additional_charges ?? 0),
+    hawalaAmount: Number(record.hawala_amount ?? 0),
     transferServiceFee: Number(record.transfer_service_fee ?? 0),
     prepaidAmount: Number(record.prepaid_amount ?? 0),
     discount: Number(record.discount_amount ?? 0),
@@ -411,7 +395,7 @@ export const phase15Gateway = {
       return mapCity(created);
     },
     update: async (id: number, data: Partial<City>): Promise<City> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing city mapping for backend update.');
       }
@@ -424,7 +408,7 @@ export const phase15Gateway = {
       return mapCity(updated);
     },
     delete: async (id: number): Promise<void> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing city mapping for backend delete.');
       }
@@ -446,7 +430,7 @@ export const phase15Gateway = {
       return mapGoodsType(created);
     },
     update: async (id: number, data: Partial<GoodsType>): Promise<GoodsType> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing goods type mapping for backend update.');
       }
@@ -458,7 +442,7 @@ export const phase15Gateway = {
       return mapGoodsType(updated);
     },
     delete: async (id: number): Promise<void> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing goods type mapping for backend delete.');
       }
@@ -478,18 +462,18 @@ export const phase15Gateway = {
       isActive: boolean;
     }>> => {
       const params = new URLSearchParams({ destination });
-      const branchBackendId = branchId ? toBackendId(branchId) : undefined;
+      const branchBackendId = branchId ? getBackendIdFromSynthetic(branchId) : undefined;
       if (branchBackendId) params.set('branchId', branchBackendId);
       const rows = await httpClient.get<BackendAgentRecord[]>(`/agents/lookup-by-destination?${params.toString()}`);
       return rows.map((row) => ({
-        id: toSyntheticId(row.id),
+        id: syntheticEntityId(row.id),
         code: row.code,
         name: row.name,
         phone: row.phone,
         governorate: row.governorate,
         city: row.city,
         area: row.area,
-        branchId: row.branch_id ? toSyntheticId(row.branch_id) : undefined,
+        branchId: row.branch_id ? syntheticEntityId(row.branch_id) : undefined,
         isActive: row.is_active !== false,
       }));
     },
@@ -502,9 +486,9 @@ export const phase15Gateway = {
     },
     create: async (data: Partial<Tariff>): Promise<Tariff> => {
       await Promise.all([phase15Gateway.cities.getAll(), phase15Gateway.goodsTypes.getAll()]);
-      const fromCityBackendId = data.fromCityId ? toBackendId(data.fromCityId) : undefined;
-      const toCityBackendId = data.toCityId ? toBackendId(data.toCityId) : undefined;
-      const goodsTypeBackendId = data.goodsTypeId ? toBackendId(data.goodsTypeId) : undefined;
+      const fromCityBackendId = data.fromCityId ? getBackendIdFromSynthetic(data.fromCityId) : undefined;
+      const toCityBackendId = data.toCityId ? getBackendIdFromSynthetic(data.toCityId) : undefined;
+      const goodsTypeBackendId = data.goodsTypeId ? getBackendIdFromSynthetic(data.goodsTypeId) : undefined;
       if (!fromCityBackendId || !toCityBackendId || !goodsTypeBackendId) {
         throw new Error('Missing city/goods type mapping for tariff create.');
       }
@@ -523,14 +507,14 @@ export const phase15Gateway = {
     },
     update: async (id: number, data: Partial<Tariff>): Promise<Tariff> => {
       await Promise.all([phase15Gateway.cities.getAll(), phase15Gateway.goodsTypes.getAll()]);
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing tariff mapping for backend update.');
       }
       const updated = await httpClient.put<BackendTariffRecord>(`/tariffs/${backendId}`, {
-        from_city_id: data.fromCityId ? toBackendId(data.fromCityId) : undefined,
-        to_city_id: data.toCityId ? toBackendId(data.toCityId) : undefined,
-        goods_type_id: data.goodsTypeId ? toBackendId(data.goodsTypeId) : undefined,
+        from_city_id: data.fromCityId ? getBackendIdFromSynthetic(data.fromCityId) : undefined,
+        to_city_id: data.toCityId ? getBackendIdFromSynthetic(data.toCityId) : undefined,
+        goods_type_id: data.goodsTypeId ? getBackendIdFromSynthetic(data.goodsTypeId) : data.goodsTypeId === undefined ? undefined : null,
         price_per_kg: data.pricePerKg,
         minimum_charge: data.minimumCharge,
         valid_from: data.validFrom,
@@ -539,7 +523,7 @@ export const phase15Gateway = {
       return mapTariff(updated);
     },
     delete: async (id: number): Promise<void> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing tariff mapping for backend delete.');
       }
@@ -563,7 +547,7 @@ export const phase15Gateway = {
       return mapCustomer(created);
     },
     update: async (id: number, data: Partial<Customer>): Promise<Customer> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing customer mapping for backend update.');
       const updated = await httpClient.put<BackendRefRecord>(`/customers/${backendId}`, {
         code: data.code,
@@ -574,7 +558,7 @@ export const phase15Gateway = {
       return mapCustomer(updated);
     },
     delete: async (id: number): Promise<void> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing customer mapping for backend delete.');
       await httpClient.delete<void>(`/customers/${backendId}`);
     },
@@ -597,7 +581,7 @@ export const phase15Gateway = {
       return mapCustomer(created);
     },
     update: async (id: number, data: Partial<Customer>): Promise<Customer> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing sender/receiver mapping for backend update.');
       const updated = await httpClient.put<BackendRefRecord>(`/senders-receivers/${backendId}`, {
         code: data.code,
@@ -609,7 +593,7 @@ export const phase15Gateway = {
       return mapCustomer(updated);
     },
     delete: async (id: number): Promise<void> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing sender/receiver mapping for backend delete.');
       await httpClient.delete<void>(`/senders-receivers/${backendId}`);
     },
@@ -631,7 +615,7 @@ export const phase15Gateway = {
       return mapDriver(created);
     },
     update: async (id: number, data: Partial<Driver>): Promise<Driver> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing driver mapping for backend update.');
       const updated = await httpClient.put<BackendRefRecord>(`/drivers/${backendId}`, {
         code: data.code,
@@ -644,13 +628,14 @@ export const phase15Gateway = {
       return mapDriver(updated);
     },
     delete: async (id: number): Promise<void> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing driver mapping for backend delete.');
       await httpClient.delete<void>(`/drivers/${backendId}`);
     },
   },
   vehicles: {
     getAll: async (): Promise<Vehicle[]> => {
+      await phase15Gateway.drivers.getAll().catch(() => []);
       const rows = await httpClient.get<BackendRefRecord[]>('/vehicles');
       return rows.map(mapVehicle);
     },
@@ -660,23 +645,25 @@ export const phase15Gateway = {
         plate_number: data.plateNumber || '',
         model: data.model || '',
         capacity_kg: data.capacity || 0,
+        driver_id: data.driverId ? getBackendIdFromSynthetic(data.driverId) ?? null : null,
         status: data.isActive === false ? 'inactive' : 'active',
       });
       return mapVehicle(created);
     },
     update: async (id: number, data: Partial<Vehicle>): Promise<Vehicle> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing vehicle mapping for backend update.');
       const updated = await httpClient.put<BackendRefRecord>(`/vehicles/${backendId}`, {
         plate_number: data.plateNumber,
         model: data.model,
         capacity_kg: data.capacity,
+        driver_id: data.driverId ? getBackendIdFromSynthetic(data.driverId) ?? null : null,
         status: data.isActive === false ? 'inactive' : 'active',
       });
       return mapVehicle(updated);
     },
     delete: async (id: number): Promise<void> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing vehicle mapping for backend delete.');
       await httpClient.delete<void>(`/vehicles/${backendId}`);
     },
@@ -689,7 +676,7 @@ export const phase15Gateway = {
     },
     getById: async (id: number): Promise<Shipment | undefined> => {
       await ensureReferenceLookups();
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) return undefined;
       const row = await httpClient.get<BackendShipmentRecord>(`/shipments/${backendId}`);
       return mapShipment(row);
@@ -697,10 +684,10 @@ export const phase15Gateway = {
     create: async (data: Partial<Shipment>): Promise<Shipment> => {
       await ensureReferenceLookups();
 
-      const senderBackendId = data.senderId ? toBackendId(data.senderId) : undefined;
-      const receiverBackendId = data.receiverId ? toBackendId(data.receiverId) : undefined;
-      const branchBackendId = data.branchId ? toBackendId(data.branchId) : undefined;
-      const agentBackendId = data.agentId ? toBackendId(data.agentId) : undefined;
+      const senderBackendId = data.senderId ? getBackendIdFromSynthetic(data.senderId) : undefined;
+      const receiverBackendId = data.receiverId ? getBackendIdFromSynthetic(data.receiverId) : undefined;
+      const branchBackendId = data.branchId ? getBackendIdFromSynthetic(data.branchId) : undefined;
+      const agentBackendId = data.agentId ? getBackendIdFromSynthetic(data.agentId) : undefined;
 
       if (!senderBackendId || !receiverBackendId || !branchBackendId) {
         throw new Error('Missing sender/receiver/branch mapping for backend shipment create.');
@@ -743,22 +730,24 @@ export const phase15Gateway = {
         freightCharge: data.freightCharge ?? originalAmount,
         transferFee: data.transferFee ?? 0,
         additionalCharges: data.additionalCharges ?? 0,
+        hawalaAmount: data.hawalaAmount ?? 0,
         prepaidAmount: data.prepaidAmount ?? 0,
         discountAmount: data.discount ?? 0,
         transferServiceFee: data.transferServiceFee ?? 0,
+        ...(data.date ? { effectiveDate: data.date.slice(0, 10) } : {}),
         ...(financial ? { financial } : {}),
       });
       return mapShipment(created);
     },
     update: async (id: number, data: Partial<Shipment>): Promise<Shipment> => {
       await ensureReferenceLookups();
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing shipment mapping for backend update.');
 
-      const senderBackendId = data.senderId ? toBackendId(data.senderId) : undefined;
-      const receiverBackendId = data.receiverId ? toBackendId(data.receiverId) : undefined;
-      const branchBackendId = data.branchId ? toBackendId(data.branchId) : undefined;
-      const agentBackendId = data.agentId ? toBackendId(data.agentId) : undefined;
+      const senderBackendId = data.senderId ? getBackendIdFromSynthetic(data.senderId) : undefined;
+      const receiverBackendId = data.receiverId ? getBackendIdFromSynthetic(data.receiverId) : undefined;
+      const branchBackendId = data.branchId ? getBackendIdFromSynthetic(data.branchId) : undefined;
+      const agentBackendId = data.agentId ? getBackendIdFromSynthetic(data.agentId) : undefined;
       const rate = resolveExchangeRate(data);
 
       const updated = await httpClient.put<BackendShipmentRecord>(`/shipments/${backendId}`, {
@@ -779,14 +768,16 @@ export const phase15Gateway = {
         freightCharge: data.freightCharge,
         transferFee: data.transferFee,
         additionalCharges: data.additionalCharges,
+        hawalaAmount: data.hawalaAmount,
         prepaidAmount: data.prepaidAmount,
         discountAmount: data.discount,
         transferServiceFee: data.transferServiceFee,
+        ...(data.date ? { effectiveDate: data.date.slice(0, 10) } : {}),
       });
       return mapShipment(updated);
     },
     statusHistory: async (id: number) => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing shipment mapping for status history.');
       }
@@ -821,7 +812,7 @@ export const phase15Gateway = {
       return phase15Gateway.shipments._postAction(id, 'confirm', payload);
     },
     getFinancialCard: async (id: number) => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) return null;
       return httpClient.get<{
         shipmentNo: string;
@@ -841,7 +832,7 @@ export const phase15Gateway = {
       }>(`/shipments/${backendId}/financial-card`);
     },
     repostFinancials: async (id: number) => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing shipment mapping for repost financials.');
       return httpClient.post<{ alreadyPosted: boolean; message: string }>(`/shipments/${backendId}/repost-financials`, {});
     },
@@ -895,7 +886,7 @@ export const phase15Gateway = {
         | 'cancel',
       payload?: { note?: string; metadata?: Record<string, unknown> },
     ): Promise<Shipment> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) {
         throw new Error('Missing shipment mapping for lifecycle action.');
       }
@@ -915,13 +906,13 @@ export const phase15Gateway = {
         const shipmentIds = (details.shipments || []).map((s) => mapShipment(s).id);
         const selectedShipments = shipmentIds.map((sid) => shipmentLookup.get(sid)).filter(Boolean) as Shipment[];
         mapped.push({
-          id: toSyntheticId(row.id),
+          id: syntheticEntityId(row.id),
           manifestNo: row.manifest_no,
           date: row.created_at.split('T')[0],
-          vehicleId: row.vehicle_id ? toSyntheticId(row.vehicle_id) : 0,
-          vehiclePlate: row.vehicle_id ? (vehicleLookup.get(toSyntheticId(row.vehicle_id))?.plateNumber ?? '') : '',
-          driverId: row.driver_id ? toSyntheticId(row.driver_id) : 0,
-          driverName: row.driver_id ? (driverLookup.get(toSyntheticId(row.driver_id))?.name ?? '') : '',
+          vehicleId: row.vehicle_id ? syntheticEntityId(row.vehicle_id) : 0,
+          vehiclePlate: row.vehicle_id ? (vehicleLookup.get(syntheticEntityId(row.vehicle_id))?.plateNumber ?? '') : '',
+          driverId: row.driver_id ? syntheticEntityId(row.driver_id) : 0,
+          driverName: row.driver_id ? (driverLookup.get(syntheticEntityId(row.driver_id))?.name ?? '') : '',
           route: '',
           shipments: shipmentIds,
           totalWeight: selectedShipments.reduce((sum, s) => sum + (s.weight || 0), 0),
@@ -940,13 +931,13 @@ export const phase15Gateway = {
       if (linkedShipmentId) {
         const sh = shipmentLookup.get(linkedShipmentId);
         if (sh?.branchId) {
-          branchBackendId = toBackendId(sh.branchId);
+          branchBackendId = getBackendIdFromSynthetic(sh.branchId);
         }
       }
       if (!branchBackendId) {
         const branches = await phase15Gateway.branches.getAll();
         if (branches[0]?.id) {
-          branchBackendId = toBackendId(branches[0].id);
+          branchBackendId = getBackendIdFromSynthetic(branches[0].id);
         }
       }
       if (!branchBackendId) {
@@ -956,23 +947,23 @@ export const phase15Gateway = {
       const created = await httpClient.post<BackendManifestRecord>('/manifests', {
         manifestNo: data.manifestNo || `MAN-${Date.now()}`,
         branchId: branchBackendId,
-        vehicleId: data.vehicleId ? toBackendId(data.vehicleId) : undefined,
-        driverId: data.driverId ? toBackendId(data.driverId) : undefined,
+        vehicleId: data.vehicleId ? getBackendIdFromSynthetic(data.vehicleId) : undefined,
+        driverId: data.driverId ? getBackendIdFromSynthetic(data.driverId) : undefined,
         status: mapManifestStatusToBackend(data.status || 'draft'),
-        shipmentIds: (data.shipments || []).map((sid) => toBackendId(sid)).filter(Boolean),
+        shipmentIds: (data.shipments || []).map((sid) => getBackendIdFromSynthetic(sid)).filter(Boolean),
       });
 
       const details = await httpClient.get<BackendManifestRecord>(`/manifests/${created.id}`);
       const shipments = (details.shipments || []).map((s) => mapShipment(s).id);
       const selectedShipments = shipments.map((sid) => shipmentLookup.get(sid)).filter(Boolean) as Shipment[];
       return {
-        id: toSyntheticId(created.id),
+        id: syntheticEntityId(created.id),
         manifestNo: created.manifest_no,
         date: created.created_at.split('T')[0],
-        vehicleId: created.vehicle_id ? toSyntheticId(created.vehicle_id) : 0,
-        vehiclePlate: created.vehicle_id ? (vehicleLookup.get(toSyntheticId(created.vehicle_id))?.plateNumber ?? '') : '',
-        driverId: created.driver_id ? toSyntheticId(created.driver_id) : 0,
-        driverName: created.driver_id ? (driverLookup.get(toSyntheticId(created.driver_id))?.name ?? '') : '',
+        vehicleId: created.vehicle_id ? syntheticEntityId(created.vehicle_id) : 0,
+        vehiclePlate: created.vehicle_id ? (vehicleLookup.get(syntheticEntityId(created.vehicle_id))?.plateNumber ?? '') : '',
+        driverId: created.driver_id ? syntheticEntityId(created.driver_id) : 0,
+        driverName: created.driver_id ? (driverLookup.get(syntheticEntityId(created.driver_id))?.name ?? '') : '',
         route: data.route || '',
         shipments,
         totalWeight: selectedShipments.reduce((sum, s) => sum + (s.weight || 0), 0),
@@ -982,26 +973,26 @@ export const phase15Gateway = {
       };
     },
     update: async (id: number, data: Partial<Manifest>): Promise<Manifest> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing manifest mapping for backend update.');
 
       const updated = await httpClient.put<BackendManifestRecord>(`/manifests/${backendId}`, {
-        vehicleId: data.vehicleId ? toBackendId(data.vehicleId) : undefined,
-        driverId: data.driverId ? toBackendId(data.driverId) : undefined,
+        vehicleId: data.vehicleId ? getBackendIdFromSynthetic(data.vehicleId) : undefined,
+        driverId: data.driverId ? getBackendIdFromSynthetic(data.driverId) : undefined,
         status: data.status ? mapManifestStatusToBackend(data.status) : undefined,
-        shipmentIds: data.shipments ? data.shipments.map((sid) => toBackendId(sid)).filter(Boolean) : undefined,
+        shipmentIds: data.shipments ? data.shipments.map((sid) => getBackendIdFromSynthetic(sid)).filter(Boolean) : undefined,
       });
       const details = await httpClient.get<BackendManifestRecord>(`/manifests/${updated.id}`);
       const shipments = (details.shipments || []).map((s) => mapShipment(s).id);
       const selectedShipments = shipments.map((sid) => shipmentLookup.get(sid)).filter(Boolean) as Shipment[];
       return {
-        id: toSyntheticId(updated.id),
+        id: syntheticEntityId(updated.id),
         manifestNo: updated.manifest_no,
         date: updated.created_at.split('T')[0],
-        vehicleId: updated.vehicle_id ? toSyntheticId(updated.vehicle_id) : 0,
-        vehiclePlate: updated.vehicle_id ? (vehicleLookup.get(toSyntheticId(updated.vehicle_id))?.plateNumber ?? '') : '',
-        driverId: updated.driver_id ? toSyntheticId(updated.driver_id) : 0,
-        driverName: updated.driver_id ? (driverLookup.get(toSyntheticId(updated.driver_id))?.name ?? '') : '',
+        vehicleId: updated.vehicle_id ? syntheticEntityId(updated.vehicle_id) : 0,
+        vehiclePlate: updated.vehicle_id ? (vehicleLookup.get(syntheticEntityId(updated.vehicle_id))?.plateNumber ?? '') : '',
+        driverId: updated.driver_id ? syntheticEntityId(updated.driver_id) : 0,
+        driverName: updated.driver_id ? (driverLookup.get(syntheticEntityId(updated.driver_id))?.name ?? '') : '',
         route: data.route || '',
         shipments,
         totalWeight: selectedShipments.reduce((sum, s) => sum + (s.weight || 0), 0),
@@ -1016,10 +1007,10 @@ export const phase15Gateway = {
       await phase15Gateway.shipments.getAll();
       const rows = await httpClient.get<BackendDeliveryRecord[]>('/deliveries');
       return rows.map((row) => {
-        const shipmentId = toSyntheticId(row.shipment_id);
+        const shipmentId = syntheticEntityId(row.shipment_id);
         const shipment = shipmentLookup.get(shipmentId);
         return {
-          id: toSyntheticId(row.id),
+          id: syntheticEntityId(row.id),
           shipmentId,
           shipmentNo: shipment?.shipmentNo || '',
           recipientName: row.recipient_name || shipment?.receiverName || '',
@@ -1035,7 +1026,7 @@ export const phase15Gateway = {
       });
     },
     create: async (data: Partial<Delivery>): Promise<Delivery> => {
-      const shipmentBackendId = data.shipmentId ? toBackendId(data.shipmentId) : undefined;
+      const shipmentBackendId = data.shipmentId ? getBackendIdFromSynthetic(data.shipmentId) : undefined;
       if (!shipmentBackendId) {
         throw new Error('Shipment mapping is required before creating delivery.');
       }
@@ -1044,7 +1035,7 @@ export const phase15Gateway = {
       const created = await httpClient.post<BackendDeliveryRecord>('/deliveries', {
         deliveryNo: `DEL-${Date.now()}`,
         shipmentId: shipmentBackendId,
-        branchId: shipment?.branchId ? toBackendId(shipment.branchId) : undefined,
+        branchId: shipment?.branchId ? getBackendIdFromSynthetic(shipment.branchId) : undefined,
         status: mapDeliveryStatusToBackend(data.deliveryStatus || 'pending'),
         recipientName: data.recipientName || '',
         receivedAt: data.deliveredAt || undefined,
@@ -1053,10 +1044,10 @@ export const phase15Gateway = {
         originalCurrency: data.currency || 'USD',
         exchangeRateToUsd: rate,
       });
-      const shipmentId = toSyntheticId(created.shipment_id);
+      const shipmentId = syntheticEntityId(created.shipment_id);
       const createdShipment = shipmentLookup.get(shipmentId);
       return {
-        id: toSyntheticId(created.id),
+        id: syntheticEntityId(created.id),
         shipmentId,
         shipmentNo: createdShipment?.shipmentNo || '',
         recipientName: created.recipient_name || '',
@@ -1071,7 +1062,7 @@ export const phase15Gateway = {
       };
     },
     update: async (id: number, data: Partial<Delivery>): Promise<Delivery> => {
-      const backendId = toBackendId(id);
+      const backendId = getBackendIdFromSynthetic(id);
       if (!backendId) throw new Error('Missing delivery mapping for backend update.');
       const rate = resolveExchangeRate(data);
       const updated = await httpClient.put<BackendDeliveryRecord>(`/deliveries/${backendId}`, {
@@ -1083,10 +1074,10 @@ export const phase15Gateway = {
         originalCurrency: data.currency,
         exchangeRateToUsd: rate,
       });
-      const shipmentId = toSyntheticId(updated.shipment_id);
+      const shipmentId = syntheticEntityId(updated.shipment_id);
       const shipment = shipmentLookup.get(shipmentId);
       return {
-        id: toSyntheticId(updated.id),
+        id: syntheticEntityId(updated.id),
         shipmentId,
         shipmentNo: shipment?.shipmentNo || '',
         recipientName: updated.recipient_name || '',

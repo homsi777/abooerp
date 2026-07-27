@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import type { Customer, Driver, Manifest } from '../types';
+import type { Customer, Driver, Manifest, Shipment, ShipmentStatus } from '../types';
 import { SHIPMENT_STATUS_LABELS } from '../types';
 import ReportControlBar from '../components/ReportControlBar';
 import { convertToUsd, formatCurrency, getExchangeRatesToUsd, type CurrencyCode } from '../lib/currency/currency';
@@ -10,10 +10,20 @@ import { downloadCsv } from '../lib/export/csvDownload';
 
 type ReportType = 'daily' | 'destination' | 'driver' | 'pending' | 'customer' | 'cash' | 'manifest';
 
+type ReportAggregate = { count: number; weight: number; total: number };
+
+function reportAggregateEntries(record: Record<string, ReportAggregate>): Array<[string, ReportAggregate]> {
+  return Object.entries(record);
+}
+
+function shipmentStatusLabel(status: ShipmentStatus | string): string {
+  return SHIPMENT_STATUS_LABELS[status as ShipmentStatus] ?? status;
+}
+
 export default function Reports() {
   const rates = getExchangeRatesToUsd();
   const { showToast } = useToast();
-  const [shipments, setShipments] = useState<any[]>([]);
+  const [shipments, setShipments] = useState<Shipment[]>([]);
   const [statementSummary, setStatementSummary] = useState<any>(null);
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [manifests, setManifests] = useState<Manifest[]>([]);
@@ -176,7 +186,7 @@ export default function Reports() {
               s.weight,
               s.total,
               shipmentAmountUsd(s.total || 0, s.currency).toFixed(2),
-              SHIPMENT_STATUS_LABELS[s.status] ?? s.status,
+              shipmentStatusLabel(s.status),
             ]),
           );
           showToast('تم تنزيل الملف', 'success');
@@ -191,12 +201,12 @@ export default function Reports() {
               acc[k].total += shipmentAmountUsd(s.total || 0, s.currency);
               return acc;
             },
-            {} as Record<string, { count: number; weight: number; total: number }>,
+            {} as Record<string, ReportAggregate>,
           );
           downloadCsv(
             `report-destination-${d0}_${d1}.csv`,
             ['destination', 'count', 'weight', 'totalUsd'],
-            Object.entries(byDest).map(([dest, v]) => [dest, v.count, v.weight, v.total.toFixed(2)]),
+            reportAggregateEntries(byDest).map(([dest, v]) => [dest, v.count, v.weight, v.total.toFixed(2)]),
           );
           showToast('تم تنزيل الملف', 'success');
           return;
@@ -212,12 +222,12 @@ export default function Reports() {
               acc[name].total += shipmentAmountUsd(s.total || 0, s.currency);
               return acc;
             },
-            {} as Record<string, { count: number; weight: number; total: number }>,
+            {} as Record<string, ReportAggregate>,
           );
           downloadCsv(
             `report-driver-${d0}_${d1}.csv`,
             ['driver', 'shipments', 'weight', 'totalUsd'],
-            Object.entries(byDriver).map(([dn, v]) => [dn, v.count, v.weight, v.total.toFixed(2)]),
+            reportAggregateEntries(byDriver).map(([dn, v]) => [dn, v.count, v.weight, v.total.toFixed(2)]),
           );
           showToast('تم تنزيل الملف', 'success');
           return;
@@ -231,7 +241,7 @@ export default function Reports() {
               s.date,
               s.senderName,
               s.receiverName,
-              SHIPMENT_STATUS_LABELS[s.status] ?? s.status,
+              shipmentStatusLabel(s.status),
             ]),
           );
           showToast('تم تنزيل الملف', 'success');
@@ -350,7 +360,7 @@ export default function Reports() {
                     <td>{s.weight}</td>
                     <td>{formatCurrency(s.total || 0, (s.currency || 'USD') as CurrencyCode)}</td>
                     <td>{formatCurrency(shipmentAmountUsd(s.total || 0, s.currency), 'USD')}</td>
-                    <td>{SHIPMENT_STATUS_LABELS[s.status] ?? s.status}</td>
+                    <td>{shipmentStatusLabel(s.status)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -390,7 +400,7 @@ export default function Reports() {
             acc[k].total += shipmentAmountUsd(s.total || 0, s.currency);
             return acc;
           },
-          {} as Record<string, { count: number; weight: number; total: number }>,
+          {} as Record<string, ReportAggregate>,
         );
 
         return (
@@ -411,7 +421,7 @@ export default function Reports() {
                 </tr>
               </thead>
               <tbody>
-                {Object.entries(byDestination).map(([dest, data]) => (
+                {reportAggregateEntries(byDestination).map(([dest, data]) => (
                   <tr key={dest}>
                     <td>{dest}</td>
                     <td>{data.count}</td>
@@ -436,7 +446,7 @@ export default function Reports() {
             acc[name].total += shipmentAmountUsd(s.total || 0, s.currency);
             return acc;
           },
-          {} as Record<string, { count: number; weight: number; total: number }>,
+          {} as Record<string, ReportAggregate>,
         );
         return (
           <div className="print-preview">
@@ -457,7 +467,7 @@ export default function Reports() {
                 </tr>
               </thead>
               <tbody>
-                {Object.entries(byDriver).map(([dn, v]) => (
+                {reportAggregateEntries(byDriver).map(([dn, v]) => (
                   <tr key={dn}>
                     <td>{dn}</td>
                     <td>{v.count}</td>
@@ -499,7 +509,7 @@ export default function Reports() {
                     <td>{s.date}</td>
                     <td>{s.senderName}</td>
                     <td>{s.receiverName}</td>
-                    <td>{SHIPMENT_STATUS_LABELS[s.status] ?? s.status}</td>
+                    <td>{shipmentStatusLabel(s.status)}</td>
                   </tr>
                 ))}
               </tbody>

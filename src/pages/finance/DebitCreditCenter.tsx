@@ -4,7 +4,8 @@ import { phase3FinanceGateway } from '../../lib/api/phase3FinanceGateway';
 import { getBackendIdFromSynthetic, phase15Gateway } from '../../lib/api/phase15Gateway';
 import { useToast } from '../../components/Toast';
 import { downloadCsv } from '../../lib/export/csvDownload';
-import { exportPdfTable } from '../../lib/export/pdfExport';
+import FinancialStatementPrintButtons from '../../components/finance/FinancialStatementPrintButtons';
+import { buildDebitCreditPrintHtml } from '../../lib/export/financialStatementPrint';
 
 type Row = {
   partyType: string;
@@ -124,39 +125,22 @@ export default function DebitCreditCenter() {
     showToast('تم تنزيل الملف', 'success');
   };
 
-  const exportPdf = async () => {
+  const buildDebitCreditSubtitle = () => {
     const subtitleParts: string[] = [];
     if (filters.search.trim()) subtitleParts.push(`بحث: ${filters.search.trim()}`);
     if (filters.partyType) subtitleParts.push(`نوع الطرف: ${filters.partyType}`);
     if (filters.branchId) subtitleParts.push(`الفرع: ${branches.find((b) => String(b.id) === filters.branchId)?.name ?? filters.branchId}`);
     if (filters.currencyCode) subtitleParts.push(`العملة: ${filters.currencyCode}`);
     if (filters.dateFrom || filters.dateTo) subtitleParts.push(`من ${filters.dateFrom || '—'} إلى ${filters.dateTo || '—'}`);
-    const subtitle = subtitleParts.length ? subtitleParts.join(' | ') : undefined;
-
-    const result = await exportPdfTable({
-      title: 'مركز الدائن/المدين',
-      subtitle,
-      defaultFileName: `debit-credit-${new Date().toISOString().split('T')[0]}.pdf`,
-      headers: ['#', 'كود الطرف', 'اسم الطرف', 'نوع الطرف', 'الفرع', 'العملة', 'إجمالي مدين', 'إجمالي دائن', 'الرصيد', 'اتجاه الرصيد', 'آخر حركة', 'عدد الحركات'],
-      rows: rows.map((r, i) => [
-        i + 1,
-        r.partyCode,
-        r.partyName,
-        r.partyType,
-        r.branchName || '-',
-        r.currencyCode,
-        r.totalDebit,
-        r.totalCredit,
-        r.balance,
-        r.balanceDirection,
-        r.lastMovementAt ? new Date(r.lastMovementAt).toLocaleString('ar-SY') : '-',
-        r.movementCount,
-      ]),
-    });
-
-    if (result.saved) showToast('تم حفظ ملف PDF', 'success');
-    else if (result.message !== 'cancelled') showToast('تعذر إنشاء PDF', 'error');
+    return subtitleParts.length ? subtitleParts.join(' | ') : undefined;
   };
+
+  const buildPrintHtml = () =>
+    buildDebitCreditPrintHtml({
+      subtitle: buildDebitCreditSubtitle(),
+      rows,
+      totals,
+    });
 
   return (
     <div className="h-full flex flex-col">
@@ -194,8 +178,14 @@ export default function DebitCreditCenter() {
             <button className="toolbar-btn primary" onClick={() => void load()}>تطبيق</button>
             <button className="toolbar-btn" onClick={() => setFilters({ search: '', partyType: '', branchId: '', currencyCode: '', dateFrom: '', dateTo: '', balanceDirection: '', includeOperationalParties: false })}>إعادة ضبط</button>
             <button type="button" className="toolbar-btn" onClick={exportCsv}>تصدير Excel (CSV)</button>
-            <button type="button" className="toolbar-btn" onClick={() => void exportPdf()}>تصدير PDF</button>
-            <button type="button" className="toolbar-btn" onClick={() => window.print()}>طباعة</button>
+            <FinancialStatementPrintButtons
+              disabled={loading || rows.length === 0}
+              documentType="debit_credit"
+              pdfTitle="مركز الدائن والمدين"
+              pdfFileName={`debit-credit-${new Date().toISOString().split('T')[0]}.pdf`}
+              onBuildHtml={buildPrintHtml}
+              className="flex gap-2"
+            />
           </div>
           <div className="col-span-2 md:col-span-4 xl:col-span-8 flex items-center gap-2 text-sm text-gray-600 border-t pt-2 mt-1">
             <label className="flex items-center gap-1 cursor-pointer">

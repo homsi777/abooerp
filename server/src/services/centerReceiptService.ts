@@ -9,6 +9,26 @@ export class CenterReceiptService {
     return this.repository.list(scope);
   }
 
+  listProvincialInbound(
+    scope: DataScope | undefined,
+    filters: {
+      center?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      receiptStatus?: 'all' | 'pending' | 'received';
+      driverId?: string;
+    },
+  ) {
+    return this.repository.listProvincialInbound(scope, filters);
+  }
+
+  listVehicleTripReport(
+    scope: DataScope | undefined,
+    filters: { driverId: string; date: string },
+  ) {
+    return this.repository.listVehicleTripReport(scope, filters);
+  }
+
   async create(input: CenterReceiptCreateInput, scope?: DataScope) {
     if (scope?.branchId && input.branchId && input.branchId !== scope.branchId) {
       throw new HttpError(403, 'Cannot receive shipment outside scoped branch.');

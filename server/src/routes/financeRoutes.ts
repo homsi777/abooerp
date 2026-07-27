@@ -10,6 +10,56 @@ import { AuditService } from '../services/auditService.js';
 import { requireIdempotencyKey } from '../middleware/idempotency.js';
 import { licenseGuard } from '../middleware/licenseGuard.js';
 import { calculateShipmentFinancialBreakdown } from '../utils/shipmentFinancialBreakdown.js';
+import { computeAgentRemittanceDue } from '../utils/agentShipmentSettlement.js';
+import { HttpError } from '../utils/errors.js';
+import { buildLedgerFinanceAuditReport } from '../services/ledgerFinanceAuditService.js';
+import {
+  buildDailyLedgerSummaryReport,
+  buildShipmentsByDateReport,
+  buildVoucherReport,
+} from '../services/financeStatementsService.js';
+
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getRequestPermissions(req: unknown): string[] {
+  const userContext = (req as { requestUserContext?: { permissions?: string[] } }).requestUserContext;
+  return Array.isArray(userContext?.permissions) ? userContext.permissions : [];
+}
+
+function canBackdateVouchers(req: unknown): boolean {
+  const userContext = (req as { requestUserContext?: { roleCode?: string; userType?: string } }).requestUserContext;
+  const roleCode = String(userContext?.roleCode ?? '').toLowerCase();
+  const userType = String(userContext?.userType ?? '').toLowerCase();
+  const isAdmin = roleCode === 'admin' || userType === 'admin';
+  const isManager = isAdmin || roleCode === 'general_manager' || roleCode === 'branch_manager';
+  return isManager || getRequestPermissions(req).includes('finance.vouchers.backdate');
+}
+
+function resolveVoucherTargetDate(createdAt?: string): string {
+  if (createdAt) return createdAt.slice(0, 10);
+  return todayIsoDate();
+}
+
+function assertVoucherDateAllowed(req: unknown, targetDate: string) {
+  const today = todayIsoDate();
+  if (targetDate > today) {
+    throw new HttpError(400, 'لا يمكن إنشاء سند بتاريخ مستقبلي.');
+  }
+  if (targetDate !== today && !canBackdateVouchers(req)) {
+    throw new HttpError(403, 'لا يمكن إنشاء أو تعديل سند بتاريخ سابق — يلزم صلاحية السندات بتاريخ سابق.');
+  }
+}
+
+function voucherFxContext(req: unknown, createdAt?: string) {
+  const userContext = (req as { requestUserContext?: { companyId?: string; baseCurrency?: string } }).requestUserContext;
+  return {
+    companyId: userContext?.companyId,
+    baseCurrency: userContext?.baseCurrency,
+    effectiveDate: createdAt ? createdAt.slice(0, 10) : undefined,
+  };
+}
 
 const voucherBaseSchema = z.object({
   voucherNo: z.string().min(1),
@@ -29,6 +79,7 @@ const voucherBaseSchema = z.object({
   exchangeRateToUsd: z.coerce.number().positive().optional(),
   baseAmountUsd: z.coerce.number().optional(),
   createdByUserId: z.string().uuid().optional(),
+  createdAt: z.string().datetime({ offset: true }).optional(),
   expectedUpdatedAt: z.string().datetime({ offset: true }).optional(),
 });
 
@@ -54,6 +105,12 @@ const cashboxListQuerySchema = z.object({
   agentId: z.string().uuid().optional(),
   currencyCode: z.string().optional(),
   isActive: z.enum(['true', 'false']).optional(),
+});
+
+const cashboxStatementQuerySchema = z.object({
+  dateFrom: z.string().datetime({ offset: true }).optional(),
+  dateTo: z.string().datetime({ offset: true }).optional(),
+  transactionType: z.enum(['inflow', 'outflow']).optional(),
 });
 
 const receiptCreateSchema = voucherBaseSchema;
@@ -93,6 +150,14 @@ const partyLedgerQuerySchema = partyStatementQuerySchema.extend({
   page: z.coerce.number().int().min(1).optional(),
   pageSize: z.coerce.number().int().min(1).max(200).optional(),
 });
+
+const profitLossQuerySchema = z.object({
+  fromAt: z.string().datetime({ offset: true }),
+  toAt: z.string().datetime({ offset: true }),
+  branchId: z.string().uuid().optional(),
+  currencyCode: currencyCodeSchema.optional(),
+});
+
 const partyComparisonQuerySchema = z.object({
   partyType: z.enum(['customer', 'sender_receiver', 'agent']).optional(),
   partyId: z.string().uuid().optional(),
@@ -157,6 +222,83 @@ const dashboardCacheResetSchema = z.object({
   confirm: z.boolean().optional().default(false),
 });
 
+const accountingReportQuerySchema = z.object({
+  fromAt: z.string().datetime({ offset: true }).optional(),
+  toAt: z.string().datetime({ offset: true }).optional(),
+  asOf: z.string().datetime({ offset: true }).optional(),
+  branchId: z.string().uuid().optional(),
+  currencyCode: z.string().min(3).max(3).optional(),
+});
+
+const agentReconciliationQuerySchema = accountingReportQuerySchema.extend({
+  agentId: z.string().uuid(),
+});
+
+const bilateralItemSchema = z.object({
+  itemType: z.string().min(1),
+  description: z.string().min(1),
+  companyAmount: z.coerce.number(),
+  agentAmount: z.union([z.coerce.number(), z.null()]).optional(),
+  notes: z.string().optional(),
+  sortOrder: z.coerce.number().int().optional(),
+});
+
+const bilateralSaveSchema = z.object({
+  id: z.string().uuid().optional(),
+  agentId: z.string().uuid(),
+  periodFrom: z.string().datetime({ offset: true }),
+  periodTo: z.string().datetime({ offset: true }),
+  currencyCode: z.string().min(3).max(3).optional(),
+  previousBalance: z.coerce.number().optional(),
+  periodMovement: z.coerce.number().optional(),
+  currentBalance: z.coerce.number().optional(),
+  notes: z.string().optional(),
+  agentNotes: z.string().optional(),
+  forceApprove: z.boolean().optional(),
+  forceNote: z.string().optional(),
+  items: z.array(bilateralItemSchema).min(1),
+});
+
+const bilateralStatusSchema = z.object({
+  agentNotes: z.string().optional(),
+  disputeNote: z.string().optional(),
+});
+
+const ledgerFinanceAuditQuerySchema = z.object({
+  fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).default('2026-06-01'),
+});
+
+const financeStatementDateRangeSchema = z.object({
+  dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  branchId: z.string().uuid().optional(),
+  agentId: z.string().uuid().optional(),
+  customerId: z.string().uuid().optional(),
+  cashboxId: z.string().uuid().optional(),
+  currencyCode: z.string().min(3).max(3).optional(),
+  status: z.string().optional(),
+});
+
+const monthlyInventoryDetailQuerySchema = financeStatementDateRangeSchema.extend({
+  partyType: z.enum(['agent', 'unassigned']),
+  partyId: z.string().uuid().optional(),
+  partyName: z.string().optional(),
+});
+
+const closePeriodSchema = z.object({
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  branchId: z.string().uuid().optional().nullable(),
+  currencyCode: z.string().min(3).max(3).optional(),
+  notes: z.string().optional(),
+});
+
+function requireCompanyId(req: unknown): string {
+  const companyId = (req as { requestUserContext?: { companyId?: string } }).requestUserContext?.companyId;
+  if (!companyId) throw new HttpError(400, 'Company context is required.');
+  return companyId;
+}
+
 export function createFinanceRouter(service: FinanceService) {
   const router = Router();
   const auditService = new AuditService();
@@ -195,11 +337,8 @@ export function createFinanceRouter(service: FinanceService) {
     asyncHandler(async (req, res) => {
       try {
         const payload = receiptCreateSchema.parse(req.body);
-        const userContext = (req as any).requestUserContext;
-        const row = await service.createReceiptVoucher(payload, parseDataScope(req), {
-          companyId: userContext?.companyId,
-          baseCurrency: userContext?.baseCurrency,
-        });
+        assertVoucherDateAllowed(req, resolveVoucherTargetDate(payload.createdAt));
+        const row = await service.createReceiptVoucher(payload, parseDataScope(req), voucherFxContext(req, payload.createdAt));
         auditService.logAsync({
           req,
           action: 'VOUCHER_CREATED',
@@ -235,12 +374,11 @@ export function createFinanceRouter(service: FinanceService) {
     asyncHandler(async (req, res) => {
       try {
         const payload = receiptUpdateSchema.parse(req.body);
-        const userContext = (req as any).requestUserContext;
+        if (payload.createdAt !== undefined) {
+          assertVoucherDateAllowed(req, resolveVoucherTargetDate(payload.createdAt));
+        }
         const before = await service.getReceiptVoucherById(String(req.params.id), parseDataScope(req));
-        const row = await service.updateReceiptVoucher(String(req.params.id), payload, parseDataScope(req), {
-          companyId: userContext?.companyId,
-          baseCurrency: userContext?.baseCurrency,
-        });
+        const row = await service.updateReceiptVoucher(String(req.params.id), payload, parseDataScope(req), voucherFxContext(req, payload.createdAt));
         if (!row) {
           res.status(404).json({ success: false, error: 'Receipt voucher not found' });
           return;
@@ -358,11 +496,8 @@ export function createFinanceRouter(service: FinanceService) {
     asyncHandler(async (req, res) => {
       try {
         const payload = paymentCreateSchema.parse(req.body);
-        const userContext = (req as any).requestUserContext;
-        const row = await service.createPaymentVoucher(payload, parseDataScope(req), {
-          companyId: userContext?.companyId,
-          baseCurrency: userContext?.baseCurrency,
-        });
+        assertVoucherDateAllowed(req, resolveVoucherTargetDate(payload.createdAt));
+        const row = await service.createPaymentVoucher(payload, parseDataScope(req), voucherFxContext(req, payload.createdAt));
         auditService.logAsync({
           req,
           action: 'VOUCHER_CREATED',
@@ -397,12 +532,11 @@ export function createFinanceRouter(service: FinanceService) {
     asyncHandler(async (req, res) => {
       try {
         const payload = paymentUpdateSchema.parse(req.body);
-        const userContext = (req as any).requestUserContext;
+        if (payload.createdAt !== undefined) {
+          assertVoucherDateAllowed(req, resolveVoucherTargetDate(payload.createdAt));
+        }
         const before = await service.getPaymentVoucherById(String(req.params.id), parseDataScope(req));
-        const row = await service.updatePaymentVoucher(String(req.params.id), payload, parseDataScope(req), {
-          companyId: userContext?.companyId,
-          baseCurrency: userContext?.baseCurrency,
-        });
+        const row = await service.updatePaymentVoucher(String(req.params.id), payload, parseDataScope(req), voucherFxContext(req, payload.createdAt));
         if (!row) {
           res.status(404).json({ success: false, error: 'Payment voucher not found' });
           return;
@@ -469,6 +603,27 @@ export function createFinanceRouter(service: FinanceService) {
     }),
   );
 
+  router.post(
+    '/cashboxes/sync',
+    requireAnyPermissions(['finance.read', 'finance.write', 'finance.view']),
+    requirePermissions(['finance.cashboxes.manage']),
+    asyncHandler(async (req, res) => {
+      const scope = parseDataScope(req);
+      if (!scope.companyId) {
+        res.status(400).json({ success: false, error: 'لا يمكن المزامنة بدون نطاق شركة.' });
+        return;
+      }
+      const stats = await service.syncCompanyCashboxes(scope.companyId);
+      auditService.logAsync({
+        req,
+        action: 'CASHBOXES_SYNCED',
+        entityType: 'cashbox',
+        metadata: stats,
+      });
+      res.json({ success: true, data: stats });
+    }),
+  );
+
   router.get(
     '/cashboxes/:id',
     requireAnyPermissions(['finance.read', 'finance.write', 'finance.view']),
@@ -490,6 +645,21 @@ export function createFinanceRouter(service: FinanceService) {
     asyncHandler(async (req, res) => {
       const rows = await service.listCashboxMovementsForCashbox(String(req.params.id), parseDataScope(req));
       res.json({ success: true, data: rows });
+    }),
+  );
+
+  router.get(
+    '/cashboxes/:id/statement',
+    requireAnyPermissions(['finance.read', 'finance.write', 'finance.view']),
+    requireAnyPermissions(['finance.cashboxes.movements.view', 'finance.cashbox.read']),
+    asyncHandler(async (req, res) => {
+      const q = cashboxStatementQuerySchema.parse(req.query);
+      const data = await service.getCashboxStatement(String(req.params.id), parseDataScope(req), q);
+      if (!data) {
+        res.status(404).json({ success: false, error: 'الصندوق غير موجود' });
+        return;
+      }
+      res.json({ success: true, data });
     }),
   );
 
@@ -580,6 +750,450 @@ export function createFinanceRouter(service: FinanceService) {
       const query = debitCreditSummaryQuerySchema.parse(req.query);
       const rows = await service.getDebitCreditSummary(parseDataScope(req), query);
       res.json({ success: true, data: rows });
+    }),
+  );
+
+  router.get(
+    '/reports/trial-balance',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'ميزان المراجعة غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = accountingReportQuerySchema.parse(req.query);
+      const data = await service.getTrialBalanceReport(parseDataScope(req), query);
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/reports/balance-sheet',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'قائمة المركز المالي غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = accountingReportQuerySchema.parse(req.query);
+      const data = await service.getBalanceSheetReport(parseDataScope(req), query);
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/accounting-periods',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'إقفال الفترات غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 50)));
+      const data = await service.listAccountingPeriodClosures(parseDataScope(req), limit);
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.post(
+    '/accounting-periods/close',
+    requireAnyPermissions(['finance.write', 'finance.read']),
+    forbidUserTypes(['agent'], 'إقفال الفترات غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const payload = closePeriodSchema.parse(req.body);
+      const userId = (req as { requestUserContext?: { userId?: string } }).requestUserContext?.userId;
+      const data = await service.closeAccountingPeriod(parseDataScope(req), {
+        periodStart: payload.periodStart,
+        periodEnd: payload.periodEnd,
+        branchId: payload.branchId ?? undefined,
+        currencyCode: payload.currencyCode,
+        notes: payload.notes,
+        closedByUserId: userId ?? null,
+      });
+      auditService.logAsync({
+        req,
+        action: 'ACCOUNTING_PERIOD_CLOSED',
+        entityType: 'accounting_period',
+        entityId: data.id,
+        metadata: { periodStart: payload.periodStart, periodEnd: payload.periodEnd },
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/agent-settlement',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'كشف تسوية الوكيل غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = agentReconciliationQuerySchema.parse(req.query);
+      const companyId = requireCompanyId(req);
+      const data = await service.getAgentSettlementPackage(companyId, query.agentId, query);
+      if (!data) {
+        res.status(404).json({ success: false, error: 'Agent not found.' });
+        return;
+      }
+      auditService.logAsync({
+        req,
+        action: 'AGENT_SETTLEMENT_GENERATED',
+        entityType: 'agent_settlement',
+        entityId: query.agentId,
+        metadata: { fromAt: query.fromAt, toAt: query.toAt, currencyCode: query.currencyCode },
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/hawala-reconciliation',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'مطابقة الحوالات غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = agentReconciliationQuerySchema.parse(req.query);
+      const companyId = requireCompanyId(req);
+      const data = await service.getHawalaReconciliationPackage(companyId, query.agentId, query);
+      if (!data) {
+        res.status(404).json({ success: false, error: 'Agent not found.' });
+        return;
+      }
+      auditService.logAsync({
+        req,
+        action: 'HAWALA_RECONCILIATION_GENERATED',
+        entityType: 'hawala_reconciliation',
+        entityId: query.agentId,
+        metadata: { fromAt: query.fromAt, toAt: query.toAt, currencyCode: query.currencyCode },
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/agent-branch-reconciliation',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'مطابقة الوكيل والفرع الرئيسي غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = agentReconciliationQuerySchema.parse(req.query);
+      const companyId = requireCompanyId(req);
+      const data = await service.getAgentBranchReconciliationPackage(companyId, query.agentId, query);
+      if (!data) {
+        res.status(404).json({ success: false, error: 'Agent not found.' });
+        return;
+      }
+      auditService.logAsync({
+        req,
+        action: 'AGENT_BRANCH_RECONCILIATION_GENERATED',
+        entityType: 'agent_branch_reconciliation',
+        entityId: query.agentId,
+        metadata: { fromAt: query.fromAt, toAt: query.toAt, currencyCode: query.currencyCode },
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/bilateral-reconciliations/preview',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'المطابقة الثنائية غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = agentReconciliationQuerySchema.parse(req.query);
+      const companyId = requireCompanyId(req);
+      const data = await service.getBilateralReconciliationPreview(companyId, query.agentId, query);
+      if (!data) {
+        res.status(404).json({ success: false, error: 'Agent not found.' });
+        return;
+      }
+      auditService.logAsync({
+        req,
+        action: 'BILATERAL_RECONCILIATION_PREVIEW',
+        entityType: 'bilateral_reconciliation',
+        entityId: query.agentId,
+        metadata: { fromAt: query.fromAt, toAt: query.toAt, currencyCode: query.currencyCode },
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/bilateral-reconciliations',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'المطابقة الثنائية غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const agentId = z.string().uuid().parse(req.query.agentId);
+      const companyId = requireCompanyId(req);
+      const data = await service.listBilateralReconciliations(companyId, agentId);
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/bilateral-reconciliations/reports/discrepancies',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'تقرير الفروقات غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const agentId = z.string().uuid().parse(req.query.agentId);
+      const currencyCode = z.string().min(3).max(3).optional().parse(req.query.currencyCode);
+      const companyId = requireCompanyId(req);
+      const data = await service.getBilateralDiscrepancyReport(companyId, agentId, currencyCode);
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/bilateral-reconciliations/reports/balance-history',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'تقرير الذمم غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const agentId = z.string().uuid().parse(req.query.agentId);
+      const currencyCode = z.string().min(3).max(3).optional().parse(req.query.currencyCode);
+      const companyId = requireCompanyId(req);
+      const data = await service.getBilateralBalanceHistoryReport(companyId, agentId, currencyCode);
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/bilateral-reconciliations/:id',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'المطابقة الثنائية غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const companyId = requireCompanyId(req);
+      const data = await service.getBilateralReconciliationById(companyId, String(req.params.id));
+      if (!data) {
+        res.status(404).json({ success: false, error: 'المطابقة غير موجودة.' });
+        return;
+      }
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.post(
+    '/bilateral-reconciliations/draft',
+    requireAnyPermissions(['finance.write', 'finance.vouchers.write']),
+    forbidUserTypes(['agent'], 'المطابقة الثنائية غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const payload = bilateralSaveSchema.parse(req.body);
+      const companyId = requireCompanyId(req);
+      const userId = (req as any).requestUserContext?.userId as string | undefined;
+      const data = await service.saveBilateralReconciliationDraft(companyId, {
+        ...payload,
+        createdByUserId: userId ?? null,
+      });
+      auditService.logAsync({
+        req,
+        action: 'BILATERAL_RECONCILIATION_DRAFT_SAVED',
+        entityType: 'bilateral_reconciliation',
+        entityId: data.id,
+        metadata: { agentId: payload.agentId, status: 'draft' },
+      });
+      res.status(201).json({ success: true, data });
+    }),
+  );
+
+  router.post(
+    '/bilateral-reconciliations/approve',
+    requireAnyPermissions(['finance.write', 'finance.vouchers.write']),
+    forbidUserTypes(['agent'], 'المطابقة الثنائية غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const payload = bilateralSaveSchema.parse(req.body);
+      const companyId = requireCompanyId(req);
+      const userId = (req as any).requestUserContext?.userId as string | undefined;
+      const data = await service.approveBilateralReconciliation(companyId, {
+        ...payload,
+        approvedByUserId: userId ?? null,
+        createdByUserId: userId ?? null,
+      });
+      auditService.logAsync({
+        req,
+        action: 'BILATERAL_RECONCILIATION_APPROVED',
+        entityType: 'bilateral_reconciliation',
+        entityId: data.id,
+        metadata: {
+          agentId: payload.agentId,
+          currentBalance: data.current_balance,
+          currencyCode: data.currency_code,
+          forceApprove: Boolean(payload.forceApprove),
+          forceNote: payload.forceNote ?? null,
+        },
+      });
+      res.status(201).json({ success: true, data });
+    }),
+  );
+
+  router.post(
+    '/bilateral-reconciliations/:id/send-to-agent',
+    requireAnyPermissions(['finance.write', 'finance.vouchers.write']),
+    forbidUserTypes(['agent'], 'المطابقة الثنائية غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const payload = bilateralStatusSchema.parse(req.body ?? {});
+      const companyId = requireCompanyId(req);
+      const data = await service.sendBilateralReconciliationToAgent(
+        companyId,
+        String(req.params.id),
+        payload.agentNotes,
+      );
+      if (!data) {
+        res.status(404).json({ success: false, error: 'المطابقة غير موجودة.' });
+        return;
+      }
+      auditService.logAsync({
+        req,
+        action: 'BILATERAL_RECONCILIATION_PENDING',
+        entityType: 'bilateral_reconciliation',
+        entityId: String(req.params.id),
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.post(
+    '/bilateral-reconciliations/:id/dispute',
+    requireAnyPermissions(['finance.write', 'finance.vouchers.write']),
+    forbidUserTypes(['agent'], 'المطابقة الثنائية غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const payload = bilateralStatusSchema.parse(req.body ?? {});
+      const companyId = requireCompanyId(req);
+      const data = await service.disputeBilateralReconciliation(
+        companyId,
+        String(req.params.id),
+        String(payload.disputeNote ?? ''),
+      );
+      if (!data) {
+        res.status(404).json({ success: false, error: 'المطابقة غير موجودة.' });
+        return;
+      }
+      auditService.logAsync({
+        req,
+        action: 'BILATERAL_RECONCILIATION_DISPUTED',
+        entityType: 'bilateral_reconciliation',
+        entityId: String(req.params.id),
+        metadata: { disputeNote: payload.disputeNote },
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/ledger-finance-audit',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'تحقق الدفter المالي غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = ledgerFinanceAuditQuerySchema.parse(req.query);
+      const companyId = requireCompanyId(req);
+      const data = await buildLedgerFinanceAuditReport(companyId, query.fromDate);
+      auditService.logAsync({
+        req,
+        action: 'LEDGER_FINANCE_AUDIT_GENERATED',
+        entityType: 'ledger_finance_audit',
+        metadata: { fromDate: query.fromDate },
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/finance-statements/vouchers/:type',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'كشف السندات غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const type = String(req.params.type);
+      if (type !== 'receipt' && type !== 'payment') {
+        res.status(400).json({ success: false, error: 'نوع السند غير صالح.' });
+        return;
+      }
+      const query = financeStatementDateRangeSchema.parse(req.query);
+      const data = await buildVoucherReport(parseDataScope(req), type, {
+        dateFrom: query.dateFrom,
+        dateTo: query.dateTo,
+        branchId: query.branchId,
+        agentId: query.agentId,
+        customerId: query.customerId,
+        cashboxId: query.cashboxId,
+        status: query.status,
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/finance-statements/daily-ledger-summary',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'كشف ملخص الدفتر غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = financeStatementDateRangeSchema.parse(req.query);
+      const companyId = requireCompanyId(req);
+      const data = await buildDailyLedgerSummaryReport(companyId, {
+        dateFrom: query.dateFrom,
+        dateTo: query.dateTo,
+        branchId: query.branchId,
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/finance-statements/shipments-by-date',
+    requireAnyPermissions(['finance.read', 'finance.view', 'shipments.read']),
+    asyncHandler(async (req, res) => {
+      const query = financeStatementDateRangeSchema.parse(req.query);
+      const data = await buildShipmentsByDateReport(parseDataScope(req), {
+        dateFrom: query.dateFrom,
+        dateTo: query.dateTo,
+        branchId: query.branchId,
+        agentId: query.agentId,
+        currencyCode: query.currencyCode,
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/financial-reports/monthly-inventory/party-detail',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'تفاصيل الجرد الشهري غير متاحة لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = monthlyInventoryDetailQuerySchema.parse(req.query);
+      const data = await service.getMonthlyInventoryPartyDetail(parseDataScope(req), {
+        dateFrom: query.dateFrom,
+        dateTo: query.dateTo ?? query.dateFrom,
+        branchId: query.branchId,
+        partyType: query.partyType,
+        partyId: query.partyId,
+        partyName: query.partyName,
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/financial-reports/monthly-inventory',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'الجرد الشهري غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = financeStatementDateRangeSchema.parse(req.query);
+      const data = await service.getMonthlyInventoryReport(parseDataScope(req), {
+        dateFrom: query.dateFrom,
+        dateTo: query.dateTo ?? query.dateFrom,
+        branchId: query.branchId,
+      });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/financial-reports/profit-loss',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    forbidUserTypes(['agent'], 'تقرير الأرباح والخسائر غير متاح لمستخدم الوكيل.'),
+    asyncHandler(async (req, res) => {
+      const query = profitLossQuerySchema.parse(req.query);
+      const data = await service.getProfitLossReport(parseDataScope(req), {
+        fromAt: query.fromAt,
+        toAt: query.toAt,
+        branchId: query.branchId,
+        currencyCode: query.currencyCode,
+      });
+      auditService.logAsync({
+        req,
+        action: 'PROFIT_LOSS_REPORT_GENERATED',
+        entityType: 'financial_report',
+        metadata: {
+          fromAt: query.fromAt,
+          toAt: query.toAt,
+          branchId: query.branchId,
+          currencyCode: query.currencyCode,
+        },
+      });
+      res.json({ success: true, data });
     }),
   );
 
@@ -918,6 +1532,10 @@ export function createFinanceRouter(service: FinanceService) {
           s.description                                    as notes,
           s.financial_status,
           s.payment_status,
+          coalesce(s.freight_charge, 0) as freight_charge,
+          coalesce(s.transfer_fee, 0) as transfer_fee,
+          coalesce(s.hawala_amount, 0) as hawala_amount,
+          coalesce(s.transfer_service_fee, tr.transfer_service_fee, 0) as shipment_transfer_service_fee,
           coalesce(s.agent_commission_percentage_snapshot, 0) as agent_commission_percentage_snapshot,
           coalesce(s.agent_commission_amount_snapshot, 0)     as agent_commission_amount_snapshot,
           coalesce(tr.transfer_service_fee, 0)                as transfer_service_fee,
@@ -947,7 +1565,19 @@ export function createFinanceRouter(service: FinanceService) {
       );
 
       const total = dataResult.rows.length ? Number(dataResult.rows[0].total_count ?? 0) : 0;
-      const rows = dataResult.rows.map(({ total_count, ...r }) => ({
+      const rows = dataResult.rows.map(({ total_count, ...r }) => {
+        const shippingPrice = Number(r.freight_charge ?? 0) + Number(r.transfer_fee ?? 0);
+        const commission = Number(r.agent_commission_amount_snapshot ?? 0);
+        const prepaid = Number(r.prepaid_amount ?? 0);
+        const hawalaAmount = Number(r.hawala_amount ?? 0);
+        const transferServiceFee = Number(r.shipment_transfer_service_fee ?? r.transfer_service_fee ?? 0);
+        const agentRemittanceDue = computeAgentRemittanceDue({
+          transferFee: r.transfer_fee,
+          hawalaAmount,
+          transferServiceFee,
+          agentCommissionAmount: commission,
+        });
+        return {
         shipmentId: r.shipment_id,
         shipmentNo: r.shipment_no,
         shipmentDate: r.shipment_date,
@@ -960,10 +1590,11 @@ export function createFinanceRouter(service: FinanceService) {
         destination: r.destination ?? '—',
         shipmentStatus: r.shipment_status,
         currencyCode: r.currency_code,
-        shippingFeeAmount: Number(r.shipping_fee_amount ?? 0),
+        shippingFeeAmount: shippingPrice > 0 ? shippingPrice : Number(r.shipping_fee_amount ?? 0),
         senderCollectionAmount: Number(r.sender_collection_amount ?? 0),
         loadingDuesAmount: Number(r.loading_dues_amount ?? 0),
-        prepaidAmount: Number(r.prepaid_amount ?? 0),
+        prepaidAmount: prepaid,
+        hawalaAmount,
         totalDueOnDelivery: Number(r.total_due_on_delivery ?? 0),
         collectedAmount: Number(r.collected_amount ?? 0),
         remainingToCollect: Number(r.remaining_to_collect ?? 0),
@@ -974,20 +1605,16 @@ export function createFinanceRouter(service: FinanceService) {
         notes: r.notes ?? '',
         financialStatus: r.financial_status,
         paymentStatus: r.payment_status,
-        freightPaymentType: Number(r.prepaid_amount ?? 0) > 0 ? 'PREPAID' : 'COLLECTION',
+        freightPaymentType: prepaid > 0 ? 'PREPAID' : 'COLLECTION',
         agentCommissionPercentageSnapshot: Number(r.agent_commission_percentage_snapshot ?? 0),
-        agentCommissionAmount: Number(r.agent_commission_amount_snapshot ?? 0),
-        agentOwesCompany:
-          Number(r.prepaid_amount ?? 0) > 0
-            ? 0
-            : Math.max(Number(r.shipping_fee_amount ?? 0) - Number(r.agent_commission_amount_snapshot ?? 0), 0),
-        companyOwesAgent:
-          Number(r.prepaid_amount ?? 0) > 0
-            ? Number(r.agent_commission_amount_snapshot ?? 0)
-            : 0,
-        transferServiceFee: Number(r.transfer_service_fee ?? 0),
+        agentCommissionAmount: commission,
+        agentRemittanceDue,
+        agentOwesCompany: agentRemittanceDue,
+        companyOwesAgent: prepaid > 0 ? commission : 0,
+        transferServiceFee,
         transferServiceFeeCurrency: String(r.transfer_service_fee_currency ?? 'USD'),
-      }));
+      };
+      });
 
       // Summary totals
       const sumResult = await pool.query(
@@ -1057,30 +1684,26 @@ export function createFinanceRouter(service: FinanceService) {
           coalesce(sum(coalesce(s.transfer_fee, 0)), 0)                           as total_remaining_to_senders,
           coalesce(sum(coalesce(s.agent_commission_amount_snapshot, 0)), 0)       as total_agent_commission,
           coalesce(sum(
+            greatest(
+              coalesce(s.transfer_fee, 0)
+              + coalesce(s.hawala_amount, 0)
+              + coalesce(s.transfer_service_fee, 0)
+              - coalesce(s.agent_commission_amount_snapshot, 0),
+              0
+            )
+          ), 0)                                                                  as total_agent_remittance_due,
+          coalesce(sum(
             case
               when coalesce(s.prepaid_amount, 0) > 0 then 0
               else greatest(
-                (
-                  case
-                    when coalesce(s.transfer_fee, 0) <> 0
-                      or coalesce(s.additional_charges, 0) <> 0
-                      or coalesce(s.prepaid_amount, 0) <> 0
-                      or coalesce(s.discount_amount, 0) <> 0
-                    then greatest(
-                      coalesce(s.original_amount, 0)
-                      - coalesce(s.transfer_fee, 0)
-                      - coalesce(s.additional_charges, 0)
-                      + coalesce(s.prepaid_amount, 0)
-                      + coalesce(s.discount_amount, 0),
-                      0
-                    )
-                    else coalesce(s.freight_charge, s.original_amount, 0)
-                  end
-                ) - coalesce(s.agent_commission_amount_snapshot, 0),
+                greatest(coalesce(s.freight_charge, 0) + coalesce(s.transfer_fee, 0), 0)
+                - coalesce(s.agent_commission_amount_snapshot, 0),
                 0
               )
             end
           ), 0)                                                                  as total_agent_owes_company,
+          coalesce(sum(coalesce(s.hawala_amount, 0)), 0)                         as total_hawala_amount,
+          coalesce(sum(coalesce(s.transfer_service_fee, 0)), 0)                   as total_transfer_service_fees,
           coalesce(sum(
             case
               when coalesce(s.prepaid_amount, 0) > 0 then coalesce(s.agent_commission_amount_snapshot, 0)
@@ -1099,7 +1722,35 @@ export function createFinanceRouter(service: FinanceService) {
         values,
       );
 
-      const summary = sumResult.rows.map((r) => ({
+      let totalConfirmedReceiptsFromAgent = 0;
+      if (forcedAgentId || q.agentId) {
+        const receiptAgentId = forcedAgentId ?? q.agentId;
+        const receiptValues: unknown[] = [];
+        const receiptConditions: string[] = [`rv.status = 'confirmed'`];
+        if (scope.companyId) {
+          receiptValues.push(scope.companyId);
+          receiptConditions.push(`rv.company_id = $${receiptValues.length}`);
+        }
+        receiptValues.push(receiptAgentId);
+        receiptConditions.push(`rv.agent_id = $${receiptValues.length}::uuid`);
+        if (q.currencyCode) {
+          receiptValues.push(q.currencyCode.toUpperCase());
+          receiptConditions.push(`upper(rv.original_currency) = $${receiptValues.length}`);
+        }
+        const receiptSumResult = await pool.query(
+          `
+          select coalesce(sum(rv.original_amount), 0)::numeric as total_confirmed_receipts
+          from receipt_vouchers rv
+          where ${receiptConditions.join(' and ')}
+          `,
+          receiptValues,
+        );
+        totalConfirmedReceiptsFromAgent = Number(receiptSumResult.rows[0]?.total_confirmed_receipts ?? 0);
+      }
+
+      const summary = sumResult.rows.map((r) => {
+        const totalAgentRemittanceDue = Number(r.total_agent_remittance_due ?? 0);
+        return {
         currencyCode: r.currency_code,
         totalShippingFees: Number(r.total_shipping_fees),
         totalSenderCollections: Number(r.total_sender_collections),
@@ -1109,10 +1760,16 @@ export function createFinanceRouter(service: FinanceService) {
         totalPaidToSenders: 0,
         totalRemainingToSenders: Number(r.total_remaining_to_senders),
         totalAgentCommission: Number(r.total_agent_commission ?? 0),
-        totalAgentOwesCompany: Number(r.total_agent_owes_company ?? 0),
+        totalAgentRemittanceDue,
+        totalAgentOwesCompany: totalAgentRemittanceDue,
         totalCompanyOwesAgent: Number(r.total_company_owes_agent ?? 0),
+        totalHawalaAmount: Number(r.total_hawala_amount ?? 0),
+        totalTransferServiceFees: Number(r.total_transfer_service_fees ?? 0),
+        totalConfirmedReceiptsFromAgent,
+        agentBalanceDue: Math.max(totalAgentRemittanceDue - totalConfirmedReceiptsFromAgent, 0),
         shipmentCount: Number(r.shipment_count),
-      }));
+      };
+      });
 
       res.json({ success: true, data: { rows, summary, page, pageSize, total } });
     }),
@@ -1398,7 +2055,11 @@ export function createFinanceRouter(service: FinanceService) {
           coalesce(s.agent_commission_amount_snapshot, 0) as commission_amount_snapshot,
           coalesce(s.agent_commission_base_type, 'FREIGHT_CHARGE') as base_type,
           s.status,
-          round((coalesce(s.freight_charge, 0) * coalesce(s.agent_commission_percentage_snapshot, 0)) / 100.0, 4) as expected_commission_amount
+          round(
+            (greatest(coalesce(s.freight_charge, 0) + coalesce(s.transfer_fee, 0), 0)
+              * coalesce(s.agent_commission_percentage_snapshot, 0)) / 100.0,
+            4
+          ) as expected_commission_amount
         from shipments s
         join agents a on a.id = s.agent_id
         where ${conditions.join(' and ')}
@@ -1441,14 +2102,14 @@ export function createFinanceRouter(service: FinanceService) {
                 pfm.party_id as posted_to_receiver_id,
                 s.agent_id,
                 s.financial_status,
-                pfm.created_at
+                coalesce(pfm.posted_at, pfm.created_at) as created_at
          from party_financial_movements pfm
          join shipments s on s.id = pfm.shipment_id
          where pfm.party_type = 'sender_receiver'
            and pfm.movement_type = 'shipment_charge'
            and pfm.is_reversal = false
            ${scope?.companyId ? `and s.company_id = '${scope.companyId}'` : ''}
-         order by pfm.created_at desc
+         order by coalesce(pfm.posted_at, pfm.created_at) desc
          limit 100`,
       );
 
@@ -1511,7 +2172,7 @@ export function createFinanceRouter(service: FinanceService) {
         from party_financial_movements pfm
         join shipments s on s.id = pfm.shipment_id
         where ${conditions.join(' and ')}
-        order by pfm.created_at desc
+        order by coalesce(pfm.posted_at, pfm.created_at) desc
         limit 200
         `,
         values,

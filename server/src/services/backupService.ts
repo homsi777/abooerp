@@ -107,6 +107,54 @@ async function sha256File(filePath: string): Promise<string> {
   return createHash('sha256').update(data).digest('hex');
 }
 
+/** pg_dump/pg_restore are often installed but not on PATH (typical Windows PostgreSQL setup). */
+async function resolvePgTool(tool: 'pg_dump' | 'pg_restore'): Promise<string> {
+  const fileName = process.platform === 'win32' ? `${tool}.exe` : tool;
+  const pathProbe = await execCommand(fileName, ['--version']);
+  if (pathProbe.ok) return fileName;
+
+  if (process.platform !== 'win32') return tool;
+
+  const roots = [
+    process.env.PGROOT,
+    process.env.PGBIN?.replace(/[\\/]bin$/i, ''),
+    'C:\\Program Files\\PostgreSQL',
+    'C:\\Program Files (x86)\\PostgreSQL',
+  ].filter(Boolean) as string[];
+
+  for (const root of roots) {
+    let entries: string[] = [];
+    try {
+      entries = await fs.readdir(root);
+    } catch {
+      continue;
+    }
+    const versions = entries
+      .filter((name) => /^\d+/.test(name))
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+    for (const version of versions) {
+      const candidate = path.join(root, version, 'bin', fileName);
+      try {
+        await fs.access(candidate);
+        const probe = await execCommand(candidate, ['--version']);
+        if (probe.ok) return candidate;
+      } catch {
+        /* try next */
+      }
+    }
+    const flatBin = path.join(root, 'bin', fileName);
+    try {
+      await fs.access(flatBin);
+      const probe = await execCommand(flatBin, ['--version']);
+      if (probe.ok) return flatBin;
+    } catch {
+      /* try next root */
+    }
+  }
+
+  return fileName;
+}
+
 export class BackupService {
   private readonly backupsRoot = path.resolve(process.cwd(), 'server', 'backups');
 
@@ -345,8 +393,9 @@ export class BackupService {
       },
     });
 
+    const pgDump = await resolvePgTool('pg_dump');
     const pgDumpResult = await execCommand(
-      process.platform === 'win32' ? 'pg_dump.exe' : 'pg_dump',
+      pgDump,
       ['--format=custom', '--file', filePath, env.PGDATABASE],
       this.getConnectionEnv()
     );
@@ -473,8 +522,9 @@ export class BackupService {
 
     if (!input.dryRun && !record.is_stub) {
       await this.repository.updateBackup(record.id, companyId, { status: 'restoring', error_message: null });
+      const pgRestore = await resolvePgTool('pg_restore');
       const restoreResult = await execCommand(
-        process.platform === 'win32' ? 'pg_restore.exe' : 'pg_restore',
+        pgRestore,
         ['--clean', '--if-exists', '--no-owner', '--dbname', env.PGDATABASE, record.file_path],
         this.getConnectionEnv()
       );
@@ -530,7 +580,8 @@ export class BackupService {
     const latest = await this.repository.getLatestBackup(companyId);
     const policy = await this.getBackupPolicy(companyId);
     const directory = await this.ensureBackupDirectory(companyId);
-    const toolCheck = await execCommand(process.platform === 'win32' ? 'pg_dump.exe' : 'pg_dump', ['--version']);
+    const pgDump = await resolvePgTool('pg_dump');
+    const toolCheck = await execCommand(pgDump, ['--version']);
 
     const readiness = await this.getRestoreReadiness(companyId, latest);
     return {

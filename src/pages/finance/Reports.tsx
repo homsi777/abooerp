@@ -80,10 +80,6 @@ export default function FinanceReports() {
 
   return (
     <div className="h-full flex flex-col min-h-0">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold">التقارير المالية</h2>
-      </div>
-
       <ReportControlBar
         onExecute={() => void loadReport()}
         actions={[

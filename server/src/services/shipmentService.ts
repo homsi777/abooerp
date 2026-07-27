@@ -1,6 +1,7 @@
 import { computeBaseAmountUsd } from '../utils/money.js';
 import { pool } from '../db/pool.js';
 import type { ShipmentCreateInput, ShipmentRepository } from '../repositories/shipmentRepository.js';
+import { resolveAgentDestinationLabel } from '../utils/agentDestination.js';
 import { HttpError } from '../utils/errors.js';
 import type { DataScope } from '../utils/scope.js';
 import type { InventoryService } from './inventoryService.js';
@@ -13,7 +14,8 @@ import {
 } from '../domain/shipmentStatus.js';
 import type { ShipmentFinancialInput, ShipmentFinancialPostingService } from './shipmentFinancialPostingService.js';
 import { AgentRepository } from '../repositories/agentRepository.js';
-import { TransfersService } from './transfersService.js';
+import { computeAgentCommissionSnapshot } from '../utils/shipmentAgentCommission.js';
+import { TransfersService, type EnsureShipmentLinkedTransferInput } from './transfersService.js';
 
 export class ShipmentService {
   constructor(
@@ -24,8 +26,8 @@ export class ShipmentService {
     private agentRepository?: AgentRepository,
   ) {}
 
-  list(scope?: DataScope) {
-    return this.repository.list(scope);
+  list(scope?: DataScope, filters?: { date?: string }) {
+    return this.repository.list(scope, filters);
   }
 
   async getById(id: string, scope?: DataScope) {
@@ -36,10 +38,79 @@ export class ShipmentService {
     return shipment;
   }
 
+  private async resolveSenderReceiverNames(senderId: string, receiverId: string) {
+    let senderDisplay = 'غير معروف';
+    let receiverDisplay = 'غير معروف';
+    try {
+      const partyResult = await pool.query<{ id: string; full_name: string }>(
+        `select id, full_name from senders_receivers where id = any($1::uuid[])`,
+        [[senderId, receiverId]],
+      );
+      for (const row of partyResult.rows) {
+        if (String(row.id) === String(senderId)) senderDisplay = row.full_name;
+        if (String(row.id) === String(receiverId)) receiverDisplay = row.full_name;
+      }
+    } catch {
+      /* optional */
+    }
+    return { senderDisplay, receiverDisplay };
+  }
+
+  private async syncShipmentLinkedTransfer(
+    shipment: Record<string, unknown>,
+    input: Partial<ShipmentCreateInput>,
+    transferDate?: string,
+  ) {
+    if (!this.transfersService) return;
+    const companyId = String(shipment.company_id ?? input.companyId ?? '');
+    if (!companyId) return;
+
+    const hawalaAmount = Number(
+      typeof input.hawalaAmount === 'number' ? input.hawalaAmount : shipment.hawala_amount ?? 0,
+    );
+    const transferServiceFee = Number(
+      typeof input.transferServiceFee === 'number'
+        ? input.transferServiceFee
+        : shipment.transfer_service_fee ?? 0,
+    );
+    if (hawalaAmount <= 0 && transferServiceFee <= 0) return;
+
+    const agentId = String(input.agentId ?? shipment.agent_id ?? '');
+    if (!agentId) return;
+
+    const senderId = String(input.senderId ?? shipment.sender_id ?? '');
+    const receiverId = String(input.receiverId ?? shipment.receiver_id ?? '');
+    const names =
+      senderId && receiverId
+        ? await this.resolveSenderReceiverNames(senderId, receiverId)
+        : { senderDisplay: 'غير معروف', receiverDisplay: 'غير معروف' };
+
+    const payload: EnsureShipmentLinkedTransferInput = {
+      companyId,
+      branchId: String(input.branchId ?? shipment.branch_id ?? '') || undefined,
+      agentId,
+      destinationCity: String(input.destinationCity ?? shipment.destination_city ?? '') || undefined,
+      shipmentId: String(shipment.id),
+      shipmentNo: String(shipment.shipment_no ?? input.shipmentNo ?? ''),
+      senderName: names.senderDisplay,
+      receiverName: names.receiverDisplay,
+      hawalaAmount,
+      transferServiceFee,
+      currency: String(input.originalCurrency ?? shipment.original_currency ?? 'USD'),
+      exchangeRateToUsd: Number(input.exchangeRateToUsd ?? shipment.exchange_rate_to_usd ?? 1) || 1,
+      transferDate:
+        transferDate ??
+        (typeof input.effectiveDate === 'string' ? input.effectiveDate : undefined) ??
+        (shipment.effective_date ? String(shipment.effective_date).slice(0, 10) : undefined),
+    };
+
+    await this.transfersService.ensureShipmentLinkedTransfer(payload);
+  }
+
   async create(
     input: ShipmentCreateInput,
     scope?: DataScope,
-    options?: { financial?: ShipmentFinancialInput; actorUserId?: string },
+    options?: { financial?: ShipmentFinancialInput; actorUserId?: string; effectiveDate?: string },
   ) {
     if (scope?.branchId && input.branchId !== scope.branchId) {
       throw new HttpError(403, 'Cannot create shipment outside scoped branch.');
@@ -59,21 +130,39 @@ export class ShipmentService {
       baseAmountUsd: computeBaseAmountUsd(input.originalAmount, input.exchangeRateToUsd),
     };
 
+    if (!payload.agentId && this.agentRepository && effectiveCompanyId && payload.destinationCity?.trim()) {
+      try {
+        const agent = await this.agentRepository.resolveAgentForDestination(
+          effectiveCompanyId,
+          payload.destinationCity,
+        );
+        payload.agentId = agent.id;
+        payload.destinationCity = resolveAgentDestinationLabel(agent) || payload.destinationCity;
+      } catch {
+        /* keep destination without auto agent when ambiguous */
+      }
+    }
+
     if (payload.agentId && this.agentRepository && effectiveCompanyId) {
       try {
         const agent = await this.agentRepository.getAgentById(payload.agentId, effectiveCompanyId);
-        const commissionPercentage = Number(agent?.commission_percentage ?? 0);
-        const baseAmount = Number(payload.freightCharge ?? 0);
-        payload.agentCommissionBaseType = 'FREIGHT_CHARGE';
-        payload.agentCommissionBaseAmount = baseAmount;
-        payload.agentCommissionPercentageSnapshot = commissionPercentage;
-        payload.agentCommissionAmountSnapshot = (baseAmount * commissionPercentage) / 100;
+        Object.assign(
+          payload,
+          computeAgentCommissionSnapshot({
+            freightCharge: payload.freightCharge,
+            transferFee: payload.transferFee,
+            commissionPercentage: agent?.commission_percentage ?? 0,
+          }),
+        );
       } catch {
-        const baseAmount = Number(payload.freightCharge ?? 0);
-        payload.agentCommissionBaseType = 'FREIGHT_CHARGE';
-        payload.agentCommissionBaseAmount = baseAmount;
-        payload.agentCommissionPercentageSnapshot = 0;
-        payload.agentCommissionAmountSnapshot = 0;
+        Object.assign(
+          payload,
+          computeAgentCommissionSnapshot({
+            freightCharge: payload.freightCharge,
+            transferFee: payload.transferFee,
+            commissionPercentage: 0,
+          }),
+        );
       }
     }
 
@@ -99,6 +188,7 @@ export class ShipmentService {
               payerPartyKind: payload.payerPartyKind ?? 'RECEIVER',
             } as ShipmentFinancialInput),
           shipmentRow: created,
+          effectiveDate: options?.effectiveDate ?? input.effectiveDate,
         });
         await client.query('commit');
       } catch (e) {
@@ -131,55 +221,17 @@ export class ShipmentService {
     if (
       this.transfersService
       && effectiveCompanyId
-      && typeof payload.transferServiceFee === 'number'
-      && payload.transferServiceFee > 0
+      && (Number(payload.hawalaAmount ?? 0) > 0 || Number(payload.transferServiceFee ?? 0) > 0)
     ) {
       try {
-        let senderDisplay = 'غير معروف';
-        let receiverDisplay = 'غير معروف';
-        try {
-          const partyResult = await pool.query<{ id: string; full_name: string }>(
-            `select id, full_name from senders_receivers where id = any($1::uuid[])`,
-            [[payload.senderId, payload.receiverId]],
-          );
-          for (const row of partyResult.rows) {
-            if (String(row.id) === String(payload.senderId)) senderDisplay = row.full_name;
-            if (String(row.id) === String(payload.receiverId)) receiverDisplay = row.full_name;
-          }
-        } catch {}
-
-        const currency = payload.originalCurrency || 'USD';
-        const transferAmount = Number(payload.transferFee ?? 0);
-        const transferMain = computeBaseAmountUsd(transferAmount, payload.exchangeRateToUsd || 1);
-        const fee = Number(payload.transferServiceFee ?? 0);
-        const feeMain = computeBaseAmountUsd(fee, payload.exchangeRateToUsd || 1);
-
-        await this.transfersService.createTransfer({
-          company_id: effectiveCompanyId,
-          branch_id: payload.branchId,
-          agent_id: payload.agentId,
-          shipment_id: created.id,
-          sender_name: senderDisplay,
-          receiver_name: receiverDisplay,
-          amount: transferAmount,
-          currency,
-          main_amount: transferMain,
-          commission: 0,
-          commission_currency: currency,
-          commission_main: 0,
-          agent_commission: 0,
-          agent_commission_currency: currency,
-          agent_commission_main: 0,
-          transfer_service_fee: fee,
-          transfer_service_fee_currency: currency,
-          transfer_service_fee_main: feeMain,
-          company_transfer_profit: fee,
-          company_transfer_profit_currency: currency,
-          company_transfer_profit_main: feeMain,
-          status: 'PENDING',
-          notes: `حوالة مرتبطة بالشحنة ${created.shipment_no}`,
-        });
-      } catch {}
+        await this.syncShipmentLinkedTransfer(
+          created as Record<string, unknown>,
+          payload,
+          options?.effectiveDate ?? input.effectiveDate,
+        );
+      } catch (error) {
+        console.error('[ShipmentService] failed to ensure shipment-linked transfer', error);
+      }
     }
 
     return created;
@@ -232,6 +284,7 @@ export class ShipmentService {
     const nextAgentId = payload.agentId ?? (existing as any)?.agent_id ?? undefined;
     const needsCommissionRefresh =
       typeof payload.freightCharge === 'number'
+      || typeof payload.transferFee === 'number'
       || typeof payload.agentId === 'string'
       || (existing as any)?.agent_commission_amount_snapshot == null;
 
@@ -240,26 +293,23 @@ export class ShipmentService {
       if (companyId) {
         try {
           const agent = await this.agentRepository.getAgentById(nextAgentId, companyId);
-          const commissionPercentage = Number(agent?.commission_percentage ?? 0);
-          const baseAmount = Number(
-            payload.freightCharge
-              ?? (existing as any)?.freight_charge
-              ?? 0,
+          Object.assign(
+            payload,
+            computeAgentCommissionSnapshot({
+              freightCharge: payload.freightCharge ?? (existing as any)?.freight_charge,
+              transferFee: payload.transferFee ?? (existing as any)?.transfer_fee,
+              commissionPercentage: agent?.commission_percentage ?? 0,
+            }),
           );
-          payload.agentCommissionBaseType = 'FREIGHT_CHARGE';
-          payload.agentCommissionBaseAmount = baseAmount;
-          payload.agentCommissionPercentageSnapshot = commissionPercentage;
-          payload.agentCommissionAmountSnapshot = (baseAmount * commissionPercentage) / 100;
         } catch {
-          const baseAmount = Number(
-            payload.freightCharge
-              ?? (existing as any)?.freight_charge
-              ?? 0,
+          Object.assign(
+            payload,
+            computeAgentCommissionSnapshot({
+              freightCharge: payload.freightCharge ?? (existing as any)?.freight_charge,
+              transferFee: payload.transferFee ?? (existing as any)?.transfer_fee,
+              commissionPercentage: 0,
+            }),
           );
-          payload.agentCommissionBaseType = 'FREIGHT_CHARGE';
-          payload.agentCommissionBaseAmount = baseAmount;
-          payload.agentCommissionPercentageSnapshot = 0;
-          payload.agentCommissionAmountSnapshot = 0;
         }
       }
     }
@@ -284,6 +334,23 @@ export class ShipmentService {
         (nextStatus === 'DELIVERED' || nextStatus === 'CONFIRMED')
       ) {
         await this.financialPosting.ensurePostedFromLifecycle(id, scope, scope?.userId);
+      }
+    }
+
+    if (
+      updated &&
+      (typeof input.hawalaAmount === 'number' ||
+        typeof input.transferServiceFee === 'number' ||
+        Number((updated as { hawala_amount?: number }).hawala_amount ?? 0) > 0)
+    ) {
+      try {
+        await this.syncShipmentLinkedTransfer(
+          updated as Record<string, unknown>,
+          payload,
+          payload.effectiveDate,
+        );
+      } catch (error) {
+        console.error('[ShipmentService] failed to sync shipment-linked transfer on update', error);
       }
     }
 

@@ -1,4 +1,6 @@
 import { pool } from '../db/pool.js';
+import { HttpError } from '../utils/errors.js';
+import type { FinanceRepository } from './financeRepository.js';
 
 // ─── Salary Records ───────────────────────────────────────────────────────────
 
@@ -11,6 +13,8 @@ export interface SalaryRecordInput {
   basicAmount: number;
   bonuses?: number;
   deductions?: number;
+  manualDeductions?: number;
+  advanceDeductions?: number;
   currency?: string;
   paymentStatus?: 'pending' | 'paid' | 'cancelled';
   paidAt?: string | null;
@@ -28,10 +32,15 @@ export interface SalaryRecord {
   basic_amount: string;
   bonuses: string;
   deductions: string;
+  manual_deductions?: string;
+  advance_deductions?: string;
   net_amount: string;
+  paid_amount?: string;
   currency: string;
   payment_status: 'pending' | 'paid' | 'cancelled';
   paid_at: string | null;
+  salary_payment_voucher_id?: string | null;
+  salary_cashbox_id?: string | null;
   notes: string | null;
   created_by: string | null;
   deleted_at: string | null;
@@ -83,6 +92,23 @@ export interface EmployeeAdvance {
   amount_usd_equivalent?: string;
   repaid_usd_equivalent?: string;
   outstanding_usd_equivalent?: string;
+}
+
+export interface SalaryAdvanceDeduction {
+  id: string;
+  company_id: string;
+  salary_record_id: string;
+  employee_advance_id: string;
+  deducted_amount: string;
+  currency: string;
+  deducted_salary_amount: string;
+  salary_currency: string;
+  exchange_rate_to_usd: string;
+  created_at: string;
+  advance_date?: string;
+  original_amount?: string;
+  remaining_balance?: string;
+  status?: string;
 }
 
 export class SalaryRepository {
@@ -149,11 +175,11 @@ export class SalaryRepository {
       `
       insert into salary_records(
         company_id, branch_id, employee_id, period_year, period_month,
-        basic_amount, bonuses, deductions, currency,
+        basic_amount, bonuses, deductions, manual_deductions, advance_deductions, currency,
         payment_status, paid_at, notes, created_by
       ) values(
         $1, $2, $3, $4, $5,
-        $6, coalesce($7, 0), coalesce($8, 0), coalesce($9, 'USD'),
+        $6, coalesce($7, 0), coalesce($8, 0), coalesce($14, coalesce($8, 0)), coalesce($15, 0), coalesce($9, 'USD'),
         coalesce($10, 'pending'), $11, $12, $13
       )
       returning *
@@ -172,6 +198,8 @@ export class SalaryRepository {
         input.paidAt ?? null,
         input.notes ?? null,
         input.createdBy ?? null,
+        input.manualDeductions ?? null,
+        input.advanceDeductions ?? null,
       ],
     );
     return result.rows[0];
@@ -439,6 +467,203 @@ export class SalaryRepository {
       [companyId, employeeId, periodYear, periodMonth],
     );
     return result.rows[0]?.currency ?? null;
+  }
+
+  async listSalaryAdvanceDeductions(companyId: string, salaryRecordId: string): Promise<SalaryAdvanceDeduction[]> {
+    const result = await pool.query<SalaryAdvanceDeduction>(
+      `
+      select
+        sad.*,
+        ea.advance_date,
+        ea.amount as original_amount,
+        (ea.amount - ea.repaid_amount) as remaining_balance,
+        ea.status
+      from salary_advance_deductions sad
+      join employee_advances ea on ea.id = sad.employee_advance_id
+      where sad.company_id = $1::uuid
+        and sad.salary_record_id = $2::uuid
+      order by ea.advance_date asc, sad.created_at asc
+      `,
+      [companyId, salaryRecordId],
+    );
+    return result.rows;
+  }
+
+  async paySalary(
+    id: string,
+    companyId: string,
+    input: { cashboxId: string; paidByUserId?: string; salaryExchangeRateToUsd?: number },
+    financeRepository: FinanceRepository,
+  ) {
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      const salaryResult = await client.query(
+        `
+        select sr.*, e.name as employee_name, e.code as employee_code
+        from salary_records sr
+        join employees e on e.id = sr.employee_id
+        where sr.id = $1::uuid
+          and sr.company_id = $2::uuid
+          and sr.deleted_at is null
+        for update
+        `,
+        [id, companyId],
+      );
+      const salary = salaryResult.rows[0];
+      if (!salary) throw new HttpError(404, 'Salary record not found.');
+      if (salary.payment_status !== 'pending') throw new HttpError(400, 'يمكن دفع الرواتب المعلقة فقط.');
+
+      const cashboxResult = await client.query(
+        `
+        select *
+        from cashboxes
+        where id = $1::uuid
+          and company_id = $2::uuid
+        for update
+        `,
+        [input.cashboxId, companyId],
+      );
+      const cashbox = cashboxResult.rows[0];
+      if (!cashbox) throw new HttpError(400, 'الصندوق غير موجود.');
+      if (cashbox.is_active === false) throw new HttpError(400, 'الصندوق غير نشط.');
+      if (String(cashbox.currency_code).toUpperCase() !== String(salary.currency).toUpperCase()) {
+        throw new HttpError(400, 'عملة الصندوق لا تطابق عملة الراتب.');
+      }
+
+      const existingDeductions = await client.query(
+        `select count(*)::int as count from salary_advance_deductions where salary_record_id = $1::uuid`,
+        [id],
+      );
+
+      const manualDeductions = Number(salary.manual_deductions ?? salary.deductions ?? 0);
+      let advanceDeductions = Number(salary.advance_deductions ?? 0);
+      const grossAfterManual = Math.max(0, Number(salary.basic_amount) + Number(salary.bonuses) - manualDeductions);
+
+      if (Number(existingDeductions.rows[0]?.count ?? 0) === 0 && grossAfterManual > 0) {
+        let remainingSalaryCapacity = grossAfterManual;
+        const salaryRateToUsd = input.salaryExchangeRateToUsd && input.salaryExchangeRateToUsd > 0 ? input.salaryExchangeRateToUsd : 1;
+        const advances = await client.query(
+          `
+          select *
+          from employee_advances
+          where company_id = $1::uuid
+            and employee_id = $2::uuid
+            and deleted_at is null
+            and status in ('pending', 'partially_repaid')
+            and amount > repaid_amount
+          order by advance_date asc, created_at asc, id asc
+          for update
+          `,
+          [companyId, salary.employee_id],
+        );
+
+        for (const adv of advances.rows) {
+          if (remainingSalaryCapacity <= 0) break;
+          const advanceRateToUsd = Number(adv.exchange_rate_to_usd || 1);
+          const outstandingOriginal = Math.max(0, Number(adv.amount) - Number(adv.repaid_amount));
+          const outstandingSalary = Number(((outstandingOriginal * advanceRateToUsd) / salaryRateToUsd).toFixed(2));
+          const appliedSalary = Math.min(remainingSalaryCapacity, outstandingSalary);
+          if (appliedSalary <= 0) continue;
+          const deductedOriginal = Number(((appliedSalary * salaryRateToUsd) / advanceRateToUsd).toFixed(2));
+          const nextRepaid = Number(adv.repaid_amount) + deductedOriginal;
+          const nextStatus = nextRepaid + 0.0001 >= Number(adv.amount) ? 'repaid' : 'partially_repaid';
+
+          await client.query(
+            `
+            insert into salary_advance_deductions(
+              company_id, salary_record_id, employee_advance_id, deducted_amount,
+              currency, deducted_salary_amount, salary_currency, exchange_rate_to_usd, created_by
+            ) values($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            on conflict do nothing
+            `,
+            [
+              companyId,
+              id,
+              adv.id,
+              deductedOriginal,
+              adv.currency,
+              appliedSalary,
+              salary.currency,
+              advanceRateToUsd,
+              input.paidByUserId ?? null,
+            ],
+          );
+          await client.query(
+            `
+            update employee_advances
+            set repaid_amount = least(amount, repaid_amount + $2::numeric),
+                status = $3,
+                updated_at = now()
+            where id = $1::uuid
+            `,
+            [adv.id, deductedOriginal, nextStatus],
+          );
+
+          advanceDeductions += appliedSalary;
+          remainingSalaryCapacity = Number((remainingSalaryCapacity - appliedSalary).toFixed(2));
+        }
+      }
+
+      const paidAmount = Math.max(0, Number(salary.basic_amount) + Number(salary.bonuses) - manualDeductions - advanceDeductions);
+      let voucher: any = null;
+      if (paidAmount > 0) {
+        const voucherNo = `SAL-${salary.period_year}${String(salary.period_month).padStart(2, '0')}-${String(salary.employee_code || 'EMP').replace(/[^A-Za-z0-9]/g, '').slice(0, 12)}-${String(Date.now()).slice(-6)}`;
+        voucher = await financeRepository.createPaymentVoucherWithClient(client, {
+          voucherNo,
+          relatedEntityType: 'salary_record',
+          relatedEntityId: id,
+          status: 'confirmed',
+          notes: `Salary payment ${salary.employee_name} ${salary.period_month}/${salary.period_year}`,
+          originalAmount: paidAmount,
+          originalCurrency: salary.currency,
+          exchangeRateToUsd: input.salaryExchangeRateToUsd ?? 1,
+          baseAmountUsd: Number((paidAmount * (input.salaryExchangeRateToUsd ?? 1)).toFixed(2)),
+          createdByUserId: input.paidByUserId,
+          companyId,
+          branchId: salary.branch_id ?? undefined,
+          cashboxId: input.cashboxId,
+        });
+      }
+
+      const updated = await client.query(
+        `
+        update salary_records
+        set manual_deductions = $3,
+            advance_deductions = $4,
+            deductions = $3 + $4,
+            paid_amount = $5,
+            payment_status = 'paid',
+            paid_at = now(),
+            salary_payment_voucher_id = $6,
+            salary_cashbox_id = $7,
+            updated_at = now()
+        where id = $1::uuid and company_id = $2::uuid
+        returning *
+        `,
+        [id, companyId, manualDeductions, advanceDeductions, paidAmount, voucher?.id ?? null, input.cashboxId],
+      );
+
+      const deductions = await client.query(
+        `
+        select sad.*, ea.advance_date, ea.amount as original_amount,
+               (ea.amount - ea.repaid_amount) as remaining_balance, ea.status
+        from salary_advance_deductions sad
+        join employee_advances ea on ea.id = sad.employee_advance_id
+        where sad.salary_record_id = $1::uuid
+        order by ea.advance_date asc, sad.created_at asc
+        `,
+        [id],
+      );
+
+      await client.query('commit');
+      return { salary: updated.rows[0], voucher, advanceDeductions: deductions.rows };
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async getSummary(companyId: string, year: number, month: number) {

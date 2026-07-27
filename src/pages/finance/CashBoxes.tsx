@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { formatCurrency, type CurrencyCode } from '../../lib/currency/currency';
+import { formatWesternNumber } from '../../lib/format/westernDigits';
 import { phase3FinanceGateway, type BackendCashboxRecord } from '../../lib/api/phase3FinanceGateway';
 import { phase15Gateway } from '../../lib/api/phase15Gateway';
 import { httpClient } from '../../lib/api/httpClient';
@@ -27,6 +28,7 @@ export default function FinanceCashBoxes() {
 
   const [rows, setRows] = useState<BackendCashboxRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [branches, setBranches] = useState<BranchOpt[]>([]);
   const [agents, setAgents] = useState<AgentOpt[]>([]);
 
@@ -108,6 +110,22 @@ export default function FinanceCashBoxes() {
       isActive: true,
       notes: '',
     });
+  };
+
+  const runSync = async () => {
+    setSyncing(true);
+    try {
+      const stats = await phase3FinanceGateway.cashbox.sync();
+      showToast(
+        `مزامنة: ${stats.created} صندوق جديد، ${stats.reassigned} نقل، ${stats.linked} ربط، ${stats.balancesReconciled} رصيد`,
+        'success',
+      );
+      await load();
+    } catch {
+      showToast('تعذر مزامنة الصناديق', 'error');
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const openAdd = () => {
@@ -246,10 +264,16 @@ export default function FinanceCashBoxes() {
           <h2 className="text-xl font-bold">الصناديق</h2>
           <p className="text-sm text-gray-600 mt-1">
             النموذج المعتمد: <strong>الصندوق العام</strong>، و<strong>صندوق لكل وكيل</strong>، و<strong>صندوق فرع حلب</strong> (BR-ALEPPO) فقط.
-            صناديق الوكلاء وفرع حلب مرتبطة بالصندوق العام للتجميع والتقارير؛ الحركات تُسجّل في الصندوق الذي تختاره عند السند.
+            صناديق الوكلاء وفرع حلب مرتبطة بالصندوق العام. الرصيد النقدي يتحرك عبر السندات المؤكدة؛
+            عمود «ذمة تشغيلية» يعرض صافي الحركات المالية من الشحنات والذمم (قبل التحصيل النقدي).
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {canManage && !isAgent && (
+            <button type="button" className="toolbar-btn" onClick={() => void runSync()} disabled={syncing}>
+              {syncing ? 'مزامنة...' : 'مزامنة وربط الصناديق'}
+            </button>
+          )}
           {canManage && !isAgent && (
             <button type="button" className="toolbar-btn primary" onClick={openAdd}>
               إضافة صندوق
@@ -485,7 +509,10 @@ export default function FinanceCashBoxes() {
                 <th>الوكيل</th>
                 <th>العملة</th>
                 <th>الرصيد الافتتاحي</th>
-                <th>الرصيد الحالي</th>
+                <th>رصيد نقدي</th>
+                <th>حركات نقدية</th>
+                <th>ذمة تشغيلية (USD)</th>
+                <th>شحنات</th>
                 <th>الحالة</th>
                 <th>آخر تحديث</th>
                 <th>إجراءات</th>
@@ -506,10 +533,26 @@ export default function FinanceCashBoxes() {
                     )}
                   </td>
                   <td>{r.branch_name ?? '—'}</td>
-                  <td>{r.agent_name ?? '—'}</td>
+                  <td>
+                    {r.agent_name ?? '—'}
+                    {r.agent_governorate ? (
+                      <span className="block text-xs text-gray-500">{r.agent_governorate}</span>
+                    ) : null}
+                  </td>
                   <td>{r.currency_code}</td>
                   <td className="text-left">{formatCurrency(Number(r.opening_balance), r.currency_code as CurrencyCode)}</td>
                   <td className="text-left">{formatCurrency(Number(r.current_balance), r.currency_code as CurrencyCode)}</td>
+                  <td>{formatWesternNumber(Number(r.transaction_count ?? 0))}</td>
+                  <td className="text-left">
+                    {r.type === 'AGENT' && r.agent_operational_net_usd != null
+                      ? formatCurrency(Number(r.agent_operational_net_usd), 'USD')
+                      : '—'}
+                  </td>
+                  <td>
+                    {r.type === 'AGENT' && r.agent_shipment_count != null
+                      ? formatWesternNumber(Number(r.agent_shipment_count))
+                      : '—'}
+                  </td>
                   <td>
                     <span className={r.is_active ? 'status-badge bg-green-100 text-green-800' : 'status-badge bg-gray-100 text-gray-800'}>
                       {r.is_active ? 'نشط' : 'موقوف'}
@@ -519,7 +562,7 @@ export default function FinanceCashBoxes() {
                   <td>
                     <div className="flex flex-wrap gap-1">
                       <button type="button" className="toolbar-btn text-xs py-1" onClick={() => navigate(`/finance/cashboxes/${r.id}/movements`)}>
-                        حركات
+                        كشف
                       </button>
                       <button
                         type="button"

@@ -1,12 +1,19 @@
 import { useEffect, useState } from 'react';
-import { clearLanConnection, getLanPort, saveLanConnection } from '../../lib/api/httpClient';
+import { clearLanConnection, CLOUD_API_PORT, getLanPort, saveLanConnection } from '../../lib/api/httpClient';
+
+const LOCAL_DESKTOP_API_PORT = 4010;
+import { registerDesktopDevice, registrationStatusMessage } from '../../lib/deviceRegistration';
 
 export const DEVICE_BOOTSTRAP_STORAGE_KEY = 'erp.deviceBootstrap.v1';
 
-type Step = 'choose' | 'branch-ip' | 'agent-msg';
+type Step = 'choose' | 'primary-db' | 'branch-ip' | 'agent-msg';
 
 function validateIp(ip: string): boolean {
   return /^(\d{1,3}\.){3}\d{1,3}$/.test(ip.trim());
+}
+
+function validatePort(port: number): boolean {
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
 }
 
 async function isPackagedElectron(): Promise<boolean> {
@@ -44,10 +51,17 @@ type Props = {
  */
 export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
   const [step, setStep] = useState<Step>(startAt === 'agent-msg' ? 'agent-msg' : 'choose');
-  const [port, setPort] = useState(4010);
+  const [port, setPort] = useState(CLOUD_API_PORT);
   const [ip, setIp] = useState('');
   const [branchStatus, setBranchStatus] = useState<'idle' | 'testing' | 'success' | 'fail'>('idle');
   const [branchErr, setBranchErr] = useState('');
+  const [postgresPassword, setPostgresPassword] = useState('');
+  const [primaryBusy, setPrimaryBusy] = useState(false);
+  const [primaryErr, setPrimaryErr] = useState('');
+  const [centralUsername, setCentralUsername] = useState('');
+  const [centralPassword, setCentralPassword] = useState('');
+  const [centralBranchId, setCentralBranchId] = useState('');
+  const [centralBranches, setCentralBranches] = useState<Array<{ id: string; code: string; name: string }>>([]);
 
   useEffect(() => {
     setStep(startAt === 'agent-msg' ? 'agent-msg' : 'choose');
@@ -55,34 +69,110 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
 
   useEffect(() => {
     const loadPort = async () => {
+      const savedPort = getLanPort();
+      if (localStorage.getItem('lan.serverPort')) {
+        setPort(savedPort);
+        return;
+      }
       try {
         const runtime = (window as any)?.runtime;
         if (runtime?.getConfig) {
           const cfg = await runtime.getConfig();
-          if (cfg?.backendPort) setPort(Number(cfg.backendPort) || 4010);
+          if (cfg?.backendResolutionMode === 'manual_lan' && cfg?.backendPort) {
+            setPort(Number(cfg.backendPort) || CLOUD_API_PORT);
+            return;
+          }
         }
       } catch {
-        setPort(getLanPort());
+        /* ignore */
       }
+      setPort(CLOUD_API_PORT);
     };
     void loadPort();
   }, []);
 
+  useEffect(() => {
+    if (step !== 'primary-db') return;
+    const setup = (window as any)?.desktopSetupRuntime;
+    if (!setup?.listCentralBranches) return;
+    void setup.listCentralBranches().then((result: any) => {
+      const branches = Array.isArray(result?.branches) ? result.branches : [];
+      setCentralBranches(branches);
+      if (branches.length === 1) setCentralBranchId(String(branches[0].id));
+      if (!result?.success) setPrimaryErr('تعذر تحميل فروع الخادم المركزي. تحقق من الإنترنت وعنوان الخادم ثم أعد المحاولة.');
+    });
+  }, [step]);
+
   const persistPrimary = async () => {
+    if (postgresPassword.length < 8) {
+      setPrimaryErr('أدخل كلمة مرور PostgreSQL المحلية (8 محارف على الأقل).');
+      return;
+    }
+    if (!centralUsername.trim() || !centralPassword || !centralBranchId) {
+      setPrimaryErr('أدخل بيانات دخول الخادم المركزي واختر فرع هذا الجهاز.');
+      return;
+    }
+    setPrimaryBusy(true);
+    setPrimaryErr('');
+    const setup = (window as any)?.desktopSetupRuntime;
+    if (!setup?.configurePostgres) {
+      setPrimaryErr('تهيئة قاعدة البيانات المحلية متاحة فقط في نسخة سطح المكتب المثبتة.');
+      setPrimaryBusy(false);
+      return;
+    }
+    const configured = await setup.configurePostgres(postgresPassword).catch(() => ({ success: false, error: 'POSTGRES_CONNECTION_FAILED' }));
+    if (!configured?.success) {
+      const postgresErrorMessages: Record<string, string> = {
+        POSTGRES_NOT_LOOPBACK_ONLY: 'PostgreSQL يستمع على الشبكة. اضبط listen_addresses على localhost فقط ثم أعد المحاولة.',
+        POSTGRES_SERVICE_NOT_RUNNING: 'خدمة PostgreSQL غير مُشغَّلة على هذا الجهاز. افتح "الخدمات" (services.msc) وابحث عن خدمة postgresql وشغّلها، ثم أعد المحاولة.',
+        POSTGRES_AUTH_FAILED: 'كلمة المرور غير صحيحة. أدخل نفس كلمة مرور مستخدم postgres التي حددتها أثناء تثبيت PostgreSQL — وليس بالضرورة نفس كلمة مرور التطبيق.',
+      };
+      setPrimaryErr(
+        postgresErrorMessages[String(configured?.error)] ??
+          'تعذر الاتصال بـ PostgreSQL المحلي. تحقق من تشغيل الخدمة وصحة كلمة المرور.',
+      );
+      setPrimaryBusy(false);
+      return;
+    }
+    const activated = await setup.activateSync({ username: centralUsername.trim(), password: centralPassword, branchId: centralBranchId }).catch(() => ({ success: false, error: 'CENTRAL_CONNECTION_FAILED' }));
+    if (!activated?.success) {
+      const messages: Record<string, string> = {
+        DEVICE_PENDING_APPROVAL: 'سُجّل الجهاز وهو بانتظار موافقة المسؤول من شاشة الأجهزة المرتبطة. بعد الموافقة أعد المحاولة.',
+        SYNC_DEVICE_PENDING_APPROVAL: 'صلاحية المزامنة لهذا الجهاز بانتظار موافقة المسؤول. بعد الموافقة أعد المحاولة.',
+        CENTRAL_LOGIN_FAILED: 'تعذر تسجيل الدخول المركزي. تحقق من اسم المستخدم وكلمة المرور والفرع.',
+        CENTRAL_CONNECTION_FAILED: 'تعذر الاتصال بالخادم المركزي. تحقق من الإنترنت ثم أعد المحاولة.',
+      };
+      setPrimaryErr(messages[String(activated?.error)] || 'تعذر تفعيل مزامنة الجهاز على الخادم المركزي.');
+      setPrimaryBusy(false);
+      return;
+    }
     const fsApi = (window as any)?.fs;
     clearLanConnection();
     if (fsApi?.writeConfig) {
       await fsApi.writeConfig({
         backendResolutionMode: 'localhost',
         manualLanHost: '',
-        backendPort: port,
+        backendPort: LOCAL_DESKTOP_API_PORT,
       });
     }
     if (fsApi?.enableLocalPackagedServer) {
       await fsApi.enableLocalPackagedServer();
     }
     localStorage.setItem(DEVICE_BOOTSTRAP_STORAGE_KEY, 'primary');
-    window.location.reload();
+    // The bundled local API server is spawned exactly once, during the Electron main
+    // process's own startup sequence — decided by whether the ".erp-spawn-local-api"
+    // flag file exists AT THAT MOMENT. On first run (before this wizard finishes) it
+    // doesn't exist yet, so the server is never started this session. A renderer-only
+    // `location.reload()` cannot retroactively make the already-running main process
+    // spawn it — only a full app relaunch re-runs that startup check and actually
+    // brings the local server up. Without this, the app is left with license/API
+    // calls failing with "تعذر الاتصال بالسيرفر" right after a successful setup.
+    const runtimeApi = (window as any)?.runtime;
+    if (runtimeApi?.relaunchApp) {
+      await runtimeApi.relaunchApp();
+    } else {
+      window.location.reload();
+    }
   };
 
   const testBranchConnection = async () => {
@@ -106,12 +196,13 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
       setBranchStatus('success');
     } catch {
       setBranchStatus('fail');
-      setBranchErr(`تعذر الاتصال بالرئيسي — تحقق من IP والشبكة والمنفذ (${port}).`);
+      setBranchErr(`تعذر الاتصال — تحقق من IP والمنفذ (${port}). للسحابة استخدم ${CLOUD_API_PORT}.`);
     }
   };
 
   const saveBranchAndFinish = async () => {
     const fsApi = (window as any)?.fs;
+    const apiBase = `http://${ip.trim()}:${port}/api/v1`;
     saveLanConnection(ip.trim(), port);
     if (fsApi?.writeConfig) {
       await fsApi.writeConfig({
@@ -119,6 +210,12 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
         manualLanHost: ip.trim(),
         backendPort: port,
       });
+    }
+    const regStatus = await registerDesktopDevice(apiBase);
+    if (regStatus === 'unknown' || regStatus === 'skipped' || regStatus === 'blocked') {
+      setBranchErr(registrationStatusMessage(regStatus));
+      setBranchStatus('fail');
+      return;
     }
     localStorage.setItem(DEVICE_BOOTSTRAP_STORAGE_KEY, 'branch');
     window.location.reload();
@@ -221,7 +318,7 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-            <div style={{ fontWeight: 800, color: '#fff', fontSize: 16 }}>جهاز فرعي — عنوان الرئيسي</div>
+            <div style={{ fontWeight: 800, color: '#fff', fontSize: 16 }}>اتصال بالسحابة</div>
             <button
               type="button"
               onClick={() => setStep('choose')}
@@ -231,9 +328,9 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
             </button>
           </div>
           <p style={{ margin: '0 0 16px', color: 'rgba(255,255,255,.55)', fontSize: 13, lineHeight: 1.6 }}>
-            أدخل IP الجهاز الرئيسي (الذي يعمل عليه PostgreSQL والخادم)، ثم اختبر الاتصال ثم احفظ.
+            أدخل IP السيرفر على السحابة والمنفذ (عادة {CLOUD_API_PORT})، ثم اختبر الاتصال ثم احفظ.
           </p>
-          <label style={{ display: 'block', color: 'rgba(255,255,255,.65)', fontSize: 12, marginBottom: 6 }}>IP الرئيسي</label>
+          <label style={{ display: 'block', color: 'rgba(255,255,255,.65)', fontSize: 12, marginBottom: 6 }}>IP السيرفر</label>
           <input
             value={ip}
             onChange={(e) => {
@@ -241,7 +338,7 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
               setBranchStatus('idle');
               setBranchErr('');
             }}
-            placeholder="192.168.1.100"
+            placeholder="65.21.136.217"
             dir="ltr"
             style={{
               width: '100%',
@@ -256,7 +353,32 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
               fontFamily: 'monospace',
             }}
           />
-          <div style={{ color: 'rgba(255,255,255,.35)', fontSize: 11, marginBottom: 14 }}>المنفذ: {port}</div>
+          <label style={{ display: 'block', color: 'rgba(255,255,255,.65)', fontSize: 12, marginBottom: 6 }}>منفذ API</label>
+          <input
+            type="number"
+            min={1}
+            max={65535}
+            value={port}
+            onChange={(e) => {
+              setPort(Number(e.target.value) || CLOUD_API_PORT);
+              setBranchStatus('idle');
+              setBranchErr('');
+            }}
+            placeholder={String(CLOUD_API_PORT)}
+            dir="ltr"
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '12px 14px',
+              marginBottom: 14,
+              borderRadius: 10,
+              border: '1px solid rgba(255,255,255,.15)',
+              background: 'rgba(255,255,255,.07)',
+              color: '#fff',
+              fontSize: 15,
+              fontFamily: 'monospace',
+            }}
+          />
 
           {branchErr && (
             <div
@@ -278,7 +400,7 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
             <button
               type="button"
               onClick={() => void testBranchConnection()}
-              disabled={!validateIp(ip) || branchStatus === 'testing'}
+              disabled={!validateIp(ip) || !validatePort(port) || branchStatus === 'testing'}
               style={{
                 flex: 1,
                 minWidth: 120,
@@ -287,8 +409,8 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
                 border: 'none',
                 fontWeight: 700,
                 fontSize: 14,
-                cursor: validateIp(ip) && branchStatus !== 'testing' ? 'pointer' : 'not-allowed',
-                opacity: validateIp(ip) && branchStatus !== 'testing' ? 1 : 0.55,
+                cursor: validateIp(ip) && validatePort(port) && branchStatus !== 'testing' ? 'pointer' : 'not-allowed',
+                opacity: validateIp(ip) && validatePort(port) && branchStatus !== 'testing' ? 1 : 0.55,
                 background: 'linear-gradient(135deg,#0ea5e9,#2563eb)',
                 color: '#fff',
               }}
@@ -316,6 +438,37 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
               حفظ والمتابعة
             </button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'primary-db') {
+    return (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 500, background: 'rgba(0,0,0,.72)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} dir="rtl">
+        <div style={{ width: '100%', maxWidth: 440, background: '#1e1b3a', border: '1px solid rgba(255,255,255,.12)', borderRadius: 20, padding: '28px 26px', boxShadow: '0 32px 80px rgba(0,0,0,.55)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+            <div style={{ fontWeight: 800, color: '#fff', fontSize: 16 }}>تهيئة PostgreSQL المحلي</div>
+            <button type="button" onClick={() => setStep('choose')} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.45)', cursor: 'pointer', fontSize: 18 }}>×</button>
+          </div>
+          <p style={{ margin: '0 0 16px', color: 'rgba(255,255,255,.55)', fontSize: 13, lineHeight: 1.7 }}>
+            أدخل كلمة مرور مستخدم PostgreSQL المحلي. تُشفّر داخل مخزن Windows الآمن ولا تُكتب في ملفات المشروع أو الإعدادات النصية.
+          </p>
+          <label style={{ display: 'block', color: 'rgba(255,255,255,.65)', fontSize: 12, marginBottom: 6 }}>كلمة المرور المحلية</label>
+          <input type="password" autoComplete="new-password" value={postgresPassword} onChange={(event) => setPostgresPassword(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !primaryBusy) void persistPrimary(); }} style={{ width: '100%', boxSizing: 'border-box', padding: '12px 13px', borderRadius: 10, border: '1px solid rgba(255,255,255,.16)', background: 'rgba(255,255,255,.07)', color: '#fff', outline: 'none', marginBottom: 12 }} />
+          <label style={{ display: 'block', color: 'rgba(255,255,255,.65)', fontSize: 12, marginBottom: 6 }}>اسم المستخدم المركزي</label>
+          <input value={centralUsername} onChange={(event) => setCentralUsername(event.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '11px 13px', borderRadius: 10, border: '1px solid rgba(255,255,255,.16)', background: 'rgba(255,255,255,.07)', color: '#fff', outline: 'none', marginBottom: 10 }} />
+          <label style={{ display: 'block', color: 'rgba(255,255,255,.65)', fontSize: 12, marginBottom: 6 }}>كلمة مرور المستخدم المركزي</label>
+          <input type="password" autoComplete="current-password" value={centralPassword} onChange={(event) => setCentralPassword(event.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '11px 13px', borderRadius: 10, border: '1px solid rgba(255,255,255,.16)', background: 'rgba(255,255,255,.07)', color: '#fff', outline: 'none', marginBottom: 10 }} />
+          <label style={{ display: 'block', color: 'rgba(255,255,255,.65)', fontSize: 12, marginBottom: 6 }}>فرع هذا الجهاز</label>
+          <select value={centralBranchId} onChange={(event) => setCentralBranchId(event.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '11px 13px', borderRadius: 10, border: '1px solid rgba(255,255,255,.16)', background: '#292347', color: '#fff', outline: 'none', marginBottom: 12 }}>
+            <option value="">اختر الفرع</option>
+            {centralBranches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}{branch.code ? ` — ${branch.code}` : ''}</option>)}
+          </select>
+          {primaryErr ? <div style={{ color: '#fca5a5', fontSize: 12, lineHeight: 1.6, marginBottom: 12 }}>{primaryErr}</div> : null}
+          <button type="button" disabled={primaryBusy} onClick={() => void persistPrimary()} style={{ width: '100%', padding: 12, borderRadius: 11, border: 0, background: '#7c3aed', color: '#fff', fontWeight: 800, cursor: primaryBusy ? 'wait' : 'pointer', opacity: primaryBusy ? .7 : 1 }}>
+            {primaryBusy ? 'جارٍ التحقق والتهيئة...' : 'تحقق وابدأ التهيئة'}
+          </button>
         </div>
       </div>
     );
@@ -360,7 +513,7 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <button
             type="button"
-            onClick={() => void persistPrimary()}
+            onClick={() => setStep('primary-db')}
             style={{
               textAlign: 'right',
               padding: '16px 18px',
@@ -400,8 +553,8 @@ export default function DeviceLoginBootstrap({ startAt, onAgentBack }: Props) {
           >
             <span style={{ fontSize: 26 }}>🌐</span>
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>فرعي</div>
-              <div style={{ fontSize: 12, color: 'rgba(255,255,255,.55)' }}>الاتصال بجهاز رئيسي على الشبكة (بدون قاعدة بيانات محلية)</div>
+              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>سحابة</div>
+              <div style={{ fontSize: 12, color: 'rgba(255,255,255,.55)' }}>الاتصال بسيرفر الشركة على الإنترنت (IP + منفذ {CLOUD_API_PORT})</div>
             </div>
             <span style={{ opacity: 0.5 }}>←</span>
           </button>

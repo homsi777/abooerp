@@ -31,6 +31,10 @@ const createTransferSchema = z.object({
   status: z.string().optional(),
   notes: z.string().optional(),
   shipment_id: z.string().uuid().optional(),
+  origin_agent_id: z.string().uuid().optional(),
+  destination_agent_id: z.string().uuid().optional(),
+  destination_city: z.string().optional(),
+  collection_cashbox_id: z.string().uuid().optional(),
 });
 
 const completeTransferSchema = z.object({
@@ -40,6 +44,16 @@ const completeTransferSchema = z.object({
 
 const cancelTransferSchema = z.object({
   reason: z.string().min(1).optional(),
+});
+
+const transferReportQuerySchema = z.object({
+  dateFrom: z.string().datetime({ offset: true }).optional(),
+  dateTo: z.string().datetime({ offset: true }).optional(),
+  branchId: z.string().uuid().optional(),
+  status: z.enum(['PENDING', 'COMPLETED', 'CANCELLED']).optional(),
+  originAgentId: z.string().uuid().optional(),
+  destinationAgentId: z.string().uuid().optional(),
+  destinationCity: z.string().min(1).optional(),
 });
 
 export function createTransfersRouter(transfersService: TransfersService) {
@@ -66,6 +80,30 @@ export function createTransfersRouter(transfersService: TransfersService) {
     res.json({ success: true, data: transfers });
   }));
 
+  router.get('/reports/statement', requirePermissions(['transfers.read']), asyncHandler(async (req, res) => {
+    const scope = parseDataScope(req);
+    const q = transferReportQuerySchema.parse(req.query);
+
+    if (!scope.companyId) {
+      res.status(403).json({ success: false, error: 'Company scope required' });
+      return;
+    }
+
+    const report = await transfersService.getTransferReport({
+      company_id: String(scope.companyId),
+      branch_id: q.branchId ?? scope.branchId,
+      agent_id: scope.agentId,
+      dateFrom: q.dateFrom,
+      dateTo: q.dateTo,
+      status: q.status,
+      originAgentId: q.originAgentId,
+      destinationAgentId: q.destinationAgentId,
+      destinationCity: q.destinationCity,
+    });
+
+    res.json({ success: true, data: report });
+  }));
+
   router.post('/', requirePermissions(['transfers.write']), asyncHandler(async (req, res) => {
     const scope = parseDataScope(req);
     const data = createTransferSchema.parse(req.body);
@@ -75,13 +113,24 @@ export function createTransfersRouter(transfersService: TransfersService) {
       return;
     }
 
-    const transfer = await transfersService.createTransfer({
+    const payload = {
       ...data,
       company_id: String(scope.companyId),
       branch_id: scope.branchId,
-      agent_id: scope.agentId,
+      agent_id: data.destination_agent_id ?? scope.agentId,
       status: data.status || 'PENDING'
-    });
+    };
+    if (!data.shipment_id && (!data.origin_agent_id || !data.destination_agent_id || !data.collection_cashbox_id)) {
+      throw new HttpError(400, 'الحوالة المستقلة تتطلب وكيل المصدر ووكيل الوجهة وصندوق قبض المصدر.');
+    }
+    const transfer = data.collection_cashbox_id
+      ? await transfersService.createTransferAndCollect({
+          payload,
+          collectionCashboxId: data.collection_cashbox_id,
+          userId: scope.userId,
+          baseCurrency: (req as any).requestUserContext?.baseCurrency,
+        })
+      : await transfersService.createTransfer(payload);
 
     auditService.logAsync({
       req,
@@ -131,7 +180,7 @@ export function createTransfersRouter(transfersService: TransfersService) {
         res.status(403).json({ success: false, error: 'Company scope required' });
         return;
       }
-      const baseCurrency = (req as any).requestContext?.baseCurrency as string | undefined;
+      const baseCurrency = (req as any).requestUserContext?.baseCurrency as string | undefined;
       const transfer = await transfersService.completeTransfer({
         id: String(req.params.id),
         companyId: String(scope.companyId),

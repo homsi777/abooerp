@@ -5,8 +5,19 @@ import { useToast } from '../../components/Toast';
 import { EscapeModalScrim } from '../../context/EscapeRegistryContext';
 import { useAuth } from '../../context/AuthProvider';
 import { customersGateway, type CustomerCreateInput, type CustomerRecord } from '../../lib/api/customersGateway';
-import { phase15Gateway } from '../../lib/api/phase15Gateway';
+import { getBackendIdFromSynthetic, phase15Gateway } from '../../lib/api/phase15Gateway';
 import type { Branch } from '../../types';
+
+type BranchOption = { id: string; name: string };
+
+function mapBranchOptions(branches: Branch[]): BranchOption[] {
+  return branches
+    .map((branch) => {
+      const backendId = getBackendIdFromSynthetic(branch.id);
+      return backendId ? { id: backendId, name: branch.name } : null;
+    })
+    .filter((row): row is BranchOption => Boolean(row));
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -39,25 +50,28 @@ type FormState = {
   branch_id: string;
   agent_id: string;
   status: 'active' | 'inactive';
+  opening_balance_amount: string;
+  opening_balance_side: 'debit' | 'credit';
 };
 
 const emptyForm = (): FormState => ({
   name: '', phone: '', second_phone: '', company_name: '',
   customer_type: 'INDIVIDUAL', is_account_customer: false,
   credit_limit: '0', default_currency_code: 'SYP',
+  opening_balance_amount: '0', opening_balance_side: 'debit',
   city: '', area: '', address: '', tax_number: '', notes: '',
   branch_id: '', agent_id: '', status: 'active',
 });
 
 function CustomerForm({
   initial,
-  branches,
+  branchOptions,
   onSave,
   onCancel,
   saving,
 }: {
   initial?: CustomerRecord;
-  branches: Branch[];
+  branchOptions: BranchOption[];
   onSave: (data: CustomerCreateInput) => Promise<void>;
   onCancel: () => void;
   saving: boolean;
@@ -81,6 +95,8 @@ function CustomerForm({
       branch_id: initial.branch_id ?? '',
       agent_id: initial.agent_id ?? '',
       status: initial.status,
+      opening_balance_amount: String(initial.opening_balance_amount ?? 0),
+      opening_balance_side: initial.opening_balance_side ?? 'debit',
     };
   });
 
@@ -98,6 +114,8 @@ function CustomerForm({
       is_account_customer: f.is_account_customer,
       credit_limit: parseFloat(f.credit_limit) || 0,
       default_currency_code: f.default_currency_code || 'SYP',
+      opening_balance_amount: f.is_account_customer ? (parseFloat(f.opening_balance_amount) || 0) : 0,
+      opening_balance_side: f.opening_balance_side,
       city: f.city.trim() || undefined,
       area: f.area.trim() || undefined,
       address: f.address.trim() || undefined,
@@ -136,8 +154,17 @@ function CustomerForm({
 
         {/* الهاتف */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">الهاتف</label>
-          <input className="form-input w-full" value={f.phone} onChange={(e) => upd('phone', e.target.value)} dir="ltr" placeholder="09XXXXXXXX" />
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            الهاتف{f.is_account_customer ? ' *' : ''}
+          </label>
+          <input
+            className="form-input w-full"
+            value={f.phone}
+            onChange={(e) => upd('phone', e.target.value)}
+            dir="ltr"
+            placeholder="09XXXXXXXX"
+            required={f.is_account_customer}
+          />
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">هاتف إضافي</label>
@@ -165,7 +192,7 @@ function CustomerForm({
           <label className="block text-sm font-medium text-gray-700 mb-1">الفرع</label>
           <select className="form-input w-full" value={f.branch_id} onChange={(e) => upd('branch_id', e.target.value)}>
             <option value="">— لا فرع —</option>
-            {branches.map((b) => (
+            {branchOptions.map((b) => (
               <option key={b.id} value={b.id}>{b.name}</option>
             ))}
           </select>
@@ -189,7 +216,8 @@ function CustomerForm({
             <span className="font-semibold text-amber-800">عميل حسابي (يظهر في الذمم المالية)</span>
           </label>
           <p className="text-xs text-amber-700 mt-1 mr-7">
-            العميل الحسابي يمكن ربطه بمسؤولية مالية للشحنات ويظهر في مركز الدائن والمدين عند اختياره صراحةً.
+            العميل الحسابي يمكن ربطه بمسؤولية مالية للشحنات ويظهر في مركز الدائن والمدين وكشف الحساب عند اختياره في الشحنة.
+            الهاتف مطلوب لتمييزه عن الزبون السريع.
           </p>
         </div>
 
@@ -206,6 +234,30 @@ function CustomerForm({
                 <option value="SYP">ليرة سورية (SYP)</option>
                 <option value="USD">دولار أمريكي (USD)</option>
                 <option value="TRY">ليرة تركية (TRY)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">رصيد/دين سابق (افتتاحي)</label>
+              <input
+                className="form-input w-full"
+                type="number"
+                min="0"
+                step="0.01"
+                value={f.opening_balance_amount}
+                onChange={(e) => upd('opening_balance_amount', e.target.value)}
+                dir="ltr"
+              />
+              <p className="text-xs text-gray-500 mt-1">المبلغ الذي كان على العميل قبل بدء النظام (إن وُجد).</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">نوع الرصيد الافتتاحي</label>
+              <select
+                className="form-input w-full"
+                value={f.opening_balance_side}
+                onChange={(e) => upd('opening_balance_side', e.target.value as 'debit' | 'credit')}
+              >
+                <option value="debit">عليه (ذمة على العميل — مدين)</option>
+                <option value="credit">له (ذمة للعميل — دائن)</option>
               </select>
             </div>
           </>
@@ -229,7 +281,11 @@ function CustomerForm({
 
       {/* Divider notice */}
       <div className="text-xs text-gray-500 bg-gray-50 rounded p-2">
-        الزبون السريع يستخدم كمرسل/مستلم فقط. العميل الحسابي يمكن ربطه بالذمم المالية عند الحاجة.
+        <strong>زبون سريع:</strong> يُنشأ تلقائياً من خانة المرسل/المستلم في الشحنة (جدول جهات الاتصال).
+        {' '}
+        <strong>عميل دائم:</strong> يسجّل هنا ويظهر في البحث الذكي.
+        {' '}
+        <strong>عميل حسابي:</strong> عميل دائم + ذمم مالية وكشوفات (بدون عمولة وكيل).
       </div>
 
       <div className="flex gap-3 justify-end pt-2">
@@ -271,6 +327,7 @@ export default function CustomersModule() {
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const branchOptions = useMemo(() => mapBranchOptions(branches), [branches]);
 
   const [showForm, setShowForm] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<CustomerRecord | undefined>();
@@ -457,7 +514,7 @@ export default function CustomersModule() {
             <select className="form-input w-full" value={filters.branch_id}
               onChange={(e) => setFilters((p) => ({ ...p, branch_id: e.target.value }))}>
               <option value="">كل الفروع</option>
-              {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              {branchOptions.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </div>
           <div>
@@ -614,7 +671,7 @@ export default function CustomersModule() {
             <div className="p-5">
               <CustomerForm
                 initial={editingCustomer}
-                branches={branches}
+                branchOptions={branchOptions}
                 onSave={handleSave}
                 onCancel={() => { setShowForm(false); setEditingCustomer(undefined); }}
                 saving={saving}

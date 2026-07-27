@@ -75,7 +75,7 @@ export default function Tariffs() {
         ...tariff,
         fromCityName: cityMap.get(tariff.fromCityId)?.name || tariff.fromCityName,
         toCityName: cityMap.get(tariff.toCityId)?.name || tariff.toCityName,
-        goodsTypeName: goodsMap.get(tariff.goodsTypeId)?.name || tariff.goodsTypeName,
+        goodsTypeName: tariff.goodsTypeId ? goodsMap.get(tariff.goodsTypeId)?.name || tariff.goodsTypeName : tariff.goodsTypeName,
       }));
       setTariffs(data);
     } finally {
@@ -136,7 +136,7 @@ export default function Tariffs() {
 
   const handleSave = async () => {
     if (!formData.fromCityId || !formData.toCityId || !formData.goodsTypeId) {
-      showToast('يرجى اختيار المدن ونوع البضاعة', 'error');
+      showToast('يرجى اختيار خط المصدر والجهة ونوع الطرد', 'error');
       return;
     }
     try {
@@ -170,7 +170,7 @@ export default function Tariffs() {
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold">تعريف الأسعار (الأجور)</h2>
+        <h2 className="text-xl font-bold">تعريف الأسعار</h2>
       </div>
 
       <div className="flex-1 flex gap-4 overflow-hidden">
@@ -179,15 +179,15 @@ export default function Tariffs() {
             <button onClick={handleNew} className="toolbar-btn primary">+ جديد</button>
             <button onClick={loadTariffs} className="toolbar-btn">تحميل</button>
           </div>
-          
+
           <table className="data-grid">
             <thead>
               <tr>
                 <th>الخط / المصدر</th>
                 <th>الجهة</th>
-                <th>نوع الطرود</th>
+                <th>نوع الطرد</th>
                 <th>السعر/كغ</th>
-                <th>الحد الأدنى/طرد</th>
+                <th>الحد الأدنى للشحنة</th>
                 <th>صالح من</th>
               </tr>
             </thead>
@@ -196,7 +196,7 @@ export default function Tariffs() {
                 <tr key={tariff.id} className={selectedTariff?.id === tariff.id ? 'selected' : ''} onClick={() => handleEdit(tariff)}>
                   <td>{tariff.fromCityName}</td>
                   <td>{tariff.toCityName}</td>
-                  <td>{tariff.goodsTypeName}</td>
+                  <td>{tariff.goodsTypeName || '—'}</td>
                   <td className="text-left">{tariff.pricePerKg.toLocaleString()}</td>
                   <td className="text-left">{tariff.minimumCharge.toLocaleString()}</td>
                   <td>{tariff.validFrom}</td>
@@ -210,6 +210,10 @@ export default function Tariffs() {
           <div className="w-80 card overflow-auto">
             <div className="card-header">{selectedTariff ? 'تعديل سعر' : 'سعر جديد'}</div>
             <div className="space-y-3">
+              <p className="text-sm text-gray-600">
+                التسعير يعتمد على <strong>المسار (من → إلى)</strong> و<strong>نوع الطرد</strong> و<strong>الوزن</strong>.
+                كل نوع طرد (كيس، كرتونة، …) له سعر مستقل لاختلاف الحجم.
+              </p>
               <div className="form-group">
                 <label className="form-label">الخط / المصدر</label>
                 <select
@@ -245,7 +249,7 @@ export default function Tariffs() {
                 </select>
               </div>
               <div className="form-group">
-                <label className="form-label">نوع الطرود</label>
+                <label className="form-label">نوع الطرد / المادة</label>
                 <AutocompleteInput
                   value={formData.goodsTypeName || ''}
                   onChange={(value) => {
@@ -271,14 +275,14 @@ export default function Tariffs() {
                         });
                         setGoodsTypes((prev) => [...prev, created]);
                         setFormData((prev) => ({ ...prev, goodsTypeId: created.id, goodsTypeName: created.name }));
-                        showToast('تمت إضافة نوع الطرود', 'success');
+                        showToast('تمت إضافة نوع الطرد', 'success');
                       } catch {
-                        showToast('تعذر إضافة نوع الطرود', 'error');
+                        showToast('تعذر إضافة نوع الطرد', 'error');
                       }
                     })();
                   }}
                   items={goodsTypes.map((g) => ({ id: g.id, name: g.name }))}
-                  placeholder="حرف أو اثنان…"
+                  placeholder="مثلاً: كيس، كرتونة…"
                 />
               </div>
               <div className="form-group">
@@ -295,7 +299,7 @@ export default function Tariffs() {
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">الحد الأدنى لكل طرد</label>
+                <label className="form-label">الحد الأدنى للشحنة</label>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -309,7 +313,7 @@ export default function Tariffs() {
               </div>
               <div className="form-group">
                 <label className="form-label">صالح من</label>
-                <input type="date" className="form-input w-full" value={formData.validFrom || ''} onChange={(e) => setFormData({...formData, validFrom: e.target.value})} />
+                <input type="date" className="form-input w-full" value={formData.validFrom || ''} onChange={(e) => setFormData({ ...formData, validFrom: e.target.value })} />
               </div>
               <div className="flex gap-2 pt-2">
                 <button onClick={handleSave} className="toolbar-btn primary flex-1">حفظ</button>

@@ -1,179 +1,260 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { formatCurrency, type CurrencyCode } from '../../lib/currency/currency';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { phase3FinanceGateway } from '../../lib/api/phase3FinanceGateway';
+import { getBackendIdFromSynthetic, phase15Gateway } from '../../lib/api/phase15Gateway';
 import { useToast } from '../../components/Toast';
 import { downloadCsv } from '../../lib/export/csvDownload';
-import { exportPdfTable } from '../../lib/export/pdfExport';
+import FinanceExportToolbar from '../../components/finance/FinanceExportToolbar';
+import FinanceCurrencySelect from '../../components/finance/FinanceCurrencySelect';
+import {
+  financeCurrencyLabel,
+  financePartyTypeLabel,
+  financePaymentMethodLabel,
+  financeReferenceTypeLabel,
+} from '../../lib/finance/financeArabicLabels';
+import { formatWesternDateTime, formatWesternNumber } from '../../lib/format/westernDigits';
+import { buildDetailedAccountStatementPrintHtml } from '../../lib/export/financialStatementPrint';
 
-type CtxRow = {
+type JournalRow = {
   id: string;
-  at: string;
-  kind: 'inflow' | 'outflow';
-  ref: string;
-  orig: number;
-  cur: CurrencyCode;
-  usd: number;
+  date: string;
+  partyType: string;
+  partyId: string;
+  partyName: string;
+  referenceType: string;
+  referenceNo: string;
+  shipmentNo: string;
+  description: string;
+  debit: number;
+  credit: number;
+  runningBalance: number;
+  currencyCode: string;
+  paymentMethod: string;
+  branchName: string;
+  username: string;
   notes: string;
 };
 
-function mapCashbox(
-  t: Awaited<ReturnType<typeof phase3FinanceGateway.cashbox.getTransactions>>[0],
-): CtxRow {
-  const d = t.created_at;
-  const isIn = t.transaction_type === 'inflow';
-  return {
-    id: t.id,
-    at: d,
-    kind: isIn ? 'inflow' : 'outflow',
-    ref: t.source_voucher_id ? t.source_voucher_id.slice(0, 8) : '—',
-    orig: Number(t.original_amount),
-    cur: t.original_currency,
-    usd: Number(t.base_amount_usd),
-    notes: t.notes || '',
-  };
-}
-
 export default function FinanceDailyJournal() {
+  const [searchParams] = useSearchParams();
   const { showToast } = useToast();
-  const [rows, setRows] = useState<CtxRow[]>([]);
+  const [rows, setRows] = useState<JournalRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [q, setQ] = useState('');
+  const [error, setError] = useState('');
+  const [branches, setBranches] = useState<Array<{ id: number; name: string }>>([]);
+  const [filters, setFilters] = useState({
+    partyType: searchParams.get('partyType') || '',
+    partyId: searchParams.get('partyId') || '',
+    branchId: searchParams.get('branchId') || '',
+    currencyCode: searchParams.get('currencyCode') || '',
+    dateFrom: '',
+    dateTo: '',
+    referenceType: '',
+    search: '',
+    includeOperationalParties: false,
+  });
 
-  const load = useCallback(async () => {
+  const load = async () => {
     setLoading(true);
+    setError('');
     try {
-      const txs = await phase3FinanceGateway.cashbox.getTransactions();
-      setRows(txs.map(mapCashbox).sort((a, b) => a.at.localeCompare(b.at)));
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : 'تعذر تحميل حركات الصندوق', 'error');
-      setRows([]);
+      const [result, branchRows] = await Promise.all([
+        phase3FinanceGateway.accountStatement.getDetailed({
+          partyType: (filters.partyType as 'customer' | 'sender_receiver' | 'agent') || undefined,
+          partyId: filters.partyId || undefined,
+          branchId: filters.branchId
+            ? (filters.branchId.includes('-') ? filters.branchId : getBackendIdFromSynthetic(Number(filters.branchId)) || undefined)
+            : undefined,
+          currencyCode: filters.currencyCode || undefined,
+          dateFrom: filters.dateFrom ? `${filters.dateFrom}T00:00:00.000Z` : undefined,
+          dateTo: filters.dateTo ? `${filters.dateTo}T23:59:59.999Z` : undefined,
+          referenceType: (filters.referenceType as 'shipment' | 'receipt' | 'payment' | 'expense' | 'settlement') || undefined,
+          search: filters.search || undefined,
+          pageSize: 1000,
+          includeOperationalParties: filters.includeOperationalParties || undefined,
+        }),
+        phase15Gateway.branches.getAll().catch(() => []),
+      ]);
+      setRows(result.rows as JournalRow[]);
+      setBranches(branchRows.map((b) => ({ id: b.id, name: b.name })));
+    } catch {
+      setError('تعذر تحميل دفتر اليومية. يرجى المحاولة مرة أخرى.');
     } finally {
       setLoading(false);
     }
-  }, [showToast]);
+  };
 
   useEffect(() => {
     void load();
-  }, [load]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const filtered = useMemo(() => {
-    if (!q.trim()) return rows;
-    const s = q.toLowerCase();
-    return rows.filter((r) => r.notes.toLowerCase().includes(s) || r.id.toLowerCase().includes(s) || r.ref.includes(s));
-  }, [q, rows]);
-
-  const totalIn = useMemo(
-    () => filtered.filter((r) => r.kind === 'inflow').reduce((a, r) => a + r.usd, 0),
-    [filtered],
-  );
-  const totalOut = useMemo(
-    () => filtered.filter((r) => r.kind === 'outflow').reduce((a, r) => a + r.usd, 0),
-    [filtered],
-  );
+  const totals = useMemo(() => {
+    const totalDebit = rows.reduce((sum, row) => sum + row.debit, 0);
+    const totalCredit = rows.reduce((sum, row) => sum + row.credit, 0);
+    const finalBalance = rows.length ? rows[rows.length - 1].runningBalance : 0;
+    return { totalDebit, totalCredit, finalBalance };
+  }, [rows]);
 
   const exportCsv = () => {
     downloadCsv(
       `daily-journal-${new Date().toISOString().split('T')[0]}.csv`,
-      ['الوقت', 'النوع', 'مرجع سند', 'المبلغ الأصلي', 'العملة', 'USD', 'ملاحظات'],
-      filtered.map((r) => [
-        new Date(r.at).toLocaleString(),
-        r.kind === 'inflow' ? 'وارد' : 'صادر',
-        r.ref,
-        r.orig,
-        r.cur,
-        r.usd,
+      ['#', 'التاريخ', 'نوع الحساب', 'اسم الحساب', 'نوع المرجع', 'رقم المرجع', 'رقم الشحنة', 'البيان', 'مدين', 'دائن', 'الرصيد الجاري', 'العملة', 'طريقة الدفع', 'الفرع', 'المستخدم', 'ملاحظات'],
+      rows.map((r, i) => [
+        i + 1,
+        formatWesternDateTime(r.date),
+        financePartyTypeLabel(r.partyType),
+        r.partyName,
+        financeReferenceTypeLabel(r.referenceType),
+        r.referenceNo,
+        r.shipmentNo,
+        r.description,
+        r.debit,
+        r.credit,
+        r.runningBalance,
+        financeCurrencyLabel(r.currencyCode),
+        financePaymentMethodLabel(r.paymentMethod),
+        r.branchName,
+        r.username,
         r.notes,
       ]),
     );
     showToast('تم تنزيل الملف', 'success');
   };
 
-  const exportPdf = async () => {
-    const result = await exportPdfTable({
-      title: 'دفتر اليومية (حركات صندوق نقدي)',
-      subtitle: q.trim() ? `بحث: ${q.trim()}` : undefined,
-      defaultFileName: `daily-journal-${new Date().toISOString().split('T')[0]}.pdf`,
-      headers: ['الوقت', 'النوع', 'مرجع سند', 'المبلغ الأصلي', 'USD', 'ملاحظات'],
-      rows: filtered.map((r) => [
-        new Date(r.at).toLocaleString(),
-        r.kind === 'inflow' ? 'وارد' : 'صادر',
-        r.ref,
-        formatCurrency(r.orig, r.cur),
-        formatCurrency(r.usd, 'USD'),
-        r.notes,
-      ]),
-    });
-
-    if (result.saved) showToast('تم حفظ ملف PDF', 'success');
-    else if (result.message !== 'cancelled') showToast('تعذر إنشاء PDF', 'error');
+  const buildSubtitle = () => {
+    const subtitleParts: string[] = [];
+    if (filters.partyType) subtitleParts.push(`نوع الحساب: ${financePartyTypeLabel(filters.partyType)}`);
+    if (filters.partyId) subtitleParts.push(`معرف: ${filters.partyId}`);
+    if (filters.branchId) subtitleParts.push(`الفرع: ${branches.find((b) => String(b.id) === filters.branchId)?.name ?? filters.branchId}`);
+    if (filters.currencyCode) subtitleParts.push(`العملة: ${financeCurrencyLabel(filters.currencyCode)}`);
+    if (filters.dateFrom || filters.dateTo) subtitleParts.push(`من ${filters.dateFrom || '—'} إلى ${filters.dateTo || '—'}`);
+    if (filters.referenceType) subtitleParts.push(`المرجع: ${financeReferenceTypeLabel(filters.referenceType)}`);
+    if (filters.search.trim()) subtitleParts.push(`بحث: ${filters.search.trim()}`);
+    return subtitleParts.length ? subtitleParts.join(' | ') : undefined;
   };
 
-  if (loading) {
-    return <div className="p-4 text-gray-500">جاري تحميل حركات الصندوق من السيرفر...</div>;
-  }
+  const buildPrintHtml = () =>
+    buildDetailedAccountStatementPrintHtml({
+      title: 'دفتر اليومية',
+      subtitle: buildSubtitle(),
+      rows,
+      totals,
+    });
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-xl font-bold">دفتر اليومية (حركات صندوق نقدي)</h2>
-      <p className="text-sm text-gray-600 max-w-2xl">حركات الصندوق تُجلب مباشرة من السيرفر — لا توجد بيانات تجريبية.</p>
+    <div className="h-full flex flex-col">
+      <div className="mb-3">
+        <h2 className="text-xl font-bold">دفتر اليومية</h2>
+        <p className="text-sm text-gray-600">
+          سجل زمني لكل حركة مالية — أغلبها تُنشأ تلقائياً عند حفظ دفتر الشحن (مرجع: شحنة). السندات تظهر هنا عند تسجيل قبض/دفع لاحقاً.
+        </p>
+      </div>
 
-      <div className="grid grid-cols-3 gap-4 max-w-2xl">
-        <div className="stat-card">
-          <div className="stat-value" style={{ color: '#16a34d' }}>{formatCurrency(totalIn, 'USD')}</div>
-          <div className="stat-label">وارد (تقديري بالدولار)</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value" style={{ color: '#dc2626' }}>{formatCurrency(totalOut, 'USD')}</div>
-          <div className="stat-label">صادر (تقديري بالدولار)</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{formatCurrency(totalIn - totalOut, 'USD')}</div>
-          <div className="stat-label">صافي (بالدولار)</div>
+      <div className="grid grid-cols-3 gap-3 mb-3 max-w-3xl">
+        <div className="stat-card"><div className="stat-value">{formatWesternNumber(totals.totalDebit)}</div><div className="stat-label">إجمالي المدين</div></div>
+        <div className="stat-card"><div className="stat-value">{formatWesternNumber(totals.totalCredit)}</div><div className="stat-label">إجمالي الدائن</div></div>
+        <div className="stat-card"><div className="stat-value">{formatWesternNumber(totals.finalBalance)}</div><div className="stat-label">الرصيد الجاري (آخر سطر)</div></div>
+      </div>
+
+      <div className="card mb-3 p-2">
+        <div className="grid grid-cols-2 md:grid-cols-5 xl:grid-cols-10 gap-2">
+          <select className="form-select" value={filters.partyType} onChange={(e) => setFilters((p) => ({ ...p, partyType: e.target.value }))}>
+            <option value="">نوع الحساب</option><option value="customer">عميل</option><option value="sender_receiver">مرسل/مستلم</option><option value="agent">وكيل</option>
+          </select>
+          <input className="form-input" placeholder="معرف الحساب" value={filters.partyId} onChange={(e) => setFilters((p) => ({ ...p, partyId: e.target.value }))} />
+          <select className="form-select" value={filters.branchId} onChange={(e) => setFilters((p) => ({ ...p, branchId: e.target.value }))}>
+            <option value="">الفرع</option>{branches.map((b) => <option key={b.id} value={String(b.id)}>{b.name}</option>)}
+          </select>
+          <FinanceCurrencySelect
+            allowEmpty
+            emptyLabel="العملة"
+            value={filters.currencyCode}
+            onChange={(currencyCode) => setFilters((p) => ({ ...p, currencyCode }))}
+          />
+          <input type="date" className="form-input" value={filters.dateFrom} onChange={(e) => setFilters((p) => ({ ...p, dateFrom: e.target.value }))} />
+          <input type="date" className="form-input" value={filters.dateTo} onChange={(e) => setFilters((p) => ({ ...p, dateTo: e.target.value }))} />
+          <select className="form-select" value={filters.referenceType} onChange={(e) => setFilters((p) => ({ ...p, referenceType: e.target.value }))}>
+            <option value="">نوع المرجع</option><option value="shipment">شحنة</option><option value="receipt">سند قبض</option><option value="payment">سند دفع</option><option value="expense">مصروف</option><option value="settlement">تسوية</option>
+          </select>
+          <input className="form-input" placeholder="بحث في البيان أو رقم المرجع" value={filters.search} onChange={(e) => setFilters((p) => ({ ...p, search: e.target.value }))} />
+          <button className="toolbar-btn primary" onClick={() => void load()}>تطبيق</button>
+          <button className="toolbar-btn" onClick={() => setFilters({ partyType: '', partyId: '', branchId: '', currencyCode: '', dateFrom: '', dateTo: '', referenceType: '', search: '', includeOperationalParties: false })}>إعادة ضبط</button>
+          <FinanceExportToolbar
+            disabled={loading || rows.length === 0}
+            csvFileName={`daily-journal-${new Date().toISOString().split('T')[0]}.csv`}
+            csvHeaders={['#', 'التاريخ', 'نوع الحساب', 'اسم الحساب', 'مرجع', 'بيان', 'مدين', 'دائن', 'رصيد']}
+            csvRows={rows.map((r, i) => [
+              String(i + 1),
+              formatWesternDateTime(r.date),
+              r.partyType,
+              r.partyName,
+              r.referenceNo,
+              r.description,
+              String(r.debit),
+              String(r.credit),
+              String(r.runningBalance),
+            ])}
+            documentType="daily_journal"
+            pdfTitle="دفتر اليومية"
+            pdfFileName={`daily-journal-${new Date().toISOString().split('T')[0]}.pdf`}
+            onBuildPrintHtml={buildPrintHtml}
+            className="flex gap-2"
+          />
+          <label className="flex items-center gap-1 text-sm text-gray-600 cursor-pointer col-span-2">
+            <input
+              type="checkbox"
+              checked={filters.includeOperationalParties}
+              onChange={(e) => setFilters((p) => ({ ...p, includeOperationalParties: e.target.checked }))}
+            />
+            إظهار الأطراف التشغيلية (بيانات قديمة)
+          </label>
         </div>
       </div>
 
-      <div className="card flex gap-2">
-        <input className="form-input flex-1 max-w-md" placeholder="بحث في الملاحظات أو المعرف..." value={q} onChange={(e) => setQ(e.target.value)} />
-        <button type="button" className="toolbar-btn" onClick={() => void load()}>
-          تحديث
-        </button>
-        <button type="button" className="toolbar-btn" onClick={exportCsv}>
-          تصدير Excel (CSV)
-        </button>
-        <button type="button" className="toolbar-btn" onClick={() => void exportPdf()}>
-          تصدير PDF
-        </button>
-        <button type="button" className="toolbar-btn" onClick={() => window.print()}>
-          طباعة
-        </button>
-      </div>
-
-      <div className="card overflow-auto">
-        <table className="data-grid text-sm">
+      <div className="card flex-1 overflow-auto">
+        {error && <div className="mb-2 text-sm text-red-700">{error}</div>}
+        {loading && <p className="p-4 text-gray-500">جاري تحميل الحركات...</p>}
+        <table className="data-grid">
           <thead>
             <tr>
-              <th>الوقت</th>
-              <th>النوع</th>
-              <th>مرجع سند</th>
-              <th>مبلغ</th>
-              <th>USD</th>
-              <th>ملاحظات</th>
+              <th>#</th><th>التاريخ</th><th>نوع الحساب</th><th>اسم الحساب</th><th>نوع المرجع</th><th>رقم المرجع</th><th>رقم الشحنة</th><th>البيان</th>
+              <th className="text-left">مدين</th><th className="text-left">دائن</th><th className="text-left">الرصيد الجاري</th><th>العملة</th><th>طريقة الدفع</th><th>الفرع</th><th>المستخدم</th><th>ملاحظات</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((r) => (
-              <tr key={r.id}>
-                <td>{new Date(r.at).toLocaleString()}</td>
-                <td>{r.kind === 'inflow' ? 'وارد' : 'صادر'}</td>
-                <td>{r.ref}</td>
-                <td className="text-left">{formatCurrency(r.orig, r.cur)}</td>
-                <td className="text-left">{formatCurrency(r.usd, 'USD')}</td>
-                <td>{r.notes}</td>
+            {rows.map((row, idx) => (
+              <tr key={row.id}>
+                <td>{idx + 1}</td>
+                <td>{formatWesternDateTime(row.date)}</td>
+                <td>{financePartyTypeLabel(row.partyType)}</td>
+                <td>{row.partyName}</td>
+                <td>{financeReferenceTypeLabel(row.referenceType)}</td>
+                <td>{row.referenceNo || '-'}</td>
+                <td>{row.shipmentNo || '-'}</td>
+                <td>{row.description || '-'}</td>
+                <td className="text-left">{formatWesternNumber(row.debit)}</td>
+                <td className="text-left">{formatWesternNumber(row.credit)}</td>
+                <td className="text-left">{formatWesternNumber(row.runningBalance)}</td>
+                <td>{financeCurrencyLabel(row.currencyCode)}</td>
+                <td>{financePaymentMethodLabel(row.paymentMethod)}</td>
+                <td>{row.branchName || '-'}</td>
+                <td>{row.username || '-'}</td>
+                <td>{row.notes || '-'}</td>
               </tr>
             ))}
+            {!loading && rows.length === 0 && <tr><td colSpan={16} className="text-center p-6 text-gray-500">لا توجد حركات مالية مطابقة للفلاتر الحالية.</td></tr>}
           </tbody>
+          <tfoot>
+            <tr>
+              <td colSpan={8}>الإجماليات</td>
+              <td className="text-left">{formatWesternNumber(totals.totalDebit)}</td>
+              <td className="text-left">{formatWesternNumber(totals.totalCredit)}</td>
+              <td className="text-left">{formatWesternNumber(totals.finalBalance)}</td>
+              <td colSpan={5}></td>
+            </tr>
+          </tfoot>
         </table>
-        {filtered.length === 0 && <p className="p-4 text-gray-500">لا حركات</p>}
       </div>
     </div>
   );

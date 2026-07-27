@@ -13,6 +13,7 @@ type RuntimeConfigPayload = {
 const CHANNEL_READ_CONFIG = 'fs:read-config';
 const CHANNEL_WRITE_CONFIG = 'fs:write-config';
 const CHANNEL_ENABLE_LOCAL_PACKAGED = 'fs:enable-local-packaged-server';
+const CHANNEL_RELAUNCH_APP = 'app:relaunch';
 
 const LOCAL_PACKAGED_SERVER_FLAG = '.erp-spawn-local-api';
 
@@ -28,12 +29,23 @@ export function registerFilesystemIpc() {
   ipcMain.removeHandler(CHANNEL_READ_CONFIG);
   ipcMain.removeHandler(CHANNEL_WRITE_CONFIG);
   ipcMain.removeHandler(CHANNEL_ENABLE_LOCAL_PACKAGED);
+  ipcMain.removeHandler(CHANNEL_RELAUNCH_APP);
 
   ipcMain.handle(CHANNEL_READ_CONFIG, async () => loadRuntimeConfig());
 
   ipcMain.handle(CHANNEL_ENABLE_LOCAL_PACKAGED, async () => {
     await fs.mkdir(path.dirname(getLocalPackagedServerFlagPath()), { recursive: true });
     await fs.writeFile(getLocalPackagedServerFlagPath(), new Date().toISOString(), 'utf-8');
+    return { success: true as const };
+  });
+
+  // الخادم المحلي المضمّن يُشغَّل مرة واحدة فقط عند بدء العملية الرئيسية (main process)، بحسب
+  // وجود علامة .erp-spawn-local-api في تلك اللحظة. مجرد إعادة تحميل الصفحة (location.reload)
+  // لا يمكنها إجبار عملية Electron الرئيسية على تشغيل الخادم بعد تفويت تلك اللحظة — لذلك
+  // يجب إعادة تشغيل التطبيق بالكامل حتى يعاد فحص العلامة من جديد ويُشغَّل الخادم فعلياً.
+  ipcMain.handle(CHANNEL_RELAUNCH_APP, async () => {
+    app.relaunch();
+    setTimeout(() => app.exit(0), 150);
     return { success: true as const };
   });
 

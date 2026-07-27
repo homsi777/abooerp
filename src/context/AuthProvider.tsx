@@ -8,7 +8,7 @@ import {
   setActiveBranchId,
   setSessionTokens,
 } from './authStorage';
-import { configureHttpClientAuth, httpClient } from '../lib/api/httpClient';
+import { configureHttpClientAuth, getResolvedApiBaseUrl, httpClient } from '../lib/api/httpClient';
 import { realtimeClient } from '../lib/realtime/realtimeClient';
 
 export interface AuthUser {
@@ -43,6 +43,7 @@ type AuthContextValue = {
   refresh: () => Promise<boolean>;
   setActiveBranch: (branchId: string | null) => Promise<void>;
   hasPermission: (permission: string) => boolean;
+  hasAnyPermission: (permissions: string[]) => boolean;
   sessionExpiredMessage: string | null;
   clearSessionExpiredMessage: () => void;
 };
@@ -263,7 +264,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     setSessionExpiredMessage(null);
     // Connect realtime SSE stream after login
-    const apiBase = localStorage.getItem('lan.apiBaseUrl') ?? (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4010/api/v1');
+    const apiBase = await getResolvedApiBaseUrl();
     realtimeClient.connect(apiBase, getAccessToken);
     return {
       ...response.user,
@@ -282,6 +283,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refresh,
       setActiveBranch,
       hasPermission: (permission: string) => Boolean(user?.permissions?.includes(permission)),
+      hasAnyPermission: (permissions: string[]) =>
+        permissions.some((permission) => Boolean(user?.permissions?.includes(permission))),
       sessionExpiredMessage,
       clearSessionExpiredMessage: () => setSessionExpiredMessage(null),
     }),

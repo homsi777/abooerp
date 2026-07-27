@@ -19,13 +19,34 @@
     "server:prod:seed": "node server/dist/db/seed.js",
     "server:db:ensure": "node server/scripts/ensureDatabase.cjs",
     "server:migrate": "tsx server/src/db/migrate.ts",
+    "server:migrate:status": "tsx server/scripts/migrate-status.ts",
     "server:seed": "tsx server/src/db/seed.ts",
     "server:clean-transactional": "node server/scripts/cleanTransactionalData.cjs",
     "server:wipe-bare": "node server/scripts/wipeAllBareAdmin.cjs",
     "server:prepare": "npm run server:db:ensure && npm run server:migrate",
+    "server:restore-backup": "node server/scripts/restoreBackup.cjs",
+    "server:inspect-ledger": "node server/scripts/inspectLedgerReceipts.cjs",
+    "server:audit-ledger-duplicates": "node server/scripts/auditCloudLedgerDuplicates.cjs",
+    "server:verify-ledger-finance": "node server/scripts/verifyLedgerFinanceSinceDate.cjs",
+    "server:repair-ledger-finance": "tsx server/src/scripts/repairLedgerFinanceSinceDate.ts",
+    "server:verify-ledger-scope": "node server/scripts/verifyDailyLedgerScope.cjs",
+    "server:activate-license": "node server/scripts/activateProductionLicense.cjs",
+    "server:verify-ledger-operators": "node server/scripts/verifyDailyLedgerOperatorScope.cjs",
+    "test:daily-ledger-helpers": "tsx src/lib/shipping/dailyLedgerHelpers.selftest.ts",
+    "test:daily-ledger-row-filter": "tsx src/lib/shipping/dailyLedgerRowFilter.selftest.ts",
+    "test:daily-ledger-access": "tsx server/src/utils/dailyLedgerAccess.selftest.ts",
+    "test:daily-ledger-dispatch-undo": "tsx src/lib/shipping/dailyLedgerDispatchUndo.selftest.ts",
+    "server:smoke:dispatch-undo": "tsx server/src/scripts/dailyLedgerDispatchUndoSmoke.ts",
+    "test:offline-sync-integration": "tsx server/src/scripts/offlineSyncIntegrationSmoke.ts",
+    "offline:restore": "tsx server/src/scripts/restoreOfflineBackup.ts",
+    "receipt:calibrate": "tsx scripts/open-mahmoud-receipt-test.ts",
+    "server:inspect-driver": "node server/scripts/inspectDriverLedger.cjs",
+    "server:assign-driver-session": "node server/scripts/assignDriverToOrphanSession.cjs",
     "dev:free-ports": "node server/scripts/freeDevPorts.cjs",
     "server:bootstrap": "npm run server:db:ensure && npm run server:migrate && npm run server:seed",
     "server:check": "tsc -p server/tsconfig.json --noEmit",
+    "build:web-release": "npm run server:check && npm run build && npm run server:build",
+    "deploy:web:vps": "bash scripts/deploy-abooerp-web.sh",
     "server:smoke:phase21": "tsx server/src/scripts/phase21Smoke.ts",
     "server:smoke:phase22-scope": "tsx server/src/scripts/phase22ScopeSmoke.ts",
     "server:smoke:phase23-auth-scope": "tsx server/src/scripts/phase23AuthScopeSmoke.ts",
@@ -33,6 +54,7 @@
     "server:smoke:phase25-permissions": "tsx server/src/scripts/phase25PermissionSmoke.ts",
     "server:smoke:phase26-strict-rbac": "tsx server/src/scripts/phase26StrictRbacSmoke.ts",
     "server:smoke:phase31-finance": "tsx server/src/scripts/phase31FinanceSmoke.ts",
+    "server:smoke:agent-branch-reconciliation": "tsx server/src/scripts/phaseAgentBranchReconciliationSmoke.ts",
     "server:smoke:phase32-confirmation-posting": "tsx server/src/scripts/phase32VoucherConfirmationSmoke.ts",
     "server:smoke:phase33-cancellation-reversal": "tsx server/src/scripts/phase33CancellationReversalSmoke.ts",
     "server:smoke:phase34-party-statements": "tsx server/src/scripts/phase34PartyStatementSmoke.ts",
@@ -53,6 +75,8 @@
     "electron:compile": "tsc -p electron/tsconfig.json && node -e \"require('fs').copyFileSync('electron/preload.cjs','dist-electron/preload.cjs')\"",
     "electron:start": "electron .",
     "electron:dev": "npm run electron:compile && node server/scripts/devStartup.cjs && concurrently --kill-others -n SERVER,VITE,ELECTRON -c cyan,magenta,green \"npm run server:dev\" \"npm run dev\" \"wait-on -t 90000 tcp:127.0.0.1:5188 tcp:127.0.0.1:4010 && npm run electron:start\"",
+    "web:dev": "node server/scripts/devStartup.cjs && concurrently --kill-others -n SERVER,VITE,BROWSER -c cyan,magenta,yellow \"npm run server:dev\" \"npm run dev\" \"wait-on -t 90000 tcp:127.0.0.1:5188 tcp:127.0.0.1:4010 && node scripts/openDevBrowser.mjs --hold\"",
+    "dev:both": "npm run electron:compile && node server/scripts/devStartup.cjs && concurrently --kill-others -n SERVER,VITE,BROWSER,ELECTRON -c cyan,magenta,yellow,green \"npm run server:dev\" \"npm run dev\" \"wait-on -t 90000 tcp:127.0.0.1:5188 tcp:127.0.0.1:4010 && node scripts/openDevBrowser.mjs --hold\" \"wait-on -t 90000 tcp:127.0.0.1:5188 tcp:127.0.0.1:4010 && npm run electron:start\"",
     "server:bundle": "node scripts/bundleServer.mjs",
     "validate:package": "node scripts/validatePackage.mjs",
     "verify:release": "node scripts/verifyReleaseBundle.mjs",
@@ -62,6 +86,7 @@
     "electron:package": "npm run build && npm run electron:compile && npm run server:bundle && npm run validate:package && electron-builder --win nsis --publish never",
     "electron:package:next": "npm run build && npm run electron:compile && npm run server:bundle && npm run validate:package && electron-builder --win nsis --publish never --config.directories.output=dist-release-next",
     "electron:package:fresh": "npm run clean:packaging && npm run electron:package:next && set RELEASE_DIR=dist-release-next&& npm run verify:release",
+    "electron:smoke:packaged": "node scripts/packagedRuntimeSmoke.mjs",
     "electron:smoke:runtime": "npm run electron:compile && electron . --smoke-runtime"
   },
   "devDependencies": {
@@ -86,6 +111,7 @@
     "wait-on": "^9.0.5"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.14.7",
     "@types/react": "^19.2.14",
     "@types/react-data-grid": "^4.0.12",
     "@types/react-dom": "^19.2.3",
@@ -93,9 +119,11 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "html2pdf.js": "^0.14.0",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^1.8.0",
     "pg": "^8.20.0",
+    "puppeteer-core": "^24.36.0",
     "react": "^19.2.5",
     "react-data-grid": "^7.0.0-beta.59",
     "react-dom": "^19.2.5",
@@ -127,11 +155,9 @@
       {
         "from": "server/src/db/migrations",
         "to": "migrations",
-        "filter": ["**/*.sql"]
-      },
-      {
-        "from": "server/.env",
-        "to": "app-config.env"
+        "filter": [
+          "**/*.sql"
+        ]
       }
     ],
     "win": {
@@ -151,7 +177,7 @@
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "shortcutName": "شركة عبو المحمود لنقل والخدمات الوجستية",
-      "deleteAppDataOnUninstall": true
+      "deleteAppDataOnUninstall": false
     }
   }
 }

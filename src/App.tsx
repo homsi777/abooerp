@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './layouts/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -25,11 +25,25 @@ import CashBoxMovements from './pages/finance/CashBoxMovements';
 import FinanceVouchers from './pages/finance/Vouchers';
 import FinanceRecords from './pages/finance/Records';
 import DailyJournal from './pages/finance/DailyJournal';
+import FinanceStatementsShell from './pages/finance/statements/FinanceStatementsShell';
+import PartyStatementPage from './pages/finance/statements/PartyStatementPage';
+import CashboxStatementPage from './pages/finance/statements/CashboxStatementPage';
+import VoucherStatementPage from './pages/finance/statements/VoucherStatementPage';
+import DailyLedgerSummaryPage from './pages/finance/statements/DailyLedgerSummaryPage';
+import ShipmentsDatePage from './pages/finance/statements/ShipmentsDatePage';
+import EmbeddedHawalaStatement from './pages/finance/statements/EmbeddedHawalaStatement';
+import EmbeddedAgentBranchReconciliation from './pages/finance/statements/EmbeddedAgentBranchReconciliation';
+import EmbeddedLedgerAudit from './pages/finance/statements/EmbeddedLedgerAudit';
+import EmbeddedCodStatement from './pages/finance/statements/EmbeddedCodStatement';
+import BilateralReconciliation from './pages/finance/BilateralReconciliation';
 import FinanceReports from './pages/finance/Reports';
-import FinanceDeliveryReports from './pages/finance/DeliveryReports';
-import DebitCreditCenter from './pages/finance/DebitCreditCenter';
-import AccountStatement from './pages/finance/AccountStatement';
-import AgentCodStatement from './pages/finance/AgentCodStatement';
+import FinanceReportsShell from './pages/finance/reports/FinanceReportsShell';
+import ProfitLossReport from './pages/finance/reports/ProfitLossReport';
+import GeneralLedger from './pages/finance/GeneralLedger';
+import TrialBalance from './pages/finance/TrialBalance';
+import BalanceSheet from './pages/finance/BalanceSheet';
+import PeriodClosing from './pages/finance/PeriodClosing';
+import MonthlyInventoryReportPage from './pages/finance/MonthlyInventory';
 import AgentsModule from './pages/agents/AgentsModule';
 import AgentProfile from './pages/agents/AgentProfile';
 import BranchesModule from './pages/branches/BranchesModule';
@@ -38,14 +52,24 @@ import CustomersModule from './pages/customers/CustomersModule';
 import CustomerProfile from './pages/customers/CustomerProfile';
 import AccessDenied from './pages/AccessDenied';
 import Transfers from './pages/Transfers';
+import TransfersShell from './pages/transfers/TransfersShell';
+import TransferReports from './pages/transfers/TransferReports';
 import PermissionsCenter from './pages/PermissionsCenter';
 import AdminEvents from './pages/admin/AdminEvents';
+import DailyLedgerDocumentation from './pages/shipping/DailyLedgerDocumentation';
 import AgentPortal from './pages/AgentPortal';
 import AgentDeliveryQueues from './pages/agent/AgentDeliveryQueues';
 import { ToastProvider } from './components/Toast';
 import { useAuth } from './context/AuthProvider';
 import RequireAuth from './components/RequireAuth';
 import RequirePermission from './components/RequirePermission';
+import RequireAnyPermission from './components/RequireAnyPermission';
+import { NAV_PERMISSION_ALIASES } from './lib/auth/navPermissionAliases';
+
+function FinanceLegacyRedirect({ to }: { to: string }) {
+  const { search } = useLocation();
+  return <Navigate to={`${to}${search}`} replace />;
+}
 
 export default function App() {
   const { user, loading, logout } = useAuth();
@@ -163,6 +187,14 @@ export default function App() {
                     }
                   />
                   <Route
+                    path="/daily-ledger/documentation"
+                    element={
+                      <RequireAnyPermission permissions={['daily_ledger.documentation.read', 'shipments.read', 'shipments.write']}>
+                        <DailyLedgerDocumentation />
+                      </RequireAnyPermission>
+                    }
+                  />
+                  <Route
                     path="/shipments"
                     element={
                       <RequirePermission permission="shipments.read">
@@ -203,10 +235,13 @@ export default function App() {
                     path="/transfers"
                     element={
                       <RequirePermission permission="transfers.read">
-                        <Transfers />
+                        <TransfersShell />
                       </RequirePermission>
                     }
-                  />
+                  >
+                    <Route index element={<Transfers />} />
+                    <Route path="reports" element={<TransferReports />} />
+                  </Route>
                   <Route
                     path="/permissions"
                     element={
@@ -317,39 +352,123 @@ export default function App() {
                     }
                   />
                   <Route path="/finance/tariffs" element={user?.userType === 'agent' ? <Navigate to="/agent-portal" replace /> : <Tariffs />} />
-                  <Route path="/finance/daily-journal" element={user?.userType === 'agent' ? <Navigate to="/agent-portal" replace /> : <DailyJournal />} />
                   <Route
-                    path="/finance/debit-credit"
+                    path="/finance/daily-journal"
                     element={
                       user?.userType === 'agent' ? (
                         <Navigate to="/agent-portal" replace />
                       ) : (
                         <RequirePermission permission="finance.read">
-                          <DebitCreditCenter />
+                          <DailyJournal />
                         </RequirePermission>
                       )
                     }
                   />
                   <Route
-                    path="/finance/account-statement"
+                    path="/finance/bilateral-reconciliation"
                     element={
                       user?.userType === 'agent' ? (
                         <Navigate to="/agent-portal" replace />
                       ) : (
                         <RequirePermission permission="finance.read">
-                          <AccountStatement />
+                          <BilateralReconciliation />
                         </RequirePermission>
                       )
                     }
                   />
                   <Route
-                    path="/finance/agent-cod-statement"
+                    path="/finance/statements"
                     element={
-                      <RequirePermission permission="finance.read">
-                        <AgentCodStatement />
-                      </RequirePermission>
+                      user?.userType === 'agent' ? (
+                        <Navigate to="/agent-portal" replace />
+                      ) : (
+                        <RequireAnyPermission permissions={NAV_PERMISSION_ALIASES['finance.read']}>
+                          <FinanceStatementsShell />
+                        </RequireAnyPermission>
+                      )
+                    }
+                  >
+                    <Route path="parties/agent" element={<PartyStatementPage partyType="agent" />} />
+                    <Route path="parties/customer" element={<PartyStatementPage partyType="customer" />} />
+                    <Route path="parties/sender-receiver" element={<PartyStatementPage partyType="sender_receiver" />} />
+                    <Route path="cash/cashbox" element={<CashboxStatementPage />} />
+                    <Route path="cash/receipts" element={<VoucherStatementPage voucherType="receipt" />} />
+                    <Route path="cash/payments" element={<VoucherStatementPage voucherType="payment" />} />
+                    <Route path="shipping/ledger-summary" element={<DailyLedgerSummaryPage />} />
+                    <Route path="shipping/shipments" element={<ShipmentsDatePage />} />
+                    <Route path="shipping/cod" element={<EmbeddedCodStatement />} />
+                    <Route path="hawala" element={<EmbeddedHawalaStatement />} />
+                    <Route path="reconciliation/agent-branch" element={<EmbeddedAgentBranchReconciliation />} />
+                    <Route path="reconciliation/ledger" element={<EmbeddedLedgerAudit />} />
+                  </Route>
+                  <Route
+                    path="/finance/general-ledger"
+                    element={
+                      user?.userType === 'agent' ? (
+                        <Navigate to="/agent-portal" replace />
+                      ) : (
+                        <RequirePermission permission="finance.read">
+                          <GeneralLedger />
+                        </RequirePermission>
+                      )
                     }
                   />
+                  <Route path="/finance/debit-credit" element={<FinanceLegacyRedirect to="/finance/general-ledger" />} />
+                  <Route path="/finance/account-statement" element={<FinanceLegacyRedirect to="/finance/daily-journal" />} />
+                  <Route path="/finance/agent-settlement" element={<Navigate to="/finance/statements/reconciliation/agent-branch" replace />} />
+                  <Route path="/finance/agent-cod-statement" element={<Navigate to="/finance/statements/shipping/cod" replace />} />
+                  <Route path="/finance/hawala-reconciliation" element={<Navigate to="/finance/statements/hawala" replace />} />
+                  <Route path="/finance/ledger-finance-audit" element={<Navigate to="/finance/statements/reconciliation/ledger" replace />} />
+                  <Route path="/finance/agent-branch-reconciliation" element={<Navigate to="/finance/statements/reconciliation/agent-branch" replace />} />
+                  <Route
+                    path="/finance/trial-balance"
+                    element={
+                      user?.userType === 'agent' ? (
+                        <Navigate to="/agent-portal" replace />
+                      ) : (
+                        <RequirePermission permission="finance.read">
+                          <TrialBalance />
+                        </RequirePermission>
+                      )
+                    }
+                  />
+                  <Route
+                    path="/finance/balance-sheet"
+                    element={
+                      user?.userType === 'agent' ? (
+                        <Navigate to="/agent-portal" replace />
+                      ) : (
+                        <RequirePermission permission="finance.read">
+                          <BalanceSheet />
+                        </RequirePermission>
+                      )
+                    }
+                  />
+                  <Route
+                    path="/finance/monthly-inventory"
+                    element={
+                      user?.userType === 'agent' ? (
+                        <Navigate to="/agent-portal" replace />
+                      ) : (
+                        <RequirePermission permission="finance.read">
+                          <MonthlyInventoryReportPage />
+                        </RequirePermission>
+                      )
+                    }
+                  />
+                  <Route
+                    path="/finance/period-closing"
+                    element={
+                      user?.userType === 'agent' ? (
+                        <Navigate to="/agent-portal" replace />
+                      ) : (
+                        <RequirePermission permission="finance.read">
+                          <PeriodClosing />
+                        </RequirePermission>
+                      )
+                    }
+                  />
+
                   <Route
                     path="/finance/reports"
                     element={
@@ -357,23 +476,15 @@ export default function App() {
                         <Navigate to="/agent-portal" replace />
                       ) : (
                         <RequirePermission permission="finance.read">
-                          <FinanceReports />
+                          <FinanceReportsShell />
                         </RequirePermission>
                       )
                     }
-                  />
-                  <Route
-                    path="/finance/delivery-reports"
-                    element={
-                      user?.userType === 'agent' ? (
-                        <Navigate to="/agent-portal" replace />
-                      ) : (
-                        <RequirePermission permission="finance.read">
-                          <FinanceDeliveryReports />
-                        </RequirePermission>
-                      )
-                    }
-                  />
+                  >
+                    <Route index element={<FinanceReports />} />
+                    <Route path="profit-loss" element={<ProfitLossReport />} />
+                  </Route>
+                  <Route path="/finance/delivery-reports" element={<FinanceLegacyRedirect to="/finance/reports" />} />
 
                   <Route path="/reports" element={user?.userType === 'agent' ? <Navigate to="/agent-portal" replace /> : <Reports />} />
                   <Route path="/print-preview" element={user?.userType === 'agent' ? <Navigate to="/agent-portal" replace /> : <PrintPreview />} />

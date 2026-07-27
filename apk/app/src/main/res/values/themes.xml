@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar">
+        <item name="android:statusBarColor">@color/splash_background</item>
+        <item name="android:navigationBarColor">@color/launcher_background</item>
+    </style>
+
+    <style name="Theme.MyApplication.Splash" parent="Theme.MyApplication">
+        <item name="android:windowBackground">@drawable/splash_screen</item>
+    </style>
+</resources>

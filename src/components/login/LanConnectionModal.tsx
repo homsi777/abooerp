@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { getLanState, saveLanConnection } from '../../lib/api/httpClient';
+import { CLOUD_API_PORT, getLanPort, getLanState, saveLanConnection } from '../../lib/api/httpClient';
+import { registerDesktopDevice, registrationStatusMessage } from '../../lib/deviceRegistration';
 
 type TestStatus = 'idle' | 'testing' | 'success' | 'fail';
 
@@ -12,15 +13,23 @@ function validateIp(ip: string): boolean {
   return /^(\d{1,3}\.){3}\d{1,3}$/.test(ip.trim());
 }
 
+function validatePort(port: number): boolean {
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+
 async function readBackendPort(): Promise<number> {
+  const saved = getLanPort();
+  if (localStorage.getItem('lan.serverPort')) return saved;
   try {
     const runtime = (window as any)?.runtime;
     if (runtime?.getConfig) {
       const cfg = await runtime.getConfig();
-      if (cfg?.backendPort) return Number(cfg.backendPort);
+      if (cfg?.backendResolutionMode === 'manual_lan' && cfg?.backendPort) {
+        return Number(cfg.backendPort) || CLOUD_API_PORT;
+      }
     }
   } catch { /* ignore */ }
-  return 4010;
+  return CLOUD_API_PORT;
 }
 
 export default function LanConnectionModal({ onClose, onConnected }: Props) {
@@ -30,17 +39,17 @@ export default function LanConnectionModal({ onClose, onConnected }: Props) {
   const [testedBranches, setTestedBranches] = useState<{ id: string; code: string; name: string }[]>([]);
   const [errorMsg, setErrorMsg] = useState('');
   const [lanInfo, setLanInfo] = useState<{ lanAddresses: string[]; firewallHint: string } | null>(null);
-  const [resolvedPort, setResolvedPort] = useState(4010);
+  const [port, setPort] = useState(CLOUD_API_PORT);
   const overlayRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    readBackendPort().then(setResolvedPort).catch(() => {});
+    readBackendPort().then(setPort).catch(() => {});
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const buildApiUrl = (ip: string) => `http://${ip}:${resolvedPort}/api/v1`;
+  const buildApiUrl = (hostIp: string) => `http://${hostIp}:${port}/api/v1`;
 
   const handleTest = async () => {
     if (!validateIp(ip)) {
@@ -76,12 +85,27 @@ export default function LanConnectionModal({ onClose, onConnected }: Props) {
       setStatus('success');
     } catch (err: any) {
       setStatus('fail');
-      setErrorMsg(`تعذر الاتصال — تحقق من IP وأن السيرفر يعمل (منفذ ${resolvedPort})`);
+      setErrorMsg(`تعذر الاتصال — تحقق من IP والمنفذ (${port}). للسحابة استخدم ${CLOUD_API_PORT}.`);
     }
   };
 
-  const handleSave = () => {
-    saveLanConnection(ip.trim(), resolvedPort);
+  const handleSave = async () => {
+    const apiBase = buildApiUrl(ip.trim());
+    saveLanConnection(ip.trim(), port);
+    const fsApi = (window as any)?.fs;
+    if (fsApi?.writeConfig) {
+      await fsApi.writeConfig({
+        backendResolutionMode: 'manual_lan',
+        manualLanHost: ip.trim(),
+        backendPort: port,
+      });
+    }
+    const regStatus = await registerDesktopDevice(apiBase);
+    if (regStatus === 'unknown' || regStatus === 'skipped' || regStatus === 'blocked') {
+      setStatus('fail');
+      setErrorMsg(registrationStatusMessage(regStatus));
+      return;
+    }
     onConnected(ip.trim(), testedBranches);
     onClose();
   };
@@ -120,8 +144,8 @@ export default function LanConnectionModal({ onClose, onConnected }: Props) {
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px',
             }}>🌐</div>
             <div>
-              <div style={{ color: '#fff', fontWeight: 700, fontSize: '16px' }}>ربط محلي LAN</div>
-              <div style={{ color: 'rgba(255,255,255,.4)', fontSize: '12px' }}>الاتصال بالسيرفر الرئيسي على الشبكة</div>
+              <div style={{ color: '#fff', fontWeight: 700, fontSize: '16px' }}>اتصال بالسحابة</div>
+              <div style={{ color: 'rgba(255,255,255,.4)', fontSize: '12px' }}>IP السيرفر + منفذ API (عادة {CLOUD_API_PORT})</div>
             </div>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.5)', cursor: 'pointer', fontSize: '20px' }}>✕</button>
@@ -145,12 +169,36 @@ export default function LanConnectionModal({ onClose, onConnected }: Props) {
         {/* IP input */}
         <div style={{ marginBottom: '16px' }}>
           <label style={{ display: 'block', color: 'rgba(255,255,255,.7)', fontSize: '13px', fontWeight: 500, marginBottom: '8px' }}>
-            IP الجهاز الرئيسي (السيرفر)
+            IP السيرفر (السحابة)
           </label>
           <input
             value={ip}
             onChange={(e) => { setIp(e.target.value); setStatus('idle'); setErrorMsg(''); }}
-            placeholder="192.168.1.100"
+            placeholder="65.21.136.217"
+            dir="ltr"
+            style={{
+              width: '100%', padding: '12px 14px', boxSizing: 'border-box',
+              background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.15)',
+              borderRadius: '10px', color: '#fff', fontSize: '16px', fontFamily: 'monospace', outline: 'none',
+            }}
+          />
+        </div>
+
+        <div style={{ marginBottom: '16px' }}>
+          <label style={{ display: 'block', color: 'rgba(255,255,255,.7)', fontSize: '13px', fontWeight: 500, marginBottom: '8px' }}>
+            منفذ API
+          </label>
+          <input
+            type="number"
+            min={1}
+            max={65535}
+            value={port}
+            onChange={(e) => {
+              setPort(Number(e.target.value) || CLOUD_API_PORT);
+              setStatus('idle');
+              setErrorMsg('');
+            }}
+            placeholder={String(CLOUD_API_PORT)}
             dir="ltr"
             style={{
               width: '100%', padding: '12px 14px', boxSizing: 'border-box',
@@ -159,7 +207,7 @@ export default function LanConnectionModal({ onClose, onConnected }: Props) {
             }}
           />
           <div style={{ color: 'rgba(255,255,255,.3)', fontSize: '11px', marginTop: '6px' }}>
-            المنفذ يُضبط تلقائياً ({resolvedPort}) — لا داعي لإدخاله
+            للسحابة: {CLOUD_API_PORT} — لا تستخدم 4010 (داخلي على السيرفر فقط)
           </div>
         </div>
 
@@ -194,7 +242,7 @@ export default function LanConnectionModal({ onClose, onConnected }: Props) {
           }}>
             <div style={{ color: '#38bdf8', fontSize: '11px', fontWeight: 600, marginBottom: '4px' }}>🌐 عناوين LAN المكتشفة على السيرفر</div>
             {lanInfo.lanAddresses.map(a => (
-              <div key={a} style={{ color: 'rgba(255,255,255,.6)', fontSize: '12px', fontFamily: 'monospace' }}>• {a}:{resolvedPort}</div>
+              <div key={a} style={{ color: 'rgba(255,255,255,.6)', fontSize: '12px', fontFamily: 'monospace' }}>• {a}:{port}</div>
             ))}
           </div>
         )}
@@ -232,21 +280,21 @@ export default function LanConnectionModal({ onClose, onConnected }: Props) {
         <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
           <button
             onClick={() => void handleTest()}
-            disabled={!validateIp(ip) || status === 'testing'}
+            disabled={!validateIp(ip) || !validatePort(port) || status === 'testing'}
             style={{
               flex: 1, padding: '12px',
-              background: validateIp(ip) && status !== 'testing' ? 'linear-gradient(135deg,#0ea5e9,#2563eb)' : 'rgba(255,255,255,.07)',
+              background: validateIp(ip) && validatePort(port) && status !== 'testing' ? 'linear-gradient(135deg,#0ea5e9,#2563eb)' : 'rgba(255,255,255,.07)',
               border: 'none', borderRadius: '10px', color: '#fff',
               fontSize: '14px', fontWeight: 600,
-              cursor: validateIp(ip) && status !== 'testing' ? 'pointer' : 'not-allowed',
-              opacity: validateIp(ip) && status !== 'testing' ? 1 : 0.5,
+              cursor: validateIp(ip) && validatePort(port) && status !== 'testing' ? 'pointer' : 'not-allowed',
+              opacity: validateIp(ip) && validatePort(port) && status !== 'testing' ? 1 : 0.5,
             }}
           >
             {status === 'testing' ? 'جارٍ الاختبار...' : 'اختبار الاتصال'}
           </button>
           {status === 'success' && (
             <button
-              onClick={handleSave}
+              onClick={() => void handleSave()}
               style={{
                 flex: 1, padding: '12px',
                 background: 'linear-gradient(135deg,#059669,#10b981)',

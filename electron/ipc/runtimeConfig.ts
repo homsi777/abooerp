@@ -25,6 +25,7 @@ type BackendResolutionMode = 'localhost' | 'manual_lan' | 'auto_lan';
 
 type RuntimeConfig = {
   apiBaseUrl: string;
+  centralSyncApiBaseUrl?: string;
   environment: AppEnvironment;
   runtimeMode: RuntimeMode;
   backendResolutionMode: BackendResolutionMode;
@@ -73,12 +74,13 @@ async function readJsonConfig(filePath: string): Promise<RuntimeConfig | null> {
 function getDefaultRuntimeConfig(): RuntimeConfig {
   return {
     apiBaseUrl: 'http://127.0.0.1:4010/api/v1',
+    centralSyncApiBaseUrl: 'https://www.abooerp.org/api/v1',
     environment: getEnvironment(),
     runtimeMode: app.isPackaged ? 'local_production' : 'development',
     backendResolutionMode: 'localhost',
     manualLanHost: '',
     backendPort: 4010,
-    schemaVersion: '033',
+    schemaVersion: '112_offline_sync_foundation',
     deviceName: os.hostname() || 'desktop-node',
     featureFlags: {
       desktopMode: true,

@@ -5,8 +5,21 @@ import { asyncHandler } from '../utils/http.js';
 import { HttpError } from '../utils/errors.js';
 import { pool } from '../db/pool.js';
 import { LinkedDeviceRepository } from '../repositories/linkedDeviceRepository.js';
+import { env } from '../config/env.js';
 
 const deviceRepo = new LinkedDeviceRepository();
+
+async function enforceLocalOfflineGrant() {
+  if (env.SYNC_NODE_ROLE !== 'local') return;
+  const result = await pool.query<{ snapshot_initialized_at: string | null; offline_grant_expires_at: string | null }>(
+    `select snapshot_initialized_at,offline_grant_expires_at from sync_local_state where singleton=true`,
+  );
+  const state = result.rows[0];
+  if (!state?.snapshot_initialized_at) throw new HttpError(409, 'LOCAL_SNAPSHOT_REQUIRED');
+  if (!state.offline_grant_expires_at || Date.parse(state.offline_grant_expires_at) <= Date.now()) {
+    throw new HttpError(403, 'OFFLINE_AUTH_EXPIRED');
+  }
+}
 
 const loginSchema = z.object({
   username: z.string().min(1),
@@ -42,7 +55,35 @@ function isLocalIp(ip: string | undefined): boolean {
   );
 }
 
+function envFlag(name: string): boolean {
+  return String(process.env[name] ?? '').trim().toLowerCase() === 'true';
+}
+
+function configuredWebOrigins(): Set<string> {
+  return new Set(
+    String(process.env.WEB_PUBLIC_ORIGINS ?? '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+  );
+}
+
+function isAllowedWebOrigin(req: any): boolean {
+  if (!envFlag('WEB_MODE_ENABLED') && !envFlag('DISABLE_DEVICE_AUTH_FOR_WEB')) return false;
+  const origin = String(req.headers.origin ?? '').trim();
+  return Boolean(origin) && configuredWebOrigins().has(origin);
+}
+
+function isAllowedMobileClient(req: any): boolean {
+  if (!envFlag('MOBILE_MODE_ENABLED')) return false;
+  return String(req.headers['x-client-type'] ?? '').trim().toLowerCase() === 'mobile';
+}
+
 async function checkDeviceAuthorization(req: any): Promise<void> {
+  // Browser/VPS and native mobile clients use JWT auth without Electron device identity.
+  // Each bypass is opt-in through server configuration; Electron/LAN checks remain intact.
+  if (isAllowedWebOrigin(req) || isAllowedMobileClient(req)) return;
+
   const ip = resolveIp(req);
 
   // Server machine (localhost) is always allowed — skip device check
@@ -95,6 +136,7 @@ export function createAuthRouter(service: AuthService) {
   router.post(
     '/login',
     asyncHandler(async (req, res) => {
+      await enforceLocalOfflineGrant();
       // ── Device authorization check (LAN clients only) ──────────────────────
       await checkDeviceAuthorization(req);
 
@@ -133,6 +175,7 @@ export function createAuthRouter(service: AuthService) {
   router.post(
     '/refresh',
     asyncHandler(async (req, res) => {
+      await enforceLocalOfflineGrant();
       const payload = refreshSchema.parse(req.body);
       const data = await service.refresh({
         refreshToken: payload.refreshToken,

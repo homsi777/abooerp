@@ -191,7 +191,7 @@ export default function BranchesModule() {
             {rows.map((row, index) => (
               <tr key={row.id}>
                 <td>{index + 1}</td><td>{row.code}</td><td>{row.name}</td><td>{row.city || '-'}</td><td>{row.phone || '-'}</td><td>{row.is_active ? 'نشط' : 'معطل'}</td><td>{row.outbound}</td><td>{row.active}</td><td>{row.delivered}</td><td>{row.userCount}</td><td>{row.lastActivity ? new Date(row.lastActivity).toLocaleString('ar-SY') : '-'}</td>
-                <td><div className="flex gap-2 text-xs"><Link to={`/branches/${row.id}`}>ملف الفرع</Link><button type="button" className="text-indigo-700" onClick={() => beginEdit(row)}>تعديل</button><button type="button" className="text-amber-700" onClick={() => void toggleBranch(row)}>{row.is_active ? 'تعطيل' : 'تفعيل'}</button><button type="button" className="text-indigo-700" onClick={() => navigate(`/finance/account-statement?branchId=${row.id}`)}>كشف الحساب</button></div></td>
+                <td><div className="flex gap-2 text-xs"><Link to={`/branches/${row.id}`}>ملف الفرع</Link><button type="button" className="text-indigo-700" onClick={() => beginEdit(row)}>تعديل</button><button type="button" className="text-amber-700" onClick={() => void toggleBranch(row)}>{row.is_active ? 'تعطيل' : 'تفعيل'}</button><button type="button" className="text-indigo-700" onClick={() => navigate(`/finance/daily-journal?branchId=${row.id}`)}>دفتر اليومية</button></div></td>
               </tr>
             ))}
             {!loading && rows.length === 0 ? <tr><td colSpan={12} className="text-center p-6 text-gray-500">لا توجد بيانات بعد. ابدأ بإضافة فرع جديد.</td></tr> : null}

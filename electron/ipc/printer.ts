@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, ipcMain, type WebContents } from 'electron';
 import { z } from 'zod';
 
 const CHANNEL_PRINTER_LIST = 'printer:list';
@@ -58,9 +58,9 @@ export async function probePrinterRuntimeReadiness() {
   };
 }
 
-function executePrint(activeWindow: BrowserWindow, payload: z.infer<typeof printPayloadSchema>) {
+function executePrint(webContents: WebContents, payload: z.infer<typeof printPayloadSchema>) {
   return new Promise<{ success: boolean; errorType?: string }>((resolve) => {
-    activeWindow.webContents.print(
+    webContents.print(
       {
         silent: true,
         printBackground: true,
@@ -69,9 +69,66 @@ function executePrint(activeWindow: BrowserWindow, payload: z.infer<typeof print
       },
       (success, failureReason) => {
         resolve({ success, errorType: failureReason || undefined });
-      }
+      },
     );
   });
+}
+
+async function loadPrintableHtml(html: string, parent?: BrowserWindow) {
+  const printWindow = new BrowserWindow({
+    show: false,
+    parent,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+
+  try {
+    const url = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+    await printWindow.loadURL(url);
+    await printWindow.webContents.executeJavaScript(
+      'document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()',
+    );
+    return printWindow;
+  } catch (error) {
+    if (!printWindow.isDestroyed()) {
+      printWindow.close();
+    }
+    throw error;
+  }
+}
+
+function wrapTextAsHtml(content: string) {
+  const escaped = content
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  return `<!doctype html><html><head><meta charset="utf-8" /><style>body{font-family:Tahoma,Arial,sans-serif;white-space:pre-wrap;margin:12mm;}</style></head><body>${escaped}</body></html>`;
+}
+
+async function printPayloadContent(payload: z.infer<typeof printPayloadSchema>, host: BrowserWindow) {
+  if (payload.payloadType === 'html' || payload.payloadType === 'text') {
+    const html =
+      payload.payloadType === 'html'
+        ? String(payload.content ?? '').trim()
+        : wrapTextAsHtml(String(payload.content ?? payload.payloadRef ?? '').trim());
+    if (!html) {
+      return { success: false, errorType: 'empty_content' };
+    }
+
+    const printWindow = await loadPrintableHtml(html, host);
+    try {
+      return await executePrint(printWindow.webContents, payload);
+    } finally {
+      if (!printWindow.isDestroyed()) {
+        printWindow.close();
+      }
+    }
+  }
+
+  return executePrint(host.webContents, payload);
 }
 
 export function registerPrinterIpc() {
@@ -113,11 +170,11 @@ export function registerPrinterIpc() {
       };
     }
 
-    const result = await executePrint(activeWindow, payload);
+    const result = await printPayloadContent(payload, activeWindow);
     if (!result.success) {
       return {
         queued: false,
-        message: `OS print dispatch failed (${result.errorType ?? 'unknown error'}).`,
+        message: `فشلت الطباعة (${result.errorType ?? 'خطأ غير معروف'}).`,
       };
     }
 

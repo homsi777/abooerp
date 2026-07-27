@@ -7,6 +7,7 @@ import { AuditService } from '../services/auditService.js';
 import type { EmployeeAdvance, SalaryRepository } from '../repositories/salaryRepository.js';
 import type { ExchangeRateRepository } from '../repositories/exchangeRateRepository.js';
 import type { EmployeeRepository } from '../repositories/employeeRepository.js';
+import type { FinanceRepository } from '../repositories/financeRepository.js';
 import { resolveExchangeRateToUsd } from '../utils/resolveExchangeRateToUsd.js';
 
 function requireCompanyId(req: any): string {
@@ -41,6 +42,10 @@ const salaryUpdateSchema = z.object({
   currency: z.string().length(3).optional(),
   paymentStatus: z.enum(['pending', 'paid', 'cancelled']).optional(),
   notes: z.string().optional(),
+});
+
+const salaryPaySchema = z.object({
+  cashboxId: z.string().uuid(),
 });
 
 // ── Advance schemas ─────────────────────────────────────────────────────────
@@ -116,6 +121,7 @@ export function createSalaryRouter(
   repository: SalaryRepository,
   exchangeRateRepository: ExchangeRateRepository,
   employeeRepository: EmployeeRepository,
+  financeRepository: FinanceRepository,
 ) {
   const router = Router();
   const auditService = new AuditService();
@@ -180,6 +186,18 @@ export function createSalaryRouter(
     }),
   );
 
+  router.get(
+    '/salary-records/:id/advance-deductions',
+    requirePermissions(['hr.salaries.read']),
+    asyncHandler(async (req, res) => {
+      const companyId = requireCompanyId(req);
+      const salary = await repository.getSalaryById(String(req.params.id), companyId);
+      if (!salary) throw new HttpError(404, 'Salary record not found.');
+      const data = await repository.listSalaryAdvanceDeductions(companyId, String(req.params.id));
+      res.json({ success: true, data });
+    }),
+  );
+
   router.post(
     '/salary-records',
     requirePermissions(['hr.salaries.write']),
@@ -194,7 +212,10 @@ export function createSalaryRouter(
         const r = await resolveExchangeRateToUsd(exchangeRateRepository, companyId, salCur, periodDate);
         openMerged = Number((openUsd / r).toFixed(2));
       }
-      const deductions = (body.deductions ?? 0) + openMerged;
+      const manualDeductions = body.deductions ?? 0;
+      const grossAfterManual = Math.max(0, body.basicAmount + (body.bonuses ?? 0) - manualDeductions);
+      const advanceDeductions = Math.min(openMerged, grossAfterManual);
+      const deductions = manualDeductions + advanceDeductions;
       let data;
       try {
         data = await repository.createSalary({
@@ -206,6 +227,8 @@ export function createSalaryRouter(
           basicAmount: body.basicAmount,
           bonuses: body.bonuses ?? 0,
           deductions,
+          manualDeductions,
+          advanceDeductions,
           currency: body.currency,
           paymentStatus: body.paymentStatus,
           notes: body.notes,
@@ -231,6 +254,35 @@ export function createSalaryRouter(
       const data = await repository.updateSalary(String(req.params.id), companyId, body);
       if (!data) throw new HttpError(404, 'Salary record not found.');
       auditService.logAsync({ req, action: 'SALARY_UPDATED', entityType: 'salary_record', entityId: data.id, metadata: { status: data.payment_status } });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.post(
+    '/salary-records/:id/pay',
+    requirePermissions(['hr.salaries.write']),
+    asyncHandler(async (req, res) => {
+      const companyId = requireCompanyId(req);
+      const body = salaryPaySchema.parse(req.body);
+      const salary = await repository.getSalaryById(String(req.params.id), companyId);
+      if (!salary) throw new HttpError(404, 'Salary record not found.');
+      const currency = String(salary.currency || 'USD').trim().toUpperCase();
+      const periodDate = `${salary.period_year}-${String(salary.period_month).padStart(2, '0')}-15`;
+      const salaryExchangeRateToUsd =
+        currency === 'USD' ? 1 : await resolveExchangeRateToUsd(exchangeRateRepository, companyId, currency, periodDate);
+      const data = await repository.paySalary(
+        String(req.params.id),
+        companyId,
+        { cashboxId: body.cashboxId, paidByUserId: userId(req), salaryExchangeRateToUsd },
+        financeRepository,
+      );
+      auditService.logAsync({
+        req,
+        action: 'SALARY_PAID',
+        entityType: 'salary_record',
+        entityId: String(req.params.id),
+        metadata: { cashboxId: body.cashboxId, voucherId: data.voucher?.id ?? null },
+      });
       res.json({ success: true, data });
     }),
   );

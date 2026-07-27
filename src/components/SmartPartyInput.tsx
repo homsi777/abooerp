@@ -4,9 +4,8 @@
  * Searches both quick contacts (senders_receivers) and registered customers
  * via /api/v1/parties/smart-search, showing type badges for each result.
  *
- * When the user types a name that doesn't exist and presses Enter,
- * the `onAddNew` callback fires — which should create a quick contact
- * (same as the existing behaviour), NOT a full customer.
+ * Enter accepts the typed text and moves to the next field unless the user
+ * highlighted a suggestion with ArrowUp/ArrowDown (then Enter picks that row).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -38,7 +37,12 @@ interface SmartPartyInputProps {
   id?: string;
   nextFieldId?: string;
   disabled?: boolean;
+  inputClassName?: string;
   'data-ledger-field'?: string;
+  'data-voucher-row'?: number;
+  'data-voucher-field'?: string;
+  /** بعد اختيار جهة أو Enter — انتقال للحقل التالي في شبكة السندات */
+  onAdvance?: () => void;
   onFocus?: () => void;
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 }
@@ -82,8 +86,12 @@ export default function SmartPartyInput({
   id,
   nextFieldId,
   disabled = false,
+  inputClassName,
+  onAdvance,
   onFocus,
   onKeyDown,
+  'data-voucher-row': dataVoucherRow,
+  'data-voucher-field': dataVoucherField,
   ...rest
 }: SmartPartyInputProps) {
   const [results, setResults] = useState<UnifiedResult[]>([]);
@@ -178,7 +186,8 @@ export default function SmartPartyInput({
       source_table: item.source_table,
       is_account_customer: item.is_account_customer ?? false,
     });
-    focusNextField();
+    if (onAdvance) onAdvance();
+    else focusNextField();
   };
 
   const focusNextField = () => {
@@ -199,14 +208,23 @@ export default function SmartPartyInput({
       setIsOpen(false);
       return;
     }
-    if (e.key === 'ArrowDown') {
+    if (e.key === 'ArrowDown' && isOpen) {
       e.preventDefault();
       setActiveIdx((prev) => Math.min(prev + 1, results.length - 1));
       return;
     }
-    if (e.key === 'ArrowUp') {
+    if (e.key === 'ArrowUp' && isOpen) {
       e.preventDefault();
       setActiveIdx((prev) => Math.max(prev - 1, -1));
+      return;
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      if (isOpen) setIsOpen(false);
+      onKeyDown?.(e);
+      return;
+    }
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !isOpen) {
+      onKeyDown?.(e);
       return;
     }
     if (e.key === 'Enter') {
@@ -215,16 +233,22 @@ export default function SmartPartyInput({
         handleSelect(results[activeIdx]);
         return;
       }
-      if (isOpen && results.length > 0) {
+      const trimmed = value.trim().toLowerCase();
+      const exact = results.find((r) => r.display_name.toLowerCase() === trimmed);
+      if (exact) {
+        handleSelect(exact);
+        return;
+      }
+      if (results.length === 1) {
         handleSelect(results[0]);
         return;
       }
-      // No match — create quick contact
-      if (allowAddNew && value.trim()) {
-        setIsOpen(false);
+      setIsOpen(false);
+      if (!results.length && allowAddNew && value.trim()) {
         onAddNew?.(value.trim());
       }
-      focusNextField();
+      if (onAdvance) onAdvance();
+      else focusNextField();
       return;
     }
     if (e.key === 'Tab') {
@@ -237,12 +261,12 @@ export default function SmartPartyInput({
     results.every((r) => r.display_name.toLowerCase() !== value.toLowerCase());
 
   return (
-    <div className="relative" ref={wrapperRef}>
+    <div className="relative smart-party-input-wrap" ref={wrapperRef}>
       {label && <label className="form-label" htmlFor={id}>{label}</label>}
       <input
         id={id}
         type="text"
-        className="form-input w-full"
+        className={inputClassName ?? 'form-input w-full'}
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
@@ -250,6 +274,8 @@ export default function SmartPartyInput({
         disabled={disabled}
         placeholder={placeholder}
         autoComplete="off"
+        data-voucher-row={dataVoucherRow}
+        data-voucher-field={dataVoucherField}
         {...(rest['data-ledger-field'] ? { 'data-ledger-field': rest['data-ledger-field'] } : {})}
       />
       {isOpen && (
@@ -284,7 +310,8 @@ export default function SmartPartyInput({
                 e.preventDefault();
                 setIsOpen(false);
                 onAddNew?.(value.trim());
-                focusNextField();
+                if (onAdvance) onAdvance();
+                else focusNextField();
               }}
             >
               + إضافة زبون سريع: {value}

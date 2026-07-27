@@ -21,6 +21,19 @@ export class ManifestService {
     return this.repository.getById(id, scope);
   }
 
+  listLoadableShipments(
+    scope: DataScope | undefined,
+    filters: {
+      dateFrom?: string;
+      dateTo?: string;
+      destination?: string;
+      loadStatus?: 'all' | 'pending' | 'loaded';
+      manifestId?: string;
+    },
+  ) {
+    return this.repository.listLoadableShipments(scope, filters);
+  }
+
   create(input: ManifestCreateInput, scope?: DataScope) {
     if (scope?.branchId && input.branchId !== scope.branchId) {
       throw new HttpError(403, 'Cannot create manifest outside scoped branch.');

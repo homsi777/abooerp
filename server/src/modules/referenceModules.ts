@@ -69,6 +69,7 @@ const vehicleCreateSchema = z.object({
   capacity_kg: z.coerce.number().optional(),
   branch_id: z.string().uuid().optional(),
   agent_id: z.string().uuid().optional(),
+  driver_id: z.string().uuid().optional().nullable(),
   status: statusSchema.optional(),
 });
 const vehicleUpdateSchema = vehicleCreateSchema.partial();
@@ -94,7 +95,7 @@ const tariffCreateSchema = z.object({
   code: z.string().min(1),
   from_city_id: z.string().uuid(),
   to_city_id: z.string().uuid(),
-  goods_type_id: z.string().uuid(),
+  goods_type_id: z.string().uuid().optional().nullable(),
   price_per_kg: z.coerce.number().nonnegative(),
   minimum_charge: z.coerce.number().nonnegative(),
   valid_from: z.string().min(1),
@@ -136,8 +137,8 @@ export function createReferenceRouters() {
 
   const vehiclesRepository = new ReferenceRepository({
     table: 'vehicles',
-    createFields: ['code', 'plate_number', 'model', 'capacity_kg', 'branch_id', 'status', 'agent_id'],
-    updateFields: ['code', 'plate_number', 'model', 'capacity_kg', 'branch_id', 'status', 'agent_id'],
+    createFields: ['code', 'plate_number', 'model', 'capacity_kg', 'branch_id', 'status', 'agent_id', 'driver_id'],
+    updateFields: ['code', 'plate_number', 'model', 'capacity_kg', 'branch_id', 'status', 'agent_id', 'driver_id'],
   });
 
   const citiesRepository = new ReferenceRepository({
@@ -213,15 +214,19 @@ export function createReferenceRouters() {
       service: new ReferenceService(driversRepository),
       createSchema: driverCreateSchema,
       updateSchema: driverUpdateSchema,
-      readPermissions: ['drivers.view'],
-      writePermissions: ['parties.manage'],
+      readPermissions: ['drivers.view', 'shipments.read'],
+      readMatch: 'any',
+      writePermissions: ['parties.manage', 'drivers.manage'],
+      writeMatch: 'any',
     }),
     vehicles: createReferenceRouter({
       service: new ReferenceService(vehiclesRepository),
       createSchema: vehicleCreateSchema,
       updateSchema: vehicleUpdateSchema,
-      readPermissions: ['vehicles.view'],
-      writePermissions: ['parties.manage'],
+      readPermissions: ['vehicles.view', 'shipments.read'],
+      readMatch: 'any',
+      writePermissions: ['parties.manage', 'vehicles.manage'],
+      writeMatch: 'any',
     }),
     cities: createReferenceRouter({
       service: new ReferenceService(citiesRepository),

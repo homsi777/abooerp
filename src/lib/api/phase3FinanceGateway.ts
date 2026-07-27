@@ -13,6 +13,8 @@ type BackendVoucher = {
   cashbox_id?: string | null;
   cashbox_name?: string | null;
   cashbox_code?: string | null;
+  related_entity_type?: string | null;
+  related_entity_id?: string | null;
   /** From server join: customer name or sender/receiver name */
   party_display_name?: string | null;
   status: 'draft' | 'confirmed' | 'cancelled';
@@ -44,11 +46,41 @@ export type BackendCashboxRecord = {
   parent_cashbox_id?: string | null;
   parent_cashbox_name?: string | null;
   parent_cashbox_code?: string | null;
+  agent_governorate?: string | null;
+  transaction_count?: number;
+  agent_shipment_count?: number | null;
+  agent_operational_net_usd?: number | null;
+};
+
+export type CashboxSyncStats = {
+  created: number;
+  reassigned: number;
+  linked: number;
+  balancesReconciled: number;
 };
 
 export type BackendCashboxMovementRow = BackendCashboxTransaction & {
   cashbox_id?: string | null;
   created_by_username?: string | null;
+  reference_no?: string | null;
+  status?: string | null;
+  related_entity_type?: string | null;
+  source_label?: string | null;
+  party_display_name?: string | null;
+  debit_in?: number;
+  credit_out?: number;
+  running_balance?: number;
+};
+
+export type BackendCashboxStatement = {
+  cashbox: BackendCashboxRecord;
+  summary: {
+    openingBalance: number;
+    totalIncoming: number;
+    totalOutgoing: number;
+    closingBalance: number;
+  };
+  rows: BackendCashboxMovementRow[];
 };
 
 type BackendCashboxTransaction = {
@@ -286,13 +318,32 @@ function partyFallbackLabel(row: BackendVoucher): string {
   return 'غير محدد';
 }
 
+function internalVoucherPartyLabel(row: BackendVoucher, fallback: string): string {
+  if (row.related_entity_type === 'expense') return 'مصروف داخلي';
+  if (row.related_entity_type === 'cashbox_transfer') return 'مناقلة بين الصناديق';
+  if (row.related_entity_type === 'salary_record') return 'راتب موظف';
+  if (row.related_entity_type === 'manual_party') {
+    const match = String(row.notes ?? '').match(/^\s*جهة:\s*([^-|]+)/);
+    return match?.[1]?.trim() || 'جهة يدوية';
+  }
+  if (row.related_entity_type === 'agent_remittance') return 'توريد وكيل — الفرع الرئيسي';
+  if (row.related_entity_type === 'agent_receipt_from_branch') return 'استلام وكيل — الفرع الرئيسي';
+  return fallback;
+}
+
+function voucherDescription(row: BackendVoucher): string {
+  const notes = row.notes || '';
+  if (row.related_entity_type !== 'manual_party') return notes;
+  return notes.replace(/^\s*جهة:\s*[^-|]+(?:\s*-\s*)?/, '').trim();
+}
+
 function toReceiptVoucher(row: BackendVoucher): ReceiptVoucher {
   return {
     id: syntheticId(row.id),
     voucherNo: row.voucher_no,
     date: row.created_at.split('T')[0],
     customerId: 0,
-    customerName: partyFallbackLabel(row),
+    customerName: internalVoucherPartyLabel(row, partyFallbackLabel(row)),
     customerBackendId: row.customer_id ?? null,
     agentBackendId: row.agent_id ?? null,
     amount: Number(row.original_amount),
@@ -300,10 +351,11 @@ function toReceiptVoucher(row: BackendVoucher): ReceiptVoucher {
     exchangeRateToUsd: Number(row.exchange_rate_to_usd),
     amountUsd: Number(row.base_amount_usd),
     paymentMethod: 'cash',
-    description: row.notes || '',
+    description: voucherDescription(row),
     createdBy: row.status,
     cashboxId: row.cashbox_id ?? undefined,
     cashboxName: row.cashbox_name || row.cashbox_code || undefined,
+    relatedEntityType: row.related_entity_type ?? null,
   };
 }
 
@@ -313,7 +365,7 @@ function toPaymentVoucher(row: BackendVoucher): PaymentVoucher {
     voucherNo: row.voucher_no,
     date: row.created_at.split('T')[0],
     vendorId: 0,
-    vendorName: partyFallbackLabel(row),
+    vendorName: internalVoucherPartyLabel(row, partyFallbackLabel(row)),
     customerBackendId: row.customer_id ?? null,
     agentBackendId: row.agent_id ?? null,
     amount: Number(row.original_amount),
@@ -321,10 +373,11 @@ function toPaymentVoucher(row: BackendVoucher): PaymentVoucher {
     exchangeRateToUsd: Number(row.exchange_rate_to_usd),
     amountUsd: Number(row.base_amount_usd),
     paymentMethod: 'cash',
-    description: row.notes || '',
+    description: voucherDescription(row),
     createdBy: row.status,
     cashboxId: row.cashbox_id ?? undefined,
     cashboxName: row.cashbox_name || row.cashbox_code || undefined,
+    relatedEntityType: row.related_entity_type ?? null,
   };
 }
 
@@ -373,6 +426,9 @@ export const phase3FinanceGateway = {
     getTransactions: async (): Promise<BackendCashboxTransaction[]> => {
       return httpClient.get<BackendCashboxTransaction[]>('/cashbox-transactions');
     },
+    sync: async (): Promise<CashboxSyncStats> => {
+      return httpClient.post<CashboxSyncStats>('/cashboxes/sync', {});
+    },
     listMaster: async (query?: Record<string, string | undefined>): Promise<BackendCashboxRecord[]> => {
       const qs = new URLSearchParams();
       if (query) {
@@ -394,6 +450,17 @@ export const phase3FinanceGateway = {
     },
     getMovements: async (cashboxId: string): Promise<BackendCashboxMovementRow[]> => {
       return httpClient.get<BackendCashboxMovementRow[]>(`/cashboxes/${cashboxId}/movements`);
+    },
+    getStatement: async (
+      cashboxId: string,
+      filters?: { dateFrom?: string; dateTo?: string; transactionType?: 'inflow' | 'outflow' },
+    ): Promise<BackendCashboxStatement> => {
+      const qs = new URLSearchParams();
+      if (filters?.dateFrom) qs.set('dateFrom', filters.dateFrom);
+      if (filters?.dateTo) qs.set('dateTo', filters.dateTo);
+      if (filters?.transactionType) qs.set('transactionType', filters.transactionType);
+      const suffix = qs.toString() ? `?${qs.toString()}` : '';
+      return httpClient.get<BackendCashboxStatement>(`/cashboxes/${cashboxId}/statement${suffix}`);
     },
   },
   movements: {
@@ -466,6 +533,7 @@ export const phase3FinanceGateway = {
       search?: string;
       page?: number;
       pageSize?: number;
+      includeOperationalParties?: boolean;
     }) => {
       const query = new URLSearchParams();
       if (filters.partyType) query.set('partyType', filters.partyType);
@@ -478,6 +546,7 @@ export const phase3FinanceGateway = {
       if (filters.search) query.set('search', filters.search);
       if (typeof filters.page === 'number') query.set('page', String(filters.page));
       if (typeof filters.pageSize === 'number') query.set('pageSize', String(filters.pageSize));
+      if (filters.includeOperationalParties) query.set('includeOperationalParties', 'true');
       const suffix = query.toString() ? `?${query.toString()}` : '';
       const payload = await httpClient.get<BackendAccountStatementResponse>(`/account-statement${suffix}`);
       let running = 0;
@@ -489,6 +558,7 @@ export const phase3FinanceGateway = {
           id: row.id,
           date: row.date,
           partyType: row.party_type,
+          partyId: row.party_id,
           partyName: row.party_name || '-',
           referenceType: row.reference_type || '-',
           referenceNo: row.reference_no || '-',
@@ -710,6 +780,55 @@ export const phase3FinanceGateway = {
     },
   },
 
+  profitLoss: {
+    getReport: async (filters: {
+      fromAt: string;
+      toAt: string;
+      branchId?: string;
+      currencyCode?: string;
+    }): Promise<ProfitLossReport> => {
+      const q = new URLSearchParams();
+      q.set('fromAt', filters.fromAt);
+      q.set('toAt', filters.toAt);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+      return httpClient.get<ProfitLossReport>(`/financial-reports/profit-loss?${q.toString()}`);
+    },
+  },
+
+  monthlyInventory: {
+    getReport: async (filters: {
+      dateFrom: string;
+      dateTo: string;
+      branchId?: string;
+    }): Promise<MonthlyInventoryReport> => {
+      const q = new URLSearchParams();
+      q.set('dateFrom', filters.dateFrom);
+      q.set('dateTo', filters.dateTo);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      return httpClient.get<MonthlyInventoryReport>(`/financial-reports/monthly-inventory?${q.toString()}`);
+    },
+    getPartyDetail: async (filters: {
+      dateFrom: string;
+      dateTo: string;
+      branchId?: string;
+      partyType: 'agent' | 'unassigned';
+      partyId?: string | null;
+      partyName?: string;
+    }): Promise<MonthlyInventoryPartyDetail> => {
+      const q = new URLSearchParams();
+      q.set('dateFrom', filters.dateFrom);
+      q.set('dateTo', filters.dateTo);
+      q.set('partyType', filters.partyType);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      if (filters.partyId) q.set('partyId', filters.partyId);
+      if (filters.partyName) q.set('partyName', filters.partyName);
+      return httpClient.get<MonthlyInventoryPartyDetail>(
+        `/financial-reports/monthly-inventory/party-detail?${q.toString()}`,
+      );
+    },
+  },
+
   deliveryReports: {
     pendingTransfers: async (filters: {
       dateFrom?: string;
@@ -772,6 +891,163 @@ export const phase3FinanceGateway = {
       return httpClient.get(`/delivery-reports/agent-commission-review${suffix}`);
     },
   },
+
+  accounting: {
+    trialBalance: async (filters: {
+      fromAt?: string;
+      toAt?: string;
+      asOf?: string;
+      branchId?: string;
+      currencyCode?: string;
+    }) => {
+      const q = new URLSearchParams();
+      if (filters.fromAt) q.set('fromAt', filters.fromAt);
+      if (filters.toAt) q.set('toAt', filters.toAt);
+      if (filters.asOf) q.set('asOf', filters.asOf);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+      const suffix = q.toString() ? `?${q.toString()}` : '';
+      return httpClient.get(`/reports/trial-balance${suffix}`);
+    },
+    balanceSheet: async (filters: {
+      fromAt?: string;
+      toAt?: string;
+      asOf?: string;
+      branchId?: string;
+      currencyCode?: string;
+    }) => {
+      const q = new URLSearchParams();
+      if (filters.fromAt) q.set('fromAt', filters.fromAt);
+      if (filters.toAt) q.set('toAt', filters.toAt);
+      if (filters.asOf) q.set('asOf', filters.asOf);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+      const suffix = q.toString() ? `?${q.toString()}` : '';
+      return httpClient.get(`/reports/balance-sheet${suffix}`);
+    },
+    listPeriodClosures: async (limit = 50) => {
+      return httpClient.get(`/accounting-periods?limit=${limit}`);
+    },
+    closePeriod: async (payload: {
+      periodStart: string;
+      periodEnd: string;
+      branchId?: string | null;
+      currencyCode?: string;
+      notes?: string;
+    }) => {
+      return httpClient.post('/accounting-periods/close', payload);
+    },
+    agentSettlement: async (filters: {
+      agentId: string;
+      fromAt?: string;
+      toAt?: string;
+      currencyCode?: string;
+    }) => {
+      const q = new URLSearchParams({ agentId: filters.agentId });
+      if (filters.fromAt) q.set('fromAt', filters.fromAt);
+      if (filters.toAt) q.set('toAt', filters.toAt);
+      if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+      return httpClient.get(`/agent-settlement?${q.toString()}`);
+    },
+    hawalaReconciliation: async (filters: {
+      agentId: string;
+      fromAt?: string;
+      toAt?: string;
+      currencyCode?: string;
+    }) => {
+      const q = new URLSearchParams({ agentId: filters.agentId });
+      if (filters.fromAt) q.set('fromAt', filters.fromAt);
+      if (filters.toAt) q.set('toAt', filters.toAt);
+      if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+      return httpClient.get(`/hawala-reconciliation?${q.toString()}`);
+    },
+    agentBranchReconciliation: async (filters: {
+      agentId: string;
+      fromAt?: string;
+      toAt?: string;
+      currencyCode?: string;
+    }) => {
+      const q = new URLSearchParams({ agentId: filters.agentId });
+      if (filters.fromAt) q.set('fromAt', filters.fromAt);
+      if (filters.toAt) q.set('toAt', filters.toAt);
+      if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+      return httpClient.get(`/agent-branch-reconciliation?${q.toString()}`);
+    },
+    bilateralReconciliation: {
+      preview: async (filters: {
+        agentId: string;
+        fromAt?: string;
+        toAt?: string;
+        currencyCode?: string;
+      }) => {
+        const q = new URLSearchParams({ agentId: filters.agentId });
+        if (filters.fromAt) q.set('fromAt', filters.fromAt);
+        if (filters.toAt) q.set('toAt', filters.toAt);
+        if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+        return httpClient.get(`/bilateral-reconciliations/preview?${q.toString()}`);
+      },
+      list: async (agentId: string) => httpClient.get(`/bilateral-reconciliations?agentId=${encodeURIComponent(agentId)}`),
+      get: async (id: string) => httpClient.get(`/bilateral-reconciliations/${encodeURIComponent(id)}`),
+      saveDraft: async (payload: Record<string, unknown>) => httpClient.post('/bilateral-reconciliations/draft', payload),
+      approve: async (payload: Record<string, unknown>) => httpClient.post('/bilateral-reconciliations/approve', payload),
+      sendToAgent: async (id: string, payload?: { agentNotes?: string }) =>
+        httpClient.post(`/bilateral-reconciliations/${encodeURIComponent(id)}/send-to-agent`, payload ?? {}),
+      dispute: async (id: string, payload: { disputeNote: string }) =>
+        httpClient.post(`/bilateral-reconciliations/${encodeURIComponent(id)}/dispute`, payload),
+      discrepancyReport: async (agentId: string, currencyCode = 'USD') =>
+        httpClient.get(`/bilateral-reconciliations/reports/discrepancies?agentId=${encodeURIComponent(agentId)}&currencyCode=${encodeURIComponent(currencyCode)}`),
+      balanceHistoryReport: async (agentId: string, currencyCode = 'USD') =>
+        httpClient.get(`/bilateral-reconciliations/reports/balance-history?agentId=${encodeURIComponent(agentId)}&currencyCode=${encodeURIComponent(currencyCode)}`),
+    },
+    ledgerFinanceAudit: async (filters: { fromDate?: string }) => {
+      const q = new URLSearchParams();
+      if (filters.fromDate) q.set('fromDate', filters.fromDate);
+      return httpClient.get(`/ledger-finance-audit?${q.toString()}`);
+    },
+  },
+  financeStatements: {
+    voucherReport: async (
+      type: 'receipt' | 'payment',
+      filters: {
+        dateFrom: string;
+        dateTo?: string;
+        branchId?: string;
+        agentId?: string;
+        customerId?: string;
+        cashboxId?: string;
+        status?: string;
+      },
+    ) => {
+      const q = new URLSearchParams({ dateFrom: filters.dateFrom });
+      if (filters.dateTo) q.set('dateTo', filters.dateTo);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      if (filters.agentId) q.set('agentId', filters.agentId);
+      if (filters.customerId) q.set('customerId', filters.customerId);
+      if (filters.cashboxId) q.set('cashboxId', filters.cashboxId);
+      if (filters.status) q.set('status', filters.status);
+      return httpClient.get(`/finance-statements/vouchers/${type}?${q.toString()}`);
+    },
+    dailyLedgerSummary: async (filters: { dateFrom: string; dateTo?: string; branchId?: string }) => {
+      const q = new URLSearchParams({ dateFrom: filters.dateFrom });
+      if (filters.dateTo) q.set('dateTo', filters.dateTo);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      return httpClient.get(`/finance-statements/daily-ledger-summary?${q.toString()}`);
+    },
+    shipmentsByDate: async (filters: {
+      dateFrom: string;
+      dateTo?: string;
+      branchId?: string;
+      agentId?: string;
+      currencyCode?: string;
+    }) => {
+      const q = new URLSearchParams({ dateFrom: filters.dateFrom });
+      if (filters.dateTo) q.set('dateTo', filters.dateTo);
+      if (filters.branchId) q.set('branchId', filters.branchId);
+      if (filters.agentId) q.set('agentId', filters.agentId);
+      if (filters.currencyCode) q.set('currencyCode', filters.currencyCode);
+      return httpClient.get(`/finance-statements/shipments-by-date?${q.toString()}`);
+    },
+  },
 };
 
 export type AgentCodRow = {
@@ -804,8 +1080,10 @@ export type AgentCodRow = {
   freightPaymentType: 'PREPAID' | 'COLLECTION';
   agentCommissionPercentageSnapshot: number;
   agentCommissionAmount: number;
+  agentRemittanceDue: number;
   agentOwesCompany: number;
   companyOwesAgent: number;
+  hawalaAmount: number;
   transferServiceFee: number;
   transferServiceFeeCurrency: string;
 };
@@ -820,8 +1098,13 @@ export type AgentCodSummary = {
   totalPaidToSenders: number;
   totalRemainingToSenders: number;
   totalAgentCommission: number;
+  totalAgentRemittanceDue: number;
   totalAgentOwesCompany: number;
   totalCompanyOwesAgent: number;
+  totalHawalaAmount: number;
+  totalTransferServiceFees: number;
+  totalConfirmedReceiptsFromAgent: number;
+  agentBalanceDue: number;
   shipmentCount: number;
 };
 
@@ -880,4 +1163,124 @@ export type DeliveryAgentCommissionReviewRow = {
   expected_commission_amount: number;
   base_type: string;
   status: string;
+};
+
+export type ProfitLossLine = {
+  section: 'revenue' | 'direct_cost' | 'operating_expense' | 'agent_liability' | 'customer_liability';
+  category: string;
+  at: string;
+  referenceNo: string;
+  description: string;
+  partyName: string | null;
+  amount: number;
+  currencyCode: string;
+  amountUsd: number;
+  notes: string | null;
+  sourceType: string;
+  sourceId: string;
+};
+
+export type ProfitLossSection = {
+  id: ProfitLossLine['section'];
+  label: string;
+  total: number;
+  totalUsd: number;
+  currencyCode: string;
+  lines: ProfitLossLine[];
+};
+
+export type ProfitLossReport = {
+  generatedAt: string;
+  filters: {
+    fromAt: string;
+    toAt: string;
+    branchId?: string;
+    currencyCode?: string;
+  };
+  summary: {
+    totalRevenue: number;
+    totalDirectCosts: number;
+    grossProfit: number;
+    totalOperatingExpenses: number;
+    netProfit: number;
+    totalAgentLiabilities: number;
+    totalCustomerLiabilities: number;
+    currencyCode: string;
+  };
+  sections: ProfitLossSection[];
+};
+
+export type MonthlyInventoryRow = {
+  partyId: string | null;
+  partyType: 'agent' | 'unassigned';
+  partyName: string;
+  branchName: string | null;
+  collect: number;
+  prepaid: number;
+  hawala: number;
+  transferFees: number;
+  internalExpenses: number;
+  externalExpenses: number;
+  agentShare: number;
+  grossProfit: number;
+  companyFinalNet: number;
+  shipmentCount: number;
+  transferCount: number;
+};
+
+export type MonthlyInventoryColumnTotals = {
+  collect: number;
+  prepaid: number;
+  hawala: number;
+  transferFees: number;
+  internalExpenses: number;
+  externalExpenses: number;
+  agentShare: number;
+  grossProfit: number;
+  companyFinalNet: number;
+};
+
+export type MonthlyInventoryReport = {
+  generatedAt: string;
+  filters: {
+    dateFrom: string;
+    dateTo: string;
+    branchId?: string;
+  };
+  currencyCode: 'USD';
+  totals: MonthlyInventoryColumnTotals;
+  rows: MonthlyInventoryRow[];
+};
+
+export type MonthlyInventoryDetailLine = {
+  id: string;
+  category: 'shipment' | 'transfer' | 'internal_expense' | 'external_expense';
+  categoryLabel: string;
+  eventDate: string;
+  referenceNo: string;
+  description: string;
+  collect: number;
+  prepaid: number;
+  hawala: number;
+  transferFees: number;
+  internalExpenses: number;
+  externalExpenses: number;
+  agentShare: number;
+  grossProfit: number;
+  companyFinalNet: number;
+};
+
+export type MonthlyInventoryPartyDetail = {
+  generatedAt: string;
+  filters: {
+    dateFrom: string;
+    dateTo: string;
+    branchId?: string;
+    partyId: string | null;
+    partyType: 'agent' | 'unassigned';
+    partyName: string;
+  };
+  currencyCode: 'USD';
+  totals: MonthlyInventoryColumnTotals;
+  lines: MonthlyInventoryDetailLine[];
 };

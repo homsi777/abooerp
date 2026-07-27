@@ -12,12 +12,17 @@ const allowedInvokeChannels = new Set([
   'fs:read-config',
   'fs:write-config',
   'fs:enable-local-packaged-server',
+  'app:relaunch',
   'printer:list',
   'printer:get-default',
   'printer:print',
   'backup:get-config',
   'backup:open-directory',
   'backup:select-restore-file',
+  'backup:select-save-path',
+  'backup:copy-file',
+  'backup:download-to-path',
+  'backup:write-file',
   'diagnostics:health-check',
   'diagnostics:get-logs',
   'diagnostics:get-version-meta',
@@ -27,6 +32,10 @@ const allowedInvokeChannels = new Set([
   'system-settings:set',
   'pdf:export',
   'csv:export',
+  'desktop-setup:get-status',
+  'desktop-setup:configure-postgres',
+  'desktop-setup:list-central-branches',
+  'desktop-setup:activate-sync',
 ]);
 
 function invokeAllowed(channel, ...args) {
@@ -45,6 +54,7 @@ const runtimeBridge = {
   getActiveBranch: () => invokeAllowed('runtime:get-active-branch'),
   setActiveBranch: (branchId) => invokeAllowed('runtime:set-active-branch', branchId),
   getMachineId: () => invokeAllowed('runtime:get-machine-id'),
+  relaunchApp: () => invokeAllowed('app:relaunch'),
 };
 
 const diagnosticsRuntime = {
@@ -70,6 +80,10 @@ const backupRuntime = {
   getConfig: () => invokeAllowed('backup:get-config'),
   openDirectory: () => invokeAllowed('backup:open-directory'),
   selectRestoreFile: () => invokeAllowed('backup:select-restore-file'),
+  selectSavePath: (payload) => invokeAllowed('backup:select-save-path', payload),
+  copyFile: (payload) => invokeAllowed('backup:copy-file', payload),
+  downloadToPath: (payload) => invokeAllowed('backup:download-to-path', payload),
+  writeFile: (payload) => invokeAllowed('backup:write-file', payload),
 };
 
 const filesystemRuntime = {
@@ -86,6 +100,13 @@ const csvRuntime = {
   exportCsv: (payload) => invokeAllowed('csv:export', payload),
 };
 
+const desktopSetupRuntime = {
+  getStatus: () => invokeAllowed('desktop-setup:get-status'),
+  configurePostgres: (password) => invokeAllowed('desktop-setup:configure-postgres', { password }),
+  listCentralBranches: () => invokeAllowed('desktop-setup:list-central-branches'),
+  activateSync: (payload) => invokeAllowed('desktop-setup:activate-sync', payload),
+};
+
 contextBridge.exposeInMainWorld('runtime', runtimeBridge);
 contextBridge.exposeInMainWorld('diagnosticsRuntime', diagnosticsRuntime);
 contextBridge.exposeInMainWorld('systemSettingsRuntime', systemSettingsRuntime);
@@ -95,3 +116,4 @@ contextBridge.exposeInMainWorld('fs', filesystemRuntime);
 contextBridge.exposeInMainWorld('printer', printerRuntime);
 contextBridge.exposeInMainWorld('pdfRuntime', pdfRuntime);
 contextBridge.exposeInMainWorld('csvRuntime', csvRuntime);
+contextBridge.exposeInMainWorld('desktopSetupRuntime', desktopSetupRuntime);

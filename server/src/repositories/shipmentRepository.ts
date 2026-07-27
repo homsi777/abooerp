@@ -38,6 +38,7 @@ export interface ShipmentCreateInput {
   freightCharge?: number;
   transferFee?: number;
   additionalCharges?: number;
+  hawalaAmount?: number;
   prepaidAmount?: number;
   discountAmount?: number;
   transferServiceFee?: number;
@@ -46,6 +47,8 @@ export interface ShipmentCreateInput {
   agentCommissionBaseAmount?: number;
   agentCommissionPercentageSnapshot?: number;
   agentCommissionAmountSnapshot?: number;
+  /** Business date for the shipment (ledger_date from daily shipping book) */
+  effectiveDate?: string;
 }
 
 export class ShipmentRepository {
@@ -107,10 +110,14 @@ export class ShipmentRepository {
     }
   }
 
-  async list(scope?: DataScope) {
+  async list(scope?: DataScope, filters?: { date?: string }) {
     const conditions: string[] = ['s.deleted_at is null'];
     const values: unknown[] = [];
     this.applyScope(conditions, values, scope, 's');
+    if (filters?.date) {
+      values.push(filters.date);
+      conditions.push(`coalesce(s.effective_date, s.created_at::date) = $${values.length}::date`);
+    }
 
     const result = await pool.query(
       `
@@ -121,7 +128,9 @@ export class ShipmentRepository {
           0
         ) as loaded_pieces_count,
         sender.full_name as sender_name,
-        receiver.full_name as receiver_name
+        sender.phone as sender_phone,
+        receiver.full_name as receiver_name,
+        receiver.phone as receiver_phone
       from shipments s
       left join senders_receivers sender on sender.id = s.sender_id
       left join senders_receivers receiver on receiver.id = s.receiver_id
@@ -135,7 +144,7 @@ export class ShipmentRepository {
         limit 1
       ) latest_driver_load on true
       where ${conditions.join(' and ')}
-      order by s.created_at desc
+      order by coalesce(s.effective_date, s.created_at::date) desc, s.created_at desc
       `,
       values,
     );
@@ -156,7 +165,9 @@ export class ShipmentRepository {
           0
         ) as loaded_pieces_count,
         sender.full_name as sender_name,
-        receiver.full_name as receiver_name
+        sender.phone as sender_phone,
+        receiver.full_name as receiver_name,
+        receiver.phone as receiver_phone
       from shipments s
       left join senders_receivers sender on sender.id = s.sender_id
       left join senders_receivers receiver on receiver.id = s.receiver_id
@@ -199,13 +210,15 @@ export class ShipmentRepository {
         original_amount, original_currency, exchange_rate_to_usd, base_amount_usd,
         company_id, created_by,
         payer_party_kind, default_cashbox_id,
-        freight_charge, transfer_fee, additional_charges, prepaid_amount, discount_amount, transfer_service_fee,
+        freight_charge, transfer_fee, additional_charges, hawala_amount, prepaid_amount, discount_amount, transfer_service_fee,
         agent_commission_base_type, agent_commission_base_amount,
-        agent_commission_percentage_snapshot, agent_commission_amount_snapshot
+        agent_commission_percentage_snapshot, agent_commission_amount_snapshot,
+        effective_date, created_at
       )
       values(
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-        $20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31
+        $20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,
+        coalesce($33::date, now()::date), coalesce($33::timestamptz, now())
       )
       returning *
       `,
@@ -234,6 +247,7 @@ export class ShipmentRepository {
         input.freightCharge ?? input.originalAmount,
         input.transferFee ?? 0,
         input.additionalCharges ?? 0,
+        input.hawalaAmount ?? 0,
         input.prepaidAmount ?? 0,
         input.discountAmount ?? 0,
         input.transferServiceFee ?? 0,
@@ -241,6 +255,7 @@ export class ShipmentRepository {
         typeof input.agentCommissionBaseAmount === 'number' ? input.agentCommissionBaseAmount : null,
         typeof input.agentCommissionPercentageSnapshot === 'number' ? input.agentCommissionPercentageSnapshot : null,
         typeof input.agentCommissionAmountSnapshot === 'number' ? input.agentCommissionAmountSnapshot : null,
+        input.effectiveDate ?? null,
       ],
     );
 
@@ -301,6 +316,7 @@ export class ShipmentRepository {
         `
         update shipments
         set
+          shipment_no = coalesce($32, shipment_no),
           reference_no = coalesce($2, reference_no),
           customer_id = coalesce($3, customer_id),
           sender_id = coalesce($4, sender_id),
@@ -323,11 +339,13 @@ export class ShipmentRepository {
           additional_charges = coalesce($23, additional_charges),
           prepaid_amount = coalesce($24, prepaid_amount),
           discount_amount = coalesce($25, discount_amount),
-          transfer_service_fee = coalesce($26, transfer_service_fee),
-          agent_commission_base_type = coalesce($27, agent_commission_base_type),
-          agent_commission_base_amount = coalesce($28, agent_commission_base_amount),
-          agent_commission_percentage_snapshot = coalesce($29, agent_commission_percentage_snapshot),
-          agent_commission_amount_snapshot = coalesce($30, agent_commission_amount_snapshot),
+          hawala_amount = coalesce($26, hawala_amount),
+          transfer_service_fee = coalesce($27, transfer_service_fee),
+          agent_commission_base_type = coalesce($28, agent_commission_base_type),
+          agent_commission_base_amount = coalesce($29, agent_commission_base_amount),
+          agent_commission_percentage_snapshot = coalesce($30, agent_commission_percentage_snapshot),
+          agent_commission_amount_snapshot = coalesce($31, agent_commission_amount_snapshot),
+          effective_date = coalesce($33::date, effective_date),
           updated_at = now()
         where id = $1
           and deleted_at is null
@@ -361,6 +379,7 @@ export class ShipmentRepository {
           typeof payload.freightCharge === 'number' ? payload.freightCharge : null,
           typeof payload.transferFee === 'number' ? payload.transferFee : null,
           typeof payload.additionalCharges === 'number' ? payload.additionalCharges : null,
+          typeof payload.hawalaAmount === 'number' ? payload.hawalaAmount : null,
           typeof payload.prepaidAmount === 'number' ? payload.prepaidAmount : null,
           typeof payload.discountAmount === 'number' ? payload.discountAmount : null,
           typeof payload.transferServiceFee === 'number' ? payload.transferServiceFee : null,
@@ -368,6 +387,8 @@ export class ShipmentRepository {
           typeof payload.agentCommissionBaseAmount === 'number' ? payload.agentCommissionBaseAmount : null,
           typeof payload.agentCommissionPercentageSnapshot === 'number' ? payload.agentCommissionPercentageSnapshot : null,
           typeof payload.agentCommissionAmountSnapshot === 'number' ? payload.agentCommissionAmountSnapshot : null,
+          payload.shipmentNo ?? null,
+          payload.effectiveDate ?? null,
         ],
       );
 

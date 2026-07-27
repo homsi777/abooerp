@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthProvider';
+import { hasAnyNavPermission } from '../../lib/auth/navPermissionAliases';
 
 // ── Module tree ───────────────────────────────────────────────────────────────
 interface NavChild {
@@ -8,6 +9,7 @@ interface NavChild {
   path: string;
   icon?: string;
   permission?: string;
+  permissionsAny?: string[];
   divider?: boolean;
 }
 
@@ -27,6 +29,7 @@ const NAV_MODULES: NavModule[] = [
     id: 'shipping', label: 'الشحن', icon: '📦',
     children: [
       { label: 'دفتر إدخال سريع', path: '/shipment-quick-ledger', icon: '▦', permission: 'shipments.write' },
+      { label: 'التوثيق', path: '/daily-ledger/documentation', icon: '📋', permissionsAny: ['daily_ledger.documentation.read', 'shipments.read'] },
       { label: 'قائمة الشحنات', path: '/shipments', icon: '📋', permission: 'shipments.read' },
       { label: 'تحميل الشحنات', path: '/manifest', icon: '🚚', permission: 'manifests.read' },
       { label: 'المراكز', path: '/centers', icon: '◎', permission: 'deliveries.read' },
@@ -51,16 +54,21 @@ const NAV_MODULES: NavModule[] = [
   {
     id: 'finance', label: 'المالية', icon: '💰',
     children: [
+      { label: 'كشف — مركز الكشوف', path: '/finance/statements', icon: '📑', permission: 'finance.read' },
+      { label: 'مطابقة ثنائية', path: '/finance/bilateral-reconciliation', icon: '⚖️', permission: 'finance.read' },
       { label: 'السندات', path: '/finance/vouchers', icon: '📜', permission: 'finance.vouchers.view' },
       { label: 'الصناديق', path: '/finance/cashboxes', icon: '💵', permission: 'finance.cashboxes.view' },
       { label: 'المصاريف', path: '/finance/expenses', icon: '💳', permission: 'finance.read' },
       { label: 'الرواتب والسلف', path: '/finance/salaries', icon: '👨‍💼', permission: 'finance.read' },
       { label: 'تعريف الأسعار', path: '/finance/tariffs', icon: '💲', permission: 'finance.read' },
-      { label: 'الدائن والمدين', path: '/finance/debit-credit', icon: '↔', permission: 'finance.read' },
-      { label: 'كشف حساب تفصيلي', path: '/finance/account-statement', icon: '≣', permission: 'finance.read' },
-      { label: 'كشف مبالغ التسليم', path: '/finance/agent-cod-statement', icon: '◈', permission: 'finance.read' },
+      { label: 'دفتر الأستاذ', path: '/finance/general-ledger', icon: '📒', permission: 'finance.read' },
+      { label: 'دفتر اليومية', path: '/finance/daily-journal', icon: '📓', permission: 'finance.read' },
+      { label: 'ميزان المراجعة', path: '/finance/trial-balance', icon: '⚖️', permission: 'finance.read' },
+      { label: 'قائمة المركز المالي', path: '/finance/balance-sheet', icon: '📋', permission: 'finance.read' },
+      { label: 'إقفال الفترات', path: '/finance/period-closing', icon: '🔒', permission: 'finance.read' },
       { label: 'التقارير المالية', path: '/finance/reports', icon: '📈', permission: 'finance.read' },
-      { label: 'تقارير قبل التسليم', path: '/finance/delivery-reports', icon: '✅', permission: 'finance.read' },
+      { label: 'أرباح وخسائر', path: '/finance/reports/profit-loss', icon: '📊', permission: 'finance.read' },
+      { label: 'الجرد الشهري', path: '/finance/monthly-inventory', icon: '🗓️', permission: 'finance.read' },
     ],
   },
   { id: 'reports', label: 'التقارير', icon: '📊', path: '/reports', permission: 'reports.view' },
@@ -107,11 +115,47 @@ function buildNavDataEntry(): NavModule[] {
 
 const NAV_DATA_ENTRY: NavModule[] = buildNavDataEntry();
 
-/** محاسب: مالية + حوالات + تقارير (بدون قوائم الشحن التشغيلية في الشريط). */
+/** مالية محاسب: الذمم والأرصدة أولاً — تُبنى تلقائياً من حفظ دفتر الشحن، لا من السندات */
+const NAV_FINANCE_ACCOUNTANT: NavModule = {
+  id: 'finance',
+  label: 'الذمم والمالية',
+  icon: '💰',
+  children: [
+    { label: 'كشف — مركز الكشوف', path: '/finance/statements', icon: '📑', permission: 'finance.read' },
+    { label: 'مطابقة ثنائية', path: '/finance/bilateral-reconciliation', icon: '⚖️', permission: 'finance.read' },
+    { label: 'دفتر الأستاذ — ذمم وأرصدة', path: '/finance/general-ledger', icon: '📒', permission: 'finance.read' },
+    { label: 'دفتر اليومية — تفاصيل الحركات', path: '/finance/daily-journal', icon: '📓', permission: 'finance.read' },
+    { label: 'ميزان المراجعة', path: '/finance/trial-balance', icon: '⚖️', permission: 'finance.read' },
+    { label: 'قائمة المركز المالي', path: '/finance/balance-sheet', icon: '📋', permission: 'finance.read' },
+    { label: 'التقارير المالية', path: '/finance/reports', icon: '📈', permission: 'finance.read' },
+    { label: 'أرباح وخسائر', path: '/finance/reports/profit-loss', icon: '📊', permission: 'finance.read' },
+    { label: 'الجرد الشهري', path: '/finance/monthly-inventory', icon: '🗓️', permission: 'finance.read' },
+    { label: 'تعريف الأسعار', path: '/finance/tariffs', icon: '💲', permission: 'finance.read', divider: true },
+    { label: 'السندات (قبض/دفع)', path: '/finance/vouchers', icon: '📜', permission: 'finance.vouchers.view' },
+    { label: 'الصناديق', path: '/finance/cashboxes', icon: '💵', permission: 'finance.cashboxes.view' },
+    { label: 'المصاريف', path: '/finance/expenses', icon: '💳', permission: 'finance.read' },
+    { label: 'الرواتب والسلف', path: '/finance/salaries', icon: '👨‍💼', permission: 'finance.read' },
+    { label: 'إقفال الفترات', path: '/finance/period-closing', icon: '🔒', permission: 'finance.read' },
+  ],
+};
+
+/** محاسب: مالية + حوالات + وكلاء + مراكز الشحن (عرض) + تقارير + العملاء */
+const NAV_SHIPPING_ACCOUNTANT: NavModule = {
+  id: 'shipping-centers',
+  label: 'شحن المراكز',
+  icon: '◎',
+  children: [
+    { label: 'المراكز', path: '/centers', icon: '◎', permission: 'deliveries.read' },
+  ],
+};
+
 const NAV_ACCOUNTANT: NavModule[] = [
   { id: 'home', label: 'الرئيسية', icon: '🏠', path: '/dashboard' },
   ...(NAV_MODULES.filter((m) => m.id === 'transfers')),
-  ...(NAV_MODULES.filter((m) => m.id === 'finance')),
+  ...(NAV_MODULES.filter((m) => m.id === 'customers')),
+  ...(NAV_MODULES.filter((m) => m.id === 'agents')),
+  NAV_SHIPPING_ACCOUNTANT,
+  NAV_FINANCE_ACCOUNTANT,
   ...(NAV_MODULES.filter((m) => m.id === 'reports')),
 ];
 
@@ -173,8 +217,16 @@ interface DropdownState {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
+function isChildPathActive(pathname: string, childPath: string): boolean {
+  const base = childPath.split('?')[0] ?? childPath;
+  return pathname === base || pathname.startsWith(`${base}/`);
+}
+
 export default function TopMegaNavigation() {
   const { hasPermission, user } = useAuth();
+  const userPermissions = user?.permissions;
+  const canSeeChild = (child: NavChild) =>
+    hasAnyNavPermission(userPermissions, child.permission, child.permissionsAny);
   const navigate = useNavigate();
   const location = useLocation();
   const [dropdown, setDropdown] = useState<DropdownState | null>(null);
@@ -198,9 +250,7 @@ export default function TopMegaNavigation() {
   const isModuleActive = (mod: NavModule): boolean => {
     if (mod.path) return location.pathname === mod.path || location.pathname.startsWith(mod.path + '/');
     if (mod.children) {
-      return mod.children.some(
-        (c) => location.pathname === c.path || location.pathname.startsWith(c.path + '/'),
-      );
+      return mod.children.some((c) => isChildPathActive(location.pathname, c.path));
     }
     return false;
   };
@@ -208,7 +258,7 @@ export default function TopMegaNavigation() {
   const baseModules =
     user?.userType === 'agent'
       ? NAV_MODULES_AGENT
-      : user?.role === 'data_entry'
+      : user?.role === 'data_entry' || user?.role === 'shipment_auditor'
         ? NAV_DATA_ENTRY
         : user?.role === 'accountant'
           ? NAV_ACCOUNTANT
@@ -218,13 +268,13 @@ export default function TopMegaNavigation() {
     if (
       mod.id === 'home' &&
       user &&
-      !['admin', 'general_manager', 'branch_manager', 'accountant', 'data_entry'].includes(user.role)
+      !['admin', 'general_manager', 'branch_manager', 'accountant', 'data_entry', 'shipment_auditor'].includes(user.role)
     ) {
       return false;
     }
     if (mod.permission && !hasPermission(mod.permission)) return false;
     if (mod.children) {
-      const visible = mod.children.filter((c) => !c.permission || hasPermission(c.permission));
+      const visible = mod.children.filter((c) => canSeeChild(c));
       return visible.length > 0;
     }
     return true;
@@ -255,7 +305,7 @@ export default function TopMegaNavigation() {
   };
 
   const openModule = dropdown ? visibleModules.find((m) => m.id === dropdown.id) : null;
-  const openChildren = (openModule?.children ?? []).filter((c) => !c.permission || hasPermission(c.permission));
+  const openChildren = (openModule?.children ?? []).filter((c) => canSeeChild(c));
 
   return (
     <>
@@ -349,16 +399,16 @@ export default function TopMegaNavigation() {
                   width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
                   padding: '9px 14px', border: 'none',
                   borderRadius: '8px', cursor: 'pointer', textAlign: 'right',
-                  color: location.pathname === child.path ? '#a5b4fc' : 'rgba(255,255,255,.8)',
+                  color: isChildPathActive(location.pathname, child.path) ? '#a5b4fc' : 'rgba(255,255,255,.8)',
                   fontSize: '13px',
-                  background: location.pathname === child.path ? 'rgba(99,102,241,.15)' : 'none',
+                  background: isChildPathActive(location.pathname, child.path) ? 'rgba(99,102,241,.15)' : 'none',
                 } as React.CSSProperties}
                 onMouseEnter={(e) => {
-                  if (location.pathname !== child.path)
+                  if (!isChildPathActive(location.pathname, child.path))
                     Object.assign(e.currentTarget.style, { background: 'rgba(255,255,255,.06)', color: '#fff' });
                 }}
                 onMouseLeave={(e) => {
-                  if (location.pathname !== child.path)
+                  if (!isChildPathActive(location.pathname, child.path))
                     Object.assign(e.currentTarget.style, { background: 'none', color: 'rgba(255,255,255,.8)' });
                 }}
               >

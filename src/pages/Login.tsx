@@ -5,6 +5,8 @@ import { getLanState, httpClient } from '../lib/api/httpClient';
 import ActivationModal, { getStoredLicense } from '../components/login/ActivationModal';
 import LanConnectionModal from '../components/login/LanConnectionModal';
 import DeviceLoginBootstrap, { resolveLoginBootstrapOverlay } from '../components/login/DeviceLoginBootstrap';
+import { registerDesktopDeviceFromLogin, type DeviceRegistrationStatus } from '../lib/deviceRegistration';
+import { COMPANY_LOGO_PATH, COMPANY_NAME_AR } from '../lib/branding/companyBrand';
 
 type LoginBranch = {
   id: string;
@@ -40,41 +42,10 @@ const features = [
 ];
 
 // ─── Device status returned from registration handshake ───────────────────────
-type DeviceCheckStatus = 'ok' | 'pending' | 'blocked' | 'unknown';
+type DeviceCheckStatus = DeviceRegistrationStatus;
 
 async function performDeviceHandshake(): Promise<DeviceCheckStatus> {
-  try {
-    const runtime = (window as any)?.runtime;
-    let machineId = '';
-    let deviceName = navigator.platform || 'Web Client';
-    let osType = navigator.platform || '';
-
-    if (runtime?.getMachineId) {
-      machineId = (await runtime.getMachineId()) ?? '';
-    }
-    if (!machineId) return 'ok'; // no machineId = likely local/dev browser
-
-    const resp = await httpClient.post<{ status?: string; deviceId?: string }>(
-      '/system/register-device',
-      {
-        machineId,
-        deviceName,
-        osType,
-      },
-    ).catch((err: Error) => {
-      // parse error codes from the error message
-      if (err.message?.includes('DEVICE_BLOCKED')) return { _err: 'blocked' } as any;
-      if (err.message?.includes('DEVICE_PENDING_APPROVAL')) return { _err: 'pending' } as any;
-      return null;
-    });
-
-    if (!resp) return 'unknown';
-    if ((resp as any)._err === 'blocked') return 'blocked';
-    if ((resp as any)._err === 'pending') return 'pending';
-    return 'ok';
-  } catch {
-    return 'ok'; // fail open for local environments
-  }
+  return registerDesktopDeviceFromLogin();
 }
 
 export default function Login() {
@@ -113,6 +84,13 @@ export default function Login() {
   }, []);
 
   const loginBootstrapReady = deviceBootstrap === 'off';
+
+  useEffect(() => {
+    if (!loginBootstrapReady) return;
+    void httpClient.get<{ licenseActive?: boolean }>('/license/status')
+      .then((status) => setLicenseActive(status.licenseActive === true))
+      .catch(() => setLicenseActive(!!getStoredLicense()));
+  }, [loginBootstrapReady]);
 
   useEffect(() => {
     if (!loginBootstrapReady) return;
@@ -465,7 +443,7 @@ export default function Login() {
                       <tbody>
                         {[
                           ['اسم المستخدم', 'postgres', '#166534'],
-                          ['كلمة المرور', '12345678', '#991b1b'],
+                          ['كلمة المرور', 'اختر كلمة قوية خاصة بهذا الجهاز', '#991b1b'],
                           ['المنفذ (Port)', '5432', '#1e40af'],
                           ['Locale', 'Arabic, Saudi Arabia', '#374151'],
                         ].map(([label, value, color]) => (
@@ -618,9 +596,9 @@ export default function Login() {
       {/* ── LEFT PANEL ── */}
       <div style={styles.left}>
         <div style={styles.brand}>
-          <div style={styles.brandIcon}>📦</div>
+          <img src={COMPANY_LOGO_PATH} alt={COMPANY_NAME_AR} style={styles.brandLogo} />
           <div>
-            <div style={styles.brandName}>شامل</div>
+            <div style={styles.brandName}>أبو المحمود</div>
             <div style={styles.brandSub}>نظام إدارة الشحن والمحاسبة</div>
           </div>
         </div>
@@ -652,9 +630,9 @@ export default function Login() {
           {/* card header */}
           <div style={styles.cardHeader}>
             <div style={styles.cardIconWrap}>
-              <span style={{ fontSize: '22px' }}>📦</span>
+              <img src={COMPANY_LOGO_PATH} alt={COMPANY_NAME_AR} style={styles.cardLogo} />
             </div>
-            <div style={styles.cardTitle}>شركة عبو المحمود لنقل والخدمات الوجستية</div>
+            <div style={styles.cardTitle}>{COMPANY_NAME_AR}</div>
             <div style={styles.cardTagline}>نظام الشحن المتكامل</div>
           </div>
 
@@ -871,6 +849,15 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '22px',
     boxShadow: '0 4px 16px rgba(124,58,237,.4)',
   },
+  brandLogo: {
+    width: '56px',
+    height: '56px',
+    objectFit: 'contain',
+    borderRadius: '50%',
+    background: '#fff',
+    padding: '2px',
+    boxShadow: '0 4px 16px rgba(0,0,0,.25)',
+  },
   brandName: {
     color: '#fff',
     fontWeight: 700,
@@ -963,15 +950,22 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: '24px',
   },
   cardIconWrap: {
-    width: '52px',
-    height: '52px',
-    borderRadius: '16px',
-    background: 'linear-gradient(135deg,#7c3aed,#4f46e5)',
+    width: '56px',
+    height: '56px',
+    borderRadius: '50%',
+    background: '#fff',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: '10px',
-    boxShadow: '0 8px 24px rgba(124,58,237,.45)',
+    boxShadow: '0 8px 24px rgba(0,0,0,.25)',
+    padding: '4px',
+  },
+  cardLogo: {
+    width: '40px',
+    height: '40px',
+    objectFit: 'contain',
+    borderRadius: '50%',
   },
   cardTitle: {
     color: '#fff',

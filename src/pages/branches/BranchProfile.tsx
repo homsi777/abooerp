@@ -95,8 +95,8 @@ export default function BranchProfile() {
           <div><strong>الشحنات قيد التسليم:</strong> {inDelivery}</div>
         </div>
         <div className="flex gap-2 mt-3">
-          <button type="button" className="toolbar-btn" onClick={() => navigate(`/finance/debit-credit?branchId=${id}`)}>الدائن والمدين للفرع</button>
-          <button type="button" className="toolbar-btn" onClick={() => navigate(`/finance/account-statement?branchId=${id}`)}>كشف الحساب للفرع</button>
+          <button type="button" className="toolbar-btn" onClick={() => navigate(`/finance/general-ledger?branchId=${id}`)}>دفتر الأستاذ للفرع</button>
+          <button type="button" className="toolbar-btn" onClick={() => navigate(`/finance/daily-journal?branchId=${id}`)}>دفتر اليومية للفرع</button>
         </div>
       </section>
 

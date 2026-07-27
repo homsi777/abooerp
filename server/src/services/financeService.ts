@@ -1,8 +1,23 @@
 import { HttpError } from '../utils/errors.js';
 import type { DataScope } from '../utils/scope.js';
+import { AgentPortalVoucherService } from './agentPortalVoucherService.js';
 import { computeBaseAmountUsd } from '../utils/money.js';
 import { env } from '../config/env.js';
 import { ExchangeRateRepository } from '../repositories/exchangeRateRepository.js';
+import { ProfitLossReportService, type ProfitLossReportFilters } from './profitLossReportService.js';
+import {
+  MonthlyInventoryReportService,
+  type MonthlyInventoryFilters,
+} from './monthlyInventoryReportService.js';
+import {
+  AccountingReportsService,
+  buildAgentMainBranchReconciliationPackage,
+  buildHawalaReconciliationPackage,
+  enrichAgentSettlementSummary,
+  type AccountingReportFilters,
+} from './accountingReportsService.js';
+import type { AgentRepository } from '../repositories/agentRepository.js';
+import { BilateralReconciliationService } from './bilateralReconciliationService.js';
 import type {
   CashboxInput,
   CashboxListFilters,
@@ -57,6 +72,9 @@ interface DashboardCacheResetAuditEntry {
 
 export class FinanceService {
   private readonly dashboardPackageCache = new Map<string, DashboardCacheEntry>();
+  private readonly profitLossReportService = new ProfitLossReportService();
+  private readonly monthlyInventoryReportService = new MonthlyInventoryReportService();
+  private readonly accountingReportsService = new AccountingReportsService();
 
   private readonly dashboardPackageInFlight = new Map<string, Promise<any>>();
 
@@ -82,7 +100,19 @@ export class FinanceService {
 
   private readonly exchangeRateRepository = new ExchangeRateRepository();
 
-  constructor(private readonly repository: FinanceRepository) {}
+  private readonly agentPortalVoucherService: AgentPortalVoucherService;
+  private bilateralReconciliationService?: BilateralReconciliationService;
+
+  constructor(
+    private readonly repository: FinanceRepository,
+    private readonly agentRepository?: AgentRepository,
+  ) {
+    this.agentPortalVoucherService = new AgentPortalVoucherService(this.repository, this);
+  }
+
+  agentPortalVouchers() {
+    return this.agentPortalVoucherService;
+  }
 
   private async validateConfirmedCashbox(
     cashboxId: string | null | undefined,
@@ -113,7 +143,7 @@ export class FinanceService {
     }
   }
 
-  private async resolveExchangeRateToUsd(options: {
+  async resolveExchangeRateToUsd(options: {
     originalCurrency: string;
     exchangeRateToUsd?: number;
     companyId?: string;
@@ -367,7 +397,14 @@ export class FinanceService {
     return this.repository.listCashboxTransactions(scope);
   }
 
-  listCashboxes(scope?: DataScope, filters?: CashboxListFilters) {
+  async syncCompanyCashboxes(companyId: string) {
+    return this.repository.syncCompanyCashboxes(companyId);
+  }
+
+  async listCashboxes(scope?: DataScope, filters?: CashboxListFilters) {
+    if (scope?.companyId) {
+      await this.repository.syncCompanyCashboxes(scope.companyId);
+    }
     return this.repository.listCashboxes(scope, filters);
   }
 
@@ -474,6 +511,14 @@ export class FinanceService {
     return this.repository.listCashboxMovementsForCashbox(cashboxId, scope);
   }
 
+  getCashboxStatement(
+    cashboxId: string,
+    scope?: DataScope,
+    filters?: { dateFrom?: string; dateTo?: string; transactionType?: 'inflow' | 'outflow' },
+  ) {
+    return this.repository.getCashboxStatement(cashboxId, scope, filters);
+  }
+
   listPartyFinancialMovements(scope?: DataScope) {
     return this.repository.listPartyFinancialMovements(scope);
   }
@@ -500,6 +545,44 @@ export class FinanceService {
 
   getDetailedAccountStatement(scope?: DataScope, filters?: AccountStatementFilters) {
     return this.repository.getDetailedAccountStatement(scope, filters);
+  }
+
+  getProfitLossReport(scope?: DataScope, filters?: ProfitLossReportFilters) {
+    if (!filters?.fromAt || !filters?.toAt) {
+      throw new HttpError(400, 'fromAt and toAt are required for profit and loss report.');
+    }
+    return this.profitLossReportService.buildReport(scope, filters);
+  }
+
+  getMonthlyInventoryReport(scope?: DataScope, filters?: MonthlyInventoryFilters) {
+    if (!filters?.dateFrom || !filters?.dateTo) {
+      throw new HttpError(400, 'dateFrom and dateTo are required for monthly inventory report.');
+    }
+    return this.monthlyInventoryReportService.buildReport(scope, filters);
+  }
+
+  getMonthlyInventoryPartyDetail(
+    scope?: DataScope,
+    filters?: MonthlyInventoryFilters & {
+      partyId?: string | null;
+      partyType?: 'agent' | 'unassigned';
+      partyName?: string;
+    },
+  ) {
+    if (!filters?.dateFrom || !filters?.dateTo) {
+      throw new HttpError(400, 'dateFrom and dateTo are required for monthly inventory detail.');
+    }
+    if (!filters.partyType) {
+      throw new HttpError(400, 'partyType is required for monthly inventory detail.');
+    }
+    return this.monthlyInventoryReportService.buildPartyDetail(scope, {
+      dateFrom: filters.dateFrom,
+      dateTo: filters.dateTo,
+      branchId: filters.branchId,
+      partyId: filters.partyId,
+      partyType: filters.partyType,
+      partyName: filters.partyName,
+    });
   }
 
   async getPartyStatementPackage(
@@ -680,7 +763,8 @@ export class FinanceService {
       agentId: input.agentId ?? scope?.agentId,
     };
     if (payload.status === 'confirmed') {
-      if (!payload.customerId && !payload.senderReceiverId && !payload.agentId) {
+      const internalPayment = ['expense', 'salary_record', 'cashbox_transfer', 'manual_party', 'agent_remittance', 'agent_receipt_from_branch'].includes(String(payload.relatedEntityType ?? ''));
+      if (!internalPayment && !payload.customerId && !payload.senderReceiverId && !payload.agentId) {
         throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
       }
       await this.validateConfirmedCashbox(payload.cashboxId, payload.originalCurrency, fxContext?.companyId, scope);
@@ -700,6 +784,10 @@ export class FinanceService {
     const existing = await this.repository.getReceiptVoucherById(id, scope);
     if (!existing) return null;
 
+    if (payload.createdAt && existing.status !== 'draft') {
+      throw new HttpError(400, 'لا يمكن تغيير تاريخ سند مؤكد أو ملغى.');
+    }
+
     const nextStatus = (payload.status ?? existing.status) as VoucherStatus;
     const nextCashboxId =
       existing.status === 'draft' && payload.cashboxId !== undefined ? payload.cashboxId : existing.cashbox_id;
@@ -708,7 +796,8 @@ export class FinanceService {
       const nextCustomerId = payload.customerId ?? existing.customer_id;
       const nextSenderReceiverId = payload.senderReceiverId ?? existing.sender_receiver_id;
       const nextAgentId = payload.agentId ?? existing.agent_id;
-      if (!nextCustomerId && !nextSenderReceiverId && !nextAgentId) {
+      const internalPayment = ['expense', 'salary_record', 'cashbox_transfer', 'manual_party', 'agent_remittance', 'agent_receipt_from_branch'].includes(String(payload.relatedEntityType ?? existing.related_entity_type ?? ''));
+      if (!internalPayment && !nextCustomerId && !nextSenderReceiverId && !nextAgentId) {
         throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
       }
       await this.validateConfirmedCashbox(
@@ -787,7 +876,14 @@ export class FinanceService {
       agentId: input.agentId ?? scope?.agentId,
     };
     if (payload.status === 'confirmed') {
-      if (!payload.customerId && !payload.senderReceiverId && !payload.agentId) {
+      const isInternalPayment =
+        payload.relatedEntityType === 'expense' ||
+        payload.relatedEntityType === 'salary_record' ||
+        payload.relatedEntityType === 'cashbox_transfer' ||
+        payload.relatedEntityType === 'manual_party' ||
+        payload.relatedEntityType === 'agent_remittance' ||
+        payload.relatedEntityType === 'agent_receipt_from_branch';
+      if (!isInternalPayment && !payload.customerId && !payload.senderReceiverId && !payload.agentId) {
         throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
       }
       await this.validateConfirmedCashbox(payload.cashboxId, payload.originalCurrency, fxContext?.companyId, scope);
@@ -807,6 +903,10 @@ export class FinanceService {
     const existing = await this.repository.getPaymentVoucherById(id, scope);
     if (!existing) return null;
 
+    if (payload.createdAt && existing.status !== 'draft') {
+      throw new HttpError(400, 'لا يمكن تغيير تاريخ سند مؤكد أو ملغى.');
+    }
+
     const nextStatus = (payload.status ?? existing.status) as VoucherStatus;
     const nextCashboxId =
       existing.status === 'draft' && payload.cashboxId !== undefined ? payload.cashboxId : existing.cashbox_id;
@@ -815,7 +915,15 @@ export class FinanceService {
       const nextCustomerId = payload.customerId ?? existing.customer_id;
       const nextSenderReceiverId = payload.senderReceiverId ?? existing.sender_receiver_id;
       const nextAgentId = payload.agentId ?? existing.agent_id;
-      if (!nextCustomerId && !nextSenderReceiverId && !nextAgentId) {
+      const nextRelatedEntityType = payload.relatedEntityType ?? existing.related_entity_type;
+      const isInternalPayment =
+        nextRelatedEntityType === 'expense' ||
+        nextRelatedEntityType === 'salary_record' ||
+        nextRelatedEntityType === 'cashbox_transfer' ||
+        nextRelatedEntityType === 'manual_party' ||
+        nextRelatedEntityType === 'agent_remittance' ||
+        nextRelatedEntityType === 'agent_receipt_from_branch';
+      if (!isInternalPayment && !nextCustomerId && !nextSenderReceiverId && !nextAgentId) {
         throw new HttpError(400, 'يجب اختيار الجهة المعنية قبل تأكيد السند.');
       }
       await this.validateConfirmedCashbox(
@@ -832,6 +940,24 @@ export class FinanceService {
       if (current !== next && !allowedVoucherTransitions[current]?.includes(next)) {
         throw new HttpError(400, `Invalid payment voucher status transition: ${current} -> ${next}`);
       }
+    }
+
+    const movingToConfirmed =
+      existing.status === 'draft' && (payload.status ?? existing.status) === 'confirmed';
+    if (
+      movingToConfirmed &&
+      this.agentPortalVoucherService.isAgentPortalSettlementType(existing.related_entity_type)
+    ) {
+      const updated = await this.agentPortalVoucherService.confirmDraftPaymentVoucher(id, scope, {
+        companyId: fxContext?.companyId,
+        baseCurrency: fxContext?.baseCurrency,
+        actorUserId: undefined,
+      });
+      if (updated) {
+        this.invalidateDashboardCache();
+        await this.persistDashboardCacheMetrics();
+      }
+      return updated;
     }
 
     const updatePayload = { ...payload };
@@ -869,5 +995,136 @@ export class FinanceService {
     this.invalidateDashboardCache();
     await this.persistDashboardCacheMetrics();
     return result;
+  }
+
+  getTrialBalanceReport(scope?: DataScope, filters?: AccountingReportFilters) {
+    return this.accountingReportsService.getTrialBalance(scope, filters ?? {});
+  }
+
+  getBalanceSheetReport(scope?: DataScope, filters?: AccountingReportFilters) {
+    return this.accountingReportsService.getBalanceSheet(scope, filters ?? {});
+  }
+
+  listAccountingPeriodClosures(scope?: DataScope, limit?: number) {
+    return this.accountingReportsService.listPeriodClosures(scope, limit);
+  }
+
+  closeAccountingPeriod(
+    scope: DataScope | undefined,
+    input: {
+      periodStart: string;
+      periodEnd: string;
+      branchId?: string | null;
+      currencyCode?: string;
+      notes?: string;
+      closedByUserId?: string | null;
+    },
+  ) {
+    return this.accountingReportsService.closePeriod(scope, input);
+  }
+
+  async isAccountingDateClosed(companyId: string, dateIso: string, branchId?: string | null) {
+    return this.accountingReportsService.isDateInClosedPeriod(companyId, dateIso, branchId);
+  }
+
+  async getAgentSettlementPackage(companyId: string, agentId: string, options?: AccountingReportFilters & { currencyCode?: string }) {
+    if (!this.agentRepository) throw new HttpError(500, 'Agent settlement is not configured.');
+    const raw = await this.agentRepository.getAgentFinancialStatement(companyId, agentId, {
+      currencyCode: options?.currencyCode,
+      fromAt: options?.fromAt,
+      toAt: options?.toAt,
+    });
+    if (!raw) return null;
+    return enrichAgentSettlementSummary(raw);
+  }
+
+  async getHawalaReconciliationPackage(companyId: string, agentId: string, options?: AccountingReportFilters & { currencyCode?: string }) {
+    if (!this.agentRepository) throw new HttpError(500, 'Hawala reconciliation is not configured.');
+    const raw = await this.agentRepository.getAgentFinancialStatement(companyId, agentId, {
+      currencyCode: options?.currencyCode,
+      fromAt: options?.fromAt,
+      toAt: options?.toAt,
+    });
+    if (!raw) return null;
+    return buildHawalaReconciliationPackage(raw);
+  }
+
+  async getAgentBranchReconciliationPackage(
+    companyId: string,
+    agentId: string,
+    options?: AccountingReportFilters & { currencyCode?: string },
+  ) {
+    if (!this.agentRepository) throw new HttpError(500, 'Agent branch reconciliation is not configured.');
+    const raw = await this.agentRepository.getAgentFinancialStatement(companyId, agentId, {
+      currencyCode: options?.currencyCode,
+      fromAt: options?.fromAt,
+      toAt: options?.toAt,
+    });
+    if (!raw) return null;
+    return buildAgentMainBranchReconciliationPackage(raw);
+  }
+
+  private bilateralService() {
+    if (!this.agentRepository) {
+      throw new HttpError(500, 'Bilateral reconciliation is not configured.');
+    }
+    if (!this.bilateralReconciliationService) {
+      this.bilateralReconciliationService = new BilateralReconciliationService(this.agentRepository);
+    }
+    return this.bilateralReconciliationService;
+  }
+
+  async getBilateralReconciliationPreview(
+    companyId: string,
+    agentId: string,
+    options?: { fromAt?: string; toAt?: string; currencyCode?: string },
+  ) {
+    return this.bilateralService().getPreview(companyId, agentId, options);
+  }
+
+  async listBilateralReconciliations(companyId: string, agentId: string) {
+    return this.bilateralService().list(companyId, agentId);
+  }
+
+  async getBilateralReconciliationById(companyId: string, id: string) {
+    return this.bilateralService().getById(companyId, id);
+  }
+
+  async getBilateralDiscrepancyReport(companyId: string, agentId: string, currencyCode?: string) {
+    return this.bilateralService().getDiscrepancyReport(companyId, agentId, currencyCode);
+  }
+
+  async getBilateralBalanceHistoryReport(companyId: string, agentId: string, currencyCode?: string) {
+    return this.bilateralService().getBalanceHistoryReport(companyId, agentId, currencyCode);
+  }
+
+  async saveBilateralReconciliationDraft(
+    companyId: string,
+    input: Parameters<BilateralReconciliationService['saveDraft']>[1],
+  ) {
+    return this.bilateralService().saveDraft(companyId, input);
+  }
+
+  async approveBilateralReconciliation(
+    companyId: string,
+    input: Parameters<BilateralReconciliationService['approve']>[1],
+  ) {
+    return this.bilateralService().approve(companyId, input);
+  }
+
+  async sendBilateralReconciliationToAgent(
+    companyId: string,
+    id: string,
+    agentNotes?: string,
+  ) {
+    return this.bilateralService().sendToAgent(companyId, id, agentNotes);
+  }
+
+  async disputeBilateralReconciliation(
+    companyId: string,
+    id: string,
+    disputeNote: string,
+  ) {
+    return this.bilateralService().markDisputed(companyId, id, disputeNote);
   }
 }

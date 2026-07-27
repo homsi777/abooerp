@@ -1,0 +1,1236 @@
+<!doctype html>
+<html lang="ar">
+<head>
+  <meta charset="utf-8" />
+  <title>معايرة إيصالات المحمود</title>
+  <style>
+    @page { size: 210mm 297mm; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      min-height: 100vh;
+      background: #fff;
+      color: #000;
+      font-family: Tahoma, Arial, sans-serif;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .screen-hint {
+      padding: 8px 14px;
+      background: #fff8e6;
+      border-bottom: 1px solid #e6c200;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .calibration-workspace {
+      display: flex;
+      flex-direction: row;
+      direction: rtl;
+      align-items: stretch;
+      gap: 0;
+      height: calc(100vh - 52px);
+      overflow: hidden;
+    }
+    .calibration-panel {
+      flex: 0 0 380px;
+      width: 380px;
+      padding: 10px 12px 12px;
+      background: #eef4fa;
+      border-inline-start: 2px solid #b8c9da;
+      font-size: 12px;
+      direction: rtl;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    .preview-column {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      background: #d8dee6;
+      direction: ltr;
+    }
+    .preview-scroll {
+      flex: 1;
+      overflow: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    .toolbar {
+      flex: 0 0 auto;
+      padding: 8px 12px;
+      text-align: center;
+      background: #c5cdd8;
+      border-bottom: 1px solid #aeb8c4;
+    }
+    .toolbar button {
+      padding: 7px 16px;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .print-only { display: none; }
+    @media print {
+      html, body { width: 210mm; min-height: auto; background: #fff; }
+      .screen-hint, .calibration-panel, .toolbar { display: none !important; }
+      .calibration-workspace {
+        display: block !important;
+        height: auto !important;
+        overflow: visible !important;
+      }
+      .preview-column, .preview-scroll {
+        display: block !important;
+        padding: 0 !important;
+        background: none !important;
+        overflow: visible !important;
+      }
+      .sheet {
+        box-shadow: none !important;
+        margin: 0 !important;
+      }
+      .sheet-overlay { background-image: none !important; }
+      .debug-field { outline: none !important; background: transparent !important; }
+      .debug-field::after { display: none !important; }
+    }
+    .sheet {
+      position: relative;
+      width: 210mm;
+      height: 297mm;
+      overflow: hidden;
+      page-break-after: always;
+      break-after: page;
+      margin: 0;
+      flex-shrink: 0;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
+      background: #fff;
+    }
+    .sheet:last-child { page-break-after: auto; break-after: auto; }
+    .sheet-overlay {
+      background-image: url('mahmoud-form-reference.png');
+      background-size: 210mm 297mm;
+      background-repeat: no-repeat;
+      background-position: top left;
+    }
+    .receipt-slot {
+      position: absolute;
+      left: 0mm;
+      width: 210mm;
+      overflow: visible;
+    }
+    .receipt-slot.slot-active {
+      outline: 0.35mm solid #0066cc;
+      outline-offset: -0.35mm;
+      z-index: 2;
+    }
+    .receipt-slot:not(.slot-active) .debug-field {
+      opacity: 0.28;
+    }
+    .field {
+      position: absolute;
+      display: flex;
+      align-items: center;
+      line-height: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      direction: rtl;
+      background: transparent;
+      font-weight: 600;
+    }
+    .field.align-center { justify-content: center; text-align: center; }
+    .field.align-right { justify-content: flex-end; text-align: right; padding-inline-end: 0.4mm; }
+    .field.align-left { justify-content: flex-start; text-align: left; padding-inline-start: 0.4mm; }
+    /* التاريخ ورقم الإيصال: أرقام LTR — لا قصّ */
+    .field[data-field="date"],
+    .field[data-field="receiptNo"] {
+      direction: ltr;
+      overflow: visible;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      text-overflow: clip;
+      padding-inline: 0.5mm;
+    }
+    .debug-field {
+      outline: 0.12mm dashed rgba(200, 0, 0, 0.7);
+      background: rgba(255, 230, 0, 0.12);
+    }
+    .debug-field::after {
+      content: 'S' attr(data-slot-index) ' · ' attr(data-field);
+      position: absolute;
+      top: -2.8mm;
+      left: 0;
+      font-size: 5.5pt;
+      font-weight: 400;
+      color: #b00;
+      direction: ltr;
+      pointer-events: none;
+    }
+    .global-offset {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0 10px;
+    }
+    .global-offset label {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+    }
+    .global-offset input { width: 52px; font-family: inherit; }
+    .global-offset button {
+      padding: 4px 8px;
+      font-family: inherit;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .flip-options {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 10px;
+      padding: 8px;
+      background: #fff8e6;
+      border: 1px solid #e6c200;
+      border-radius: 4px;
+      font-size: 11px;
+    }
+    .flip-options label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .slot-tabs {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+    .slot-tab {
+      padding: 6px 4px;
+      font-family: inherit;
+      font-size: 11px;
+      cursor: pointer;
+      border: 1px solid #b8c9da;
+      background: #fff;
+      border-radius: 4px;
+    }
+    .slot-tab.active {
+      background: #0066cc;
+      color: #fff;
+      border-color: #0055aa;
+      font-weight: 700;
+    }
+    .slot-cal-actions {
+      margin-bottom: 8px;
+    }
+    .slot-cal-actions button {
+      width: 100%;
+      padding: 5px 8px;
+      font-family: inherit;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .slot-cal-panel[hidden] { display: none; }
+    .field-cal-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      border: 1px solid #c5d0dc;
+      background: #fff;
+      padding: 6px;
+      border-radius: 4px;
+    }
+    .field-cal-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 6px 4px;
+      border-bottom: 1px solid #e8edf2;
+    }
+    .field-cal-row:last-child { border-bottom: none; }
+    .field-cal-title { font-weight: 700; font-size: 11px; }
+    .field-cal-title code { font-size: 9px; color: #666; font-weight: 400; }
+    .field-cal-inputs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px 6px;
+    }
+    .field-cal-inputs label {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      font-size: 9px;
+      color: #445;
+    }
+    .field-cal-inputs input,
+    .field-cal-inputs select {
+      width: 100%;
+      font-family: inherit;
+      font-size: 11px;
+      padding: 2px 3px;
+    }
+    .export-out {
+      margin-top: 8px;
+      padding: 6px;
+      background: #1e293b;
+      color: #e2e8f0;
+      font-size: 9px;
+      direction: ltr;
+      text-align: left;
+      max-height: 140px;
+      overflow: auto;
+      white-space: pre-wrap;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="screen-hint no-print">
+    <strong>معايرة إيصالات المحمود</strong> — اختر «إيصال 1–4» ثم اضبط كل حقل من الـ 9 على حدة. ما تراه = ما يُطبع.
+  </div>
+  <div class="calibration-workspace no-print">
+  <aside class="calibration-panel no-print">
+    <strong>4 إيصالات × 10 حقول — تحكم منفصل</strong>
+    <div class="global-offset">
+      <label>↓ <input id="offTop" type="number" step="0.5" value="0" title="إزاحة عامة أعلى/أسفل" /></label>
+      <label>→ <input id="offLeft" type="number" step="0.5" value="0" title="إزاحة عامة يمين/يسار" /></label>
+      <button type="button" id="btnReset">إعادة</button>
+      <button type="button" id="btnCopy">نسخ الكل</button>
+    </div>
+    <div class="flip-options">
+      <label><input id="flipSlots" type="checkbox" /> عكس ترتيب الإيصالات (4→1)</label>
+      <label><input id="flipFields" type="checkbox" /> عكس عمودي داخل الإيصال</label>
+    </div>
+    <div class="slot-tabs"><button type="button" class="slot-tab active" data-slot-tab="0">إيصال 1</button><button type="button" class="slot-tab" data-slot-tab="1">إيصال 2</button><button type="button" class="slot-tab" data-slot-tab="2">إيصال 3</button><button type="button" class="slot-tab" data-slot-tab="3">إيصال 4</button></div>
+    <div class="slot-cal-actions">
+      <button type="button" id="btnCopySlotToAll">نسخ هذا الإيصال للأربعة</button>
+    </div>
+    <div class="field-cal-grid"><div class="slot-cal-panel" data-slot-panel="0"><div class="field-cal-row" data-cal-slot="0" data-cal-key="receiptNo">
+    <div class="field-cal-title">رقم الإيصال</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="85" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="20" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="4" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="10.5" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="0" data-cal-key="date">
+    <div class="field-cal-title">التاريخ</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="18.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="79.5" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="34" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="6" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="0" data-cal-key="destination">
+    <div class="field-cal-title">الجهة</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="11" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="53" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="28" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="5.5" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="10.5" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="0" data-cal-key="receiver">
+    <div class="field-cal-title">المطلوب من السيد</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="36.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="130" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="92" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="4.5" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="10.5" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right" selected>يمين</option>
+          <option value="center">وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="0" data-cal-key="sender">
+    <div class="field-cal-title">المرسل</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="52" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="36" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="26" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right" selected>يمين</option>
+          <option value="center">وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="0" data-cal-key="parcelType">
+    <div class="field-cal-title">النوع</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="51.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="74" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="36" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right" selected>يمين</option>
+          <option value="center">وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="0" data-cal-key="parcelCount">
+    <div class="field-cal-title">العدد</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="51" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="133.5" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="9" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="0" data-cal-key="prepaid">
+    <div class="field-cal-title">دفع حلب</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="51" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="152.5" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="10" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="0" data-cal-key="amount">
+    <div class="field-cal-title">المبلغ</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="50.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="171" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="10" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="0" data-cal-key="hawala">
+    <div class="field-cal-title">حوالة</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="50.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="189.5" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="10" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div></div>
+<div class="slot-cal-panel" hidden data-slot-panel="1"><div class="field-cal-row" data-cal-slot="1" data-cal-key="receiptNo">
+    <div class="field-cal-title">رقم الإيصال</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="85" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="20" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="4" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="10.5" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="1" data-cal-key="date">
+    <div class="field-cal-title">التاريخ</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="18.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="80.5" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="34" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="6" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="1" data-cal-key="destination">
+    <div class="field-cal-title">الجهة</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="11" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="53" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="28" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="5.5" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="10.5" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="1" data-cal-key="receiver">
+    <div class="field-cal-title">المطلوب من السيد</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="36.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="130" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="92" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="4.5" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="10.5" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right" selected>يمين</option>
+          <option value="center">وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="1" data-cal-key="sender">
+    <div class="field-cal-title">المرسل</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="52" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="36" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="26" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right" selected>يمين</option>
+          <option value="center">وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="1" data-cal-key="parcelType">
+    <div class="field-cal-title">النوع</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="51.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="74" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="36" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right" selected>يمين</option>
+          <option value="center">وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="1" data-cal-key="parcelCount">
+    <div class="field-cal-title">العدد</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="51" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="134" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="9" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="1" data-cal-key="prepaid">
+    <div class="field-cal-title">دفع حلب</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="51" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="152.5" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="10" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="1" data-cal-key="amount">
+    <div class="field-cal-title">المبلغ</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="50.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="171" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="10" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="1" data-cal-key="hawala">
+    <div class="field-cal-title">حوالة</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="50.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="189.5" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="10" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div></div>
+<div class="slot-cal-panel" hidden data-slot-panel="2"><div class="field-cal-row" data-cal-slot="2" data-cal-key="receiptNo">
+    <div class="field-cal-title">رقم الإيصال</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="85" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="20" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="4" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="10.5" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="2" data-cal-key="date">
+    <div class="field-cal-title">التاريخ</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="18.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="80.5" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="34" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="6" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="2" data-cal-key="destination">
+    <div class="field-cal-title">الجهة</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="11" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="53" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="28" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="5.5" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="10.5" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="2" data-cal-key="receiver">
+    <div class="field-cal-title">المطلوب من السيد</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="36.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="130" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="92" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="4.5" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="10.5" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right" selected>يمين</option>
+          <option value="center">وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="2" data-cal-key="sender">
+    <div class="field-cal-title">المرسل</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="52" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="36" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="26" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right" selected>يمين</option>
+          <option value="center">وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="2" data-cal-key="parcelType">
+    <div class="field-cal-title">النوع</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="51.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="74" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="36" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right" selected>يمين</option>
+          <option value="center">وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="2" data-cal-key="parcelCount">
+    <div class="field-cal-title">العدد</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="51" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="134.5" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="9" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="2" data-cal-key="prepaid">
+    <div class="field-cal-title">دفع حلب</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="51" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="152.5" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="10" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="2" data-cal-key="amount">
+    <div class="field-cal-title">المبلغ</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="50.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="171" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="10" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="2" data-cal-key="hawala">
+    <div class="field-cal-title">حوالة</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="50.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="189.5" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="10" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div></div>
+<div class="slot-cal-panel" hidden data-slot-panel="3"><div class="field-cal-row" data-cal-slot="3" data-cal-key="receiptNo">
+    <div class="field-cal-title">رقم الإيصال</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="85" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="20" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="4" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="10.5" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="3" data-cal-key="date">
+    <div class="field-cal-title">التاريخ</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="18.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="80.5" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="34" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="6" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="3" data-cal-key="destination">
+    <div class="field-cal-title">الجهة</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="11" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="53" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="28" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="5.5" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="10.5" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="3" data-cal-key="receiver">
+    <div class="field-cal-title">المطلوب من السيد</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="36.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="130" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="92" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="4.5" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="10.5" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right" selected>يمين</option>
+          <option value="center">وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="3" data-cal-key="sender">
+    <div class="field-cal-title">المرسل</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="52" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="36" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="26" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right" selected>يمين</option>
+          <option value="center">وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="3" data-cal-key="parcelType">
+    <div class="field-cal-title">النوع</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="51.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="74" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="36" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right" selected>يمين</option>
+          <option value="center">وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="3" data-cal-key="parcelCount">
+    <div class="field-cal-title">العدد</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="51" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="135.5" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="9" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="3" data-cal-key="prepaid">
+    <div class="field-cal-title">دفع حلب</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="51" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="152.5" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="10" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="3" data-cal-key="amount">
+    <div class="field-cal-title">المبلغ</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="50.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="171" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="10" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div>
+<div class="field-cal-row" data-cal-slot="3" data-cal-key="hawala">
+    <div class="field-cal-title">حوالة</div>
+    <div class="field-cal-inputs">
+      <label>أعلى<input type="number" step="0.5" data-prop="top" value="50.5" /></label>
+      <label>يسار<input type="number" step="0.5" data-prop="left" value="189.5" /></label>
+      <label>عرض<input type="number" step="0.5" data-prop="width" value="10" /></label>
+      <label>ارتفاع<input type="number" step="0.5" data-prop="height" value="3.8" /></label>
+      <label>خط pt<input type="number" step="0.5" min="6" max="24" data-prop="fontSize" value="9.75" /></label>
+      <label>محاذاة
+        <select data-prop="align">
+          <option value="right">يمين</option>
+          <option value="center" selected>وسط</option>
+          <option value="left">يسار</option>
+        </select>
+      </label>
+    </div>
+  </div></div></div>
+    <pre id="exportOut" class="export-out"></pre>
+  </aside>
+  <div class="preview-column">
+    <div class="toolbar">
+      <button type="button" onclick="window.print()">طباعة على Canon</button>
+    </div>
+    <div class="preview-scroll"><section class="sheet sheet-overlay" data-page="1"><div class="receipt-slot" data-slot-index="0" data-base-top="0" style="top:0mm;height:74.25mm">
+  <div class="field align-center debug-field" data-slot-index="0" data-field="receiptNo" data-base-top="5" data-base-left="85" data-base-width="20" data-base-height="4" data-base-font-size="10.5" data-base-align="center" style="top:5mm;left:85mm;width:20mm;height:4mm;font-size:10.5pt">9365</div>
+  <div class="field align-center debug-field" data-slot-index="0" data-field="date" data-base-top="18.5" data-base-left="79.5" data-base-width="34" data-base-height="6" data-base-font-size="9" data-base-align="center" style="top:18.5mm;left:79.5mm;width:34mm;height:6mm;font-size:9pt">06-06-26</div>
+  <div class="field align-center debug-field" data-slot-index="0" data-field="destination" data-base-top="11" data-base-left="53" data-base-width="28" data-base-height="5.5" data-base-font-size="10.5" data-base-align="center" style="top:11mm;left:53mm;width:28mm;height:5.5mm;font-size:10.5pt">الرقة</div>
+  <div class="field align-right debug-field" data-slot-index="0" data-field="receiver" data-base-top="36.5" data-base-left="130" data-base-width="92" data-base-height="4.5" data-base-font-size="10.5" data-base-align="right" style="top:36.5mm;left:130mm;width:92mm;height:4.5mm;font-size:10.5pt">محمد أحمد</div>
+  <div class="field align-center debug-field" data-slot-index="0" data-field="hawala" data-base-top="50.5" data-base-left="189.5" data-base-width="10" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:50.5mm;left:189.5mm;width:10mm;height:3.8mm;font-size:9.75pt">100</div>
+  <div class="field align-center debug-field" data-slot-index="0" data-field="amount" data-base-top="50.5" data-base-left="171" data-base-width="10" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:50.5mm;left:171mm;width:10mm;height:3.8mm;font-size:9.75pt">45</div>
+  <div class="field align-center debug-field" data-slot-index="0" data-field="prepaid" data-base-top="51" data-base-left="152.5" data-base-width="10" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:51mm;left:152.5mm;width:10mm;height:3.8mm;font-size:9.75pt">5</div>
+  <div class="field align-center debug-field" data-slot-index="0" data-field="parcelCount" data-base-top="51" data-base-left="133.5" data-base-width="9" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:51mm;left:133.5mm;width:9mm;height:3.8mm;font-size:9.75pt">1</div>
+  <div class="field align-right debug-field" data-slot-index="0" data-field="parcelType" data-base-top="51.5" data-base-left="74" data-base-width="36" data-base-height="3.8" data-base-font-size="9.75" data-base-align="right" style="top:51.5mm;left:74mm;width:36mm;height:3.8mm;font-size:9.75pt">صندوق خشب</div>
+  <div class="field align-right debug-field" data-slot-index="0" data-field="sender" data-base-top="52" data-base-left="36" data-base-width="26" data-base-height="3.8" data-base-font-size="9.75" data-base-align="right" style="top:52mm;left:36mm;width:26mm;height:3.8mm;font-size:9.75pt">علي حسن</div>
+</div>
+<div class="receipt-slot" data-slot-index="1" data-base-top="74.25" style="top:74.25mm;height:74.25mm">
+  <div class="field align-center debug-field" data-slot-index="1" data-field="receiptNo" data-base-top="5" data-base-left="85" data-base-width="20" data-base-height="4" data-base-font-size="10.5" data-base-align="center" style="top:5mm;left:85mm;width:20mm;height:4mm;font-size:10.5pt">9302</div>
+  <div class="field align-center debug-field" data-slot-index="1" data-field="date" data-base-top="18.5" data-base-left="80.5" data-base-width="34" data-base-height="6" data-base-font-size="9" data-base-align="center" style="top:18.5mm;left:80.5mm;width:34mm;height:6mm;font-size:9pt">06-06-26</div>
+  <div class="field align-center debug-field" data-slot-index="1" data-field="destination" data-base-top="11" data-base-left="53" data-base-width="28" data-base-height="5.5" data-base-font-size="10.5" data-base-align="center" style="top:11mm;left:53mm;width:28mm;height:5.5mm;font-size:10.5pt">حلب</div>
+  <div class="field align-right debug-field" data-slot-index="1" data-field="receiver" data-base-top="36.5" data-base-left="130" data-base-width="92" data-base-height="4.5" data-base-font-size="10.5" data-base-align="right" style="top:36.5mm;left:130mm;width:92mm;height:4.5mm;font-size:10.5pt">فاطمة يوسف</div>
+  <div class="field align-center debug-field" data-slot-index="1" data-field="hawala" data-base-top="50.5" data-base-left="189.5" data-base-width="10" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:50.5mm;left:189.5mm;width:10mm;height:3.8mm;font-size:9.75pt">250</div>
+  <div class="field align-center debug-field" data-slot-index="1" data-field="amount" data-base-top="50.5" data-base-left="171" data-base-width="10" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:50.5mm;left:171mm;width:10mm;height:3.8mm;font-size:9.75pt">30</div>
+  <div class="field align-center debug-field" data-slot-index="1" data-field="prepaid" data-base-top="51" data-base-left="152.5" data-base-width="10" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:51mm;left:152.5mm;width:10mm;height:3.8mm;font-size:9.75pt"></div>
+  <div class="field align-center debug-field" data-slot-index="1" data-field="parcelCount" data-base-top="51" data-base-left="134" data-base-width="9" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:51mm;left:134mm;width:9mm;height:3.8mm;font-size:9.75pt">2</div>
+  <div class="field align-right debug-field" data-slot-index="1" data-field="parcelType" data-base-top="51.5" data-base-left="74" data-base-width="36" data-base-height="3.8" data-base-font-size="9.75" data-base-align="right" style="top:51.5mm;left:74mm;width:36mm;height:3.8mm;font-size:9.75pt">طرد خردة</div>
+  <div class="field align-right debug-field" data-slot-index="1" data-field="sender" data-base-top="52" data-base-left="36" data-base-width="26" data-base-height="3.8" data-base-font-size="9.75" data-base-align="right" style="top:52mm;left:36mm;width:26mm;height:3.8mm;font-size:9.75pt">خالد عمر</div>
+</div>
+<div class="receipt-slot" data-slot-index="2" data-base-top="148.5" style="top:148.5mm;height:74.25mm">
+  <div class="field align-center debug-field" data-slot-index="2" data-field="receiptNo" data-base-top="5" data-base-left="85" data-base-width="20" data-base-height="4" data-base-font-size="10.5" data-base-align="center" style="top:5mm;left:85mm;width:20mm;height:4mm;font-size:10.5pt">9400</div>
+  <div class="field align-center debug-field" data-slot-index="2" data-field="date" data-base-top="18.5" data-base-left="80.5" data-base-width="34" data-base-height="6" data-base-font-size="9" data-base-align="center" style="top:18.5mm;left:80.5mm;width:34mm;height:6mm;font-size:9pt">06-06-26</div>
+  <div class="field align-center debug-field" data-slot-index="2" data-field="destination" data-base-top="11" data-base-left="53" data-base-width="28" data-base-height="5.5" data-base-font-size="10.5" data-base-align="center" style="top:11mm;left:53mm;width:28mm;height:5.5mm;font-size:10.5pt">السخة</div>
+  <div class="field align-right debug-field" data-slot-index="2" data-field="receiver" data-base-top="36.5" data-base-left="130" data-base-width="92" data-base-height="4.5" data-base-font-size="10.5" data-base-align="right" style="top:36.5mm;left:130mm;width:92mm;height:4.5mm;font-size:10.5pt">سارة محمود</div>
+  <div class="field align-center debug-field" data-slot-index="2" data-field="hawala" data-base-top="50.5" data-base-left="189.5" data-base-width="10" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:50.5mm;left:189.5mm;width:10mm;height:3.8mm;font-size:9.75pt"></div>
+  <div class="field align-center debug-field" data-slot-index="2" data-field="amount" data-base-top="50.5" data-base-left="171" data-base-width="10" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:50.5mm;left:171mm;width:10mm;height:3.8mm;font-size:9.75pt"></div>
+  <div class="field align-center debug-field" data-slot-index="2" data-field="prepaid" data-base-top="51" data-base-left="152.5" data-base-width="10" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:51mm;left:152.5mm;width:10mm;height:3.8mm;font-size:9.75pt">20</div>
+  <div class="field align-center debug-field" data-slot-index="2" data-field="parcelCount" data-base-top="51" data-base-left="134.5" data-base-width="9" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:51mm;left:134.5mm;width:9mm;height:3.8mm;font-size:9.75pt">10</div>
+  <div class="field align-right debug-field" data-slot-index="2" data-field="parcelType" data-base-top="51.5" data-base-left="74" data-base-width="36" data-base-height="3.8" data-base-font-size="9.75" data-base-align="right" style="top:51.5mm;left:74mm;width:36mm;height:3.8mm;font-size:9.75pt">كيس</div>
+  <div class="field align-right debug-field" data-slot-index="2" data-field="sender" data-base-top="52" data-base-left="36" data-base-width="26" data-base-height="3.8" data-base-font-size="9.75" data-base-align="right" style="top:52mm;left:36mm;width:26mm;height:3.8mm;font-size:9.75pt">أحمد ناصر</div>
+</div>
+<div class="receipt-slot" data-slot-index="3" data-base-top="222.75" style="top:222.75mm;height:74.25mm">
+  <div class="field align-center debug-field" data-slot-index="3" data-field="receiptNo" data-base-top="5" data-base-left="85" data-base-width="20" data-base-height="4" data-base-font-size="10.5" data-base-align="center" style="top:5mm;left:85mm;width:20mm;height:4mm;font-size:10.5pt">9411</div>
+  <div class="field align-center debug-field" data-slot-index="3" data-field="date" data-base-top="18.5" data-base-left="80.5" data-base-width="34" data-base-height="6" data-base-font-size="9" data-base-align="center" style="top:18.5mm;left:80.5mm;width:34mm;height:6mm;font-size:9pt">06-06-26</div>
+  <div class="field align-center debug-field" data-slot-index="3" data-field="destination" data-base-top="11" data-base-left="53" data-base-width="28" data-base-height="5.5" data-base-font-size="10.5" data-base-align="center" style="top:11mm;left:53mm;width:28mm;height:5.5mm;font-size:10.5pt">دمشق</div>
+  <div class="field align-right debug-field" data-slot-index="3" data-field="receiver" data-base-top="36.5" data-base-left="130" data-base-width="92" data-base-height="4.5" data-base-font-size="10.5" data-base-align="right" style="top:36.5mm;left:130mm;width:92mm;height:4.5mm;font-size:10.5pt">حسين كريم</div>
+  <div class="field align-center debug-field" data-slot-index="3" data-field="hawala" data-base-top="50.5" data-base-left="189.5" data-base-width="10" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:50.5mm;left:189.5mm;width:10mm;height:3.8mm;font-size:9.75pt">75</div>
+  <div class="field align-center debug-field" data-slot-index="3" data-field="amount" data-base-top="50.5" data-base-left="171" data-base-width="10" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:50.5mm;left:171mm;width:10mm;height:3.8mm;font-size:9.75pt">18</div>
+  <div class="field align-center debug-field" data-slot-index="3" data-field="prepaid" data-base-top="51" data-base-left="152.5" data-base-width="10" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:51mm;left:152.5mm;width:10mm;height:3.8mm;font-size:9.75pt">8</div>
+  <div class="field align-center debug-field" data-slot-index="3" data-field="parcelCount" data-base-top="51" data-base-left="135.5" data-base-width="9" data-base-height="3.8" data-base-font-size="9.75" data-base-align="center" style="top:51mm;left:135.5mm;width:9mm;height:3.8mm;font-size:9.75pt">3</div>
+  <div class="field align-right debug-field" data-slot-index="3" data-field="parcelType" data-base-top="51.5" data-base-left="74" data-base-width="36" data-base-height="3.8" data-base-font-size="9.75" data-base-align="right" style="top:51.5mm;left:74mm;width:36mm;height:3.8mm;font-size:9.75pt">صندوق</div>
+  <div class="field align-right debug-field" data-slot-index="3" data-field="sender" data-base-top="52" data-base-left="36" data-base-width="26" data-base-height="3.8" data-base-font-size="9.75" data-base-align="right" style="top:52mm;left:36mm;width:26mm;height:3.8mm;font-size:9.75pt">مكتب الشحن</div>
+</div></section></div>
+  </div>
+</div>
+  <script>
+    const DEFAULT_SLOT_LAYOUTS = {"0":{"receiptNo":{"top":5,"left":85,"width":20,"height":4,"fontSize":10.5,"align":"center"},"date":{"top":18.5,"left":79.5,"width":34,"height":6,"fontSize":9,"align":"center"},"destination":{"top":11,"left":53,"width":28,"height":5.5,"fontSize":10.5,"align":"center"},"receiver":{"top":36.5,"left":130,"width":92,"height":4.5,"fontSize":10.5,"align":"right"},"sender":{"top":52,"left":36,"width":26,"height":3.8,"fontSize":9.75,"align":"right"},"parcelType":{"top":51.5,"left":74,"width":36,"height":3.8,"fontSize":9.75,"align":"right"},"parcelCount":{"top":51,"left":133.5,"width":9,"height":3.8,"fontSize":9.75,"align":"center"},"prepaid":{"top":51,"left":152.5,"width":10,"height":3.8,"fontSize":9.75,"align":"center"},"amount":{"top":50.5,"left":171,"width":10,"height":3.8,"fontSize":9.75,"align":"center"},"hawala":{"top":50.5,"left":189.5,"width":10,"height":3.8,"fontSize":9.75,"align":"center"}},"1":{"receiptNo":{"top":5,"left":85,"width":20,"height":4,"fontSize":10.5,"align":"center"},"date":{"top":18.5,"left":80.5,"width":34,"height":6,"fontSize":9,"align":"center"},"destination":{"top":11,"left":53,"width":28,"height":5.5,"fontSize":10.5,"align":"center"},"receiver":{"top":36.5,"left":130,"width":92,"height":4.5,"fontSize":10.5,"align":"right"},"sender":{"top":52,"left":36,"width":26,"height":3.8,"fontSize":9.75,"align":"right"},"parcelType":{"top":51.5,"left":74,"width":36,"height":3.8,"fontSize":9.75,"align":"right"},"parcelCount":{"top":51,"left":134,"width":9,"height":3.8,"fontSize":9.75,"align":"center"},"prepaid":{"top":51,"left":152.5,"width":10,"height":3.8,"fontSize":9.75,"align":"center"},"amount":{"top":50.5,"left":171,"width":10,"height":3.8,"fontSize":9.75,"align":"center"},"hawala":{"top":50.5,"left":189.5,"width":10,"height":3.8,"fontSize":9.75,"align":"center"}},"2":{"receiptNo":{"top":5,"left":85,"width":20,"height":4,"fontSize":10.5,"align":"center"},"date":{"top":18.5,"left":80.5,"width":34,"height":6,"fontSize":9,"align":"center"},"destination":{"top":11,"left":53,"width":28,"height":5.5,"fontSize":10.5,"align":"center"},"receiver":{"top":36.5,"left":130,"width":92,"height":4.5,"fontSize":10.5,"align":"right"},"sender":{"top":52,"left":36,"width":26,"height":3.8,"fontSize":9.75,"align":"right"},"parcelType":{"top":51.5,"left":74,"width":36,"height":3.8,"fontSize":9.75,"align":"right"},"parcelCount":{"top":51,"left":134.5,"width":9,"height":3.8,"fontSize":9.75,"align":"center"},"prepaid":{"top":51,"left":152.5,"width":10,"height":3.8,"fontSize":9.75,"align":"center"},"amount":{"top":50.5,"left":171,"width":10,"height":3.8,"fontSize":9.75,"align":"center"},"hawala":{"top":50.5,"left":189.5,"width":10,"height":3.8,"fontSize":9.75,"align":"center"}},"3":{"receiptNo":{"top":5,"left":85,"width":20,"height":4,"fontSize":10.5,"align":"center"},"date":{"top":18.5,"left":80.5,"width":34,"height":6,"fontSize":9,"align":"center"},"destination":{"top":11,"left":53,"width":28,"height":5.5,"fontSize":10.5,"align":"center"},"receiver":{"top":36.5,"left":130,"width":92,"height":4.5,"fontSize":10.5,"align":"right"},"sender":{"top":52,"left":36,"width":26,"height":3.8,"fontSize":9.75,"align":"right"},"parcelType":{"top":51.5,"left":74,"width":36,"height":3.8,"fontSize":9.75,"align":"right"},"parcelCount":{"top":51,"left":135.5,"width":9,"height":3.8,"fontSize":9.75,"align":"center"},"prepaid":{"top":51,"left":152.5,"width":10,"height":3.8,"fontSize":9.75,"align":"center"},"amount":{"top":50.5,"left":171,"width":10,"height":3.8,"fontSize":9.75,"align":"center"},"hawala":{"top":50.5,"left":189.5,"width":10,"height":3.8,"fontSize":9.75,"align":"center"}}};
+    const SLOT_H = 74.25;
+    const RECEIPTS_PER_PAGE = 4;
+    let slotLayouts = JSON.parse(JSON.stringify(DEFAULT_SLOT_LAYOUTS));
+    let activeSlot = 0;
+    let globalTop = 0;
+    let globalLeft = 0;
+
+    function num(id, fallback = 0) {
+      const el = document.getElementById(id);
+      return Number(el && el.value !== '' ? el.value : fallback);
+    }
+
+    function getTransformFlags() {
+      return {
+        reverseSlotOrder: Boolean(document.getElementById('flipSlots') && document.getElementById('flipSlots').checked),
+        mirrorFieldsInSlot: Boolean(document.getElementById('flipFields') && document.getElementById('flipFields').checked),
+      };
+    }
+
+    function readFieldFromPanel(slotIndex, key) {
+      const row = document.querySelector('.field-cal-row[data-cal-slot="' + slotIndex + '"][data-cal-key="' + key + '"]');
+      const fallback = slotLayouts[slotIndex][key];
+      if (!row) return fallback;
+      const read = (prop) => {
+        const input = row.querySelector('[data-prop="' + prop + '"]');
+        if (!input) return fallback[prop];
+        if (prop === 'align') return input.value;
+        return Number(input.value);
+      };
+      return {
+        top: read('top'),
+        left: read('left'),
+        width: read('width'),
+        height: read('height'),
+        fontSize: read('fontSize'),
+        align: read('align'),
+      };
+    }
+
+    function readAllSlotLayouts() {
+      for (let s = 0; s < RECEIPTS_PER_PAGE; s += 1) {
+        MAHMOUD_FIELD_ORDER.forEach((key) => {
+          slotLayouts[s][key] = readFieldFromPanel(s, key);
+        });
+      }
+    }
+
+    function writeFieldToPanel(slotIndex, key, def) {
+      const row = document.querySelector('.field-cal-row[data-cal-slot="' + slotIndex + '"][data-cal-key="' + key + '"]');
+      if (!row || !def) return;
+      row.querySelector('[data-prop="top"]').value = def.top;
+      row.querySelector('[data-prop="left"]').value = def.left;
+      row.querySelector('[data-prop="width"]').value = def.width;
+      row.querySelector('[data-prop="height"]').value = def.height;
+      row.querySelector('[data-prop="fontSize"]').value = def.fontSize;
+      row.querySelector('[data-prop="align"]').value = def.align;
+    }
+
+    function effectiveTop(def) {
+      const t = getTransformFlags();
+      if (!t.mirrorFieldsInSlot) return def.top;
+      return SLOT_H - def.top - def.height;
+    }
+
+    function effectiveSlotTop(slotIndex) {
+      const t = getTransformFlags();
+      const visualIndex = t.reverseSlotOrder ? RECEIPTS_PER_PAGE - 1 - slotIndex : slotIndex;
+      return visualIndex * SLOT_H + globalTop;
+    }
+
+    function applyFieldStyle(el, def) {
+      el.style.top = effectiveTop(def) + 'mm';
+      el.style.left = (def.left + globalLeft).toFixed(2) + 'mm';
+      el.style.width = def.width + 'mm';
+      el.style.height = def.height + 'mm';
+      el.style.fontSize = def.fontSize + 'pt';
+      el.classList.remove('align-left', 'align-center', 'align-right');
+      el.classList.add('align-' + def.align);
+    }
+
+    function setActiveSlot(slotIndex) {
+      activeSlot = slotIndex;
+      document.querySelectorAll('.slot-tab').forEach((tab) => {
+        tab.classList.toggle('active', Number(tab.getAttribute('data-slot-tab')) === slotIndex);
+      });
+      document.querySelectorAll('.slot-cal-panel').forEach((panel) => {
+        panel.hidden = Number(panel.getAttribute('data-slot-panel')) !== slotIndex;
+      });
+      document.querySelectorAll('.receipt-slot').forEach((slot) => {
+        slot.classList.toggle('slot-active', Number(slot.getAttribute('data-slot-index')) === slotIndex);
+      });
+    }
+
+    function applyAll() {
+      readAllSlotLayouts();
+      globalTop = num('offTop', 0);
+      globalLeft = num('offLeft', 0);
+
+      document.querySelectorAll('.receipt-slot').forEach((slot) => {
+        const slotIndex = Number(slot.getAttribute('data-slot-index') || 0);
+        slot.style.top = effectiveSlotTop(slotIndex).toFixed(2) + 'mm';
+        slot.classList.toggle('slot-active', slotIndex === activeSlot);
+      });
+
+      document.querySelectorAll('.field[data-field]').forEach((el) => {
+        const key = el.getAttribute('data-field');
+        const slotIndex = Number(el.getAttribute('data-slot-index') || 0);
+        const def = slotLayouts[slotIndex] && slotLayouts[slotIndex][key];
+        if (!def) return;
+        applyFieldStyle(el, def);
+      });
+
+      document.getElementById('exportOut').textContent = exportLayoutCode();
+    }
+
+    function exportLayoutCode() {
+      const blocks = [];
+      for (let s = 0; s < RECEIPTS_PER_PAGE; s += 1) {
+        const lines = MAHMOUD_FIELD_ORDER.map((key) => {
+          const f = slotLayouts[s][key];
+          return '    ' + key + ': { top: ' + f.top + ', left: ' + f.left + ', width: ' + f.width + ', height: ' + f.height + ', fontSize: ' + f.fontSize + ", align: '" + f.align + "' },";
+        });
+        blocks.push('  ' + s + ': {\n' + lines.join('\n') + '\n  },');
+      }
+      return 'export const MAHMOUD_RECEIPT_SLOT_LAYOUTS = {\n' + blocks.join('\n') + '\n};\n\n// global offset: top=' + globalTop + ', left=' + globalLeft;
+    }
+
+    function resetLayout() {
+      slotLayouts = JSON.parse(JSON.stringify(DEFAULT_SLOT_LAYOUTS));
+      document.getElementById('offTop').value = '0';
+      document.getElementById('offLeft').value = '0';
+      for (let s = 0; s < RECEIPTS_PER_PAGE; s += 1) {
+        MAHMOUD_FIELD_ORDER.forEach((key) => {
+          writeFieldToPanel(s, key, slotLayouts[s][key]);
+        });
+      }
+      applyAll();
+    }
+
+    function copyActiveSlotToAll() {
+      readAllSlotLayouts();
+      const source = JSON.parse(JSON.stringify(slotLayouts[activeSlot]));
+      for (let s = 0; s < RECEIPTS_PER_PAGE; s += 1) {
+        slotLayouts[s] = JSON.parse(JSON.stringify(source));
+        MAHMOUD_FIELD_ORDER.forEach((key) => {
+          writeFieldToPanel(s, key, slotLayouts[s][key]);
+        });
+      }
+      applyAll();
+    }
+
+    function copyExport() {
+      const text = document.getElementById('exportOut').textContent || '';
+      navigator.clipboard.writeText(text).then(() => {
+        alert('تم نسخ إعدادات الإيصالات الأربعة');
+      }).catch(() => {
+        prompt('انسخ هذا النص:', text);
+      });
+    }
+
+    const MAHMOUD_FIELD_ORDER = ["receiptNo","date","destination","receiver","sender","parcelType","parcelCount","prepaid","amount","hawala"];
+
+    document.querySelectorAll('.field-cal-row input, .field-cal-row select').forEach((el) => {
+      el.addEventListener('input', applyAll);
+      el.addEventListener('change', applyAll);
+    });
+    ['offTop', 'offLeft'].forEach((id) => {
+      document.getElementById(id).addEventListener('input', applyAll);
+      document.getElementById(id).addEventListener('change', applyAll);
+    });
+    document.querySelectorAll('.slot-tab').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        setActiveSlot(Number(tab.getAttribute('data-slot-tab') || 0));
+      });
+    });
+    document.getElementById('btnReset').addEventListener('click', resetLayout);
+    document.getElementById('btnCopy').addEventListener('click', copyExport);
+    document.getElementById('btnCopySlotToAll').addEventListener('click', copyActiveSlotToAll);
+    ['flipSlots', 'flipFields'].forEach((id) => {
+      document.getElementById(id).addEventListener('change', applyAll);
+    });
+    setActiveSlot(0);
+    applyAll();
+  </script>
+</body>
+</html>

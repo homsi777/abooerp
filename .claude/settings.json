@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "PowerShell(Test-NetConnection -ComputerName www.abooerp.org -Port 2727 -InformationLevel Detailed)",
+      "Bash(node -e ' *)",
+      "Bash(node server/scripts/_tmp_perf_probe/analyzeLog.cjs \"C:\\\\Users\\\\Homsi\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Homsi-Desktop-almiya-hsahin\\\\6ed16a67-c9f9-4db1-a028-7bb0d8358741\\\\tasks\\\\b9dco7noo.output\")",
+      "Bash(git stash *)",
+      "PowerShell(Stop-Process -Id 12544 -Force)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 5188 -State Listen -ErrorAction SilentlyContinue)",
+      "Bash(node server/scripts/_tmp_verify/testBatchPartialFailure.cjs)",
+      "Bash(node server/scripts/_tmp_verify/t1_batch_measure.cjs)",
+      "Bash(node server/scripts/_tmp_verify/browserVerify.mjs)",
+      "Bash(node server/scripts/_tmp_verify/debugEdit.mjs)",
+      "Bash(node server/scripts/_tmp_verify/debug400.mjs)"
+    ]
+  }
+}

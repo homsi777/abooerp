@@ -29,8 +29,16 @@ try {
   assertExists(path.join(releaseResourcesDir, 'app.asar'), 'app.asar');
   assertExists(path.join(releaseResourcesDir, 'server.cjs'), 'bundled server');
   assertExists(path.join(releaseResourcesDir, 'server-wrapper.cjs'), 'server wrapper');
-  assertExists(path.join(releaseResourcesDir, 'app-config.env'), 'app-config.env');
   assertExists(releaseMigrationsDir, 'release migrations directory');
+
+  const forbiddenEnv = path.join(releaseResourcesDir, 'app-config.env');
+  if (fs.existsSync(forbiddenEnv)) {
+    throw new Error(`Secret-bearing app-config.env must not be packaged: ${forbiddenEnv}`);
+  }
+  const bundledServer = fs.readFileSync(path.join(releaseResourcesDir, 'server.cjs'), 'utf8');
+  if (/['"]12345678['"]|PGPASSWORD\s*=|CENTRAL_SYNC_DEVICE_TOKEN\s*=/.test(bundledServer)) {
+    throw new Error('Packaged server contains a forbidden credential literal.');
+  }
 
   const sourceMigrations = listSqlFiles(srcMigrationsDir);
   const releaseMigrations = new Set(listSqlFiles(releaseMigrationsDir));

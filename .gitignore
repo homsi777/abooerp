@@ -1,6 +1,16 @@
+# Build / packaging outputs — never publish to GitHub or cloud deploys from git
 server-dist/
 server-bundle/
+server/dist/
+server/logs/
 resources/
+dist/
+dist-electron/
+dist-server/
+release/
+dist-release/
+dist-release-next/
+tmp/
 *.zip
 *.rar
 *.7z
@@ -13,4 +23,5 @@ resources/
 *.tsbuildinfo
 .env
 .env.*
+!server/.env.example
 node_modules

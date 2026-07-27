@@ -54,6 +54,8 @@ export interface Vehicle {
   capacity: number;
   isActive: boolean;
   notes: string;
+  driverId?: number;
+  driverName?: string;
 }
 
 export interface Shipment {
@@ -83,6 +85,7 @@ export interface Shipment {
   freightCharge: number;
   transferFee: number;
   additionalCharges: number;
+  hawalaAmount?: number;
   transferServiceFee?: number;
   prepaidAmount?: number;
   discount: number;
@@ -178,6 +181,7 @@ export interface ReceiptVoucher {
   createdBy: string;
   cashboxId?: string;
   cashboxName?: string;
+  relatedEntityType?: string | null;
 }
 
 export interface PaymentVoucher {
@@ -199,6 +203,7 @@ export interface PaymentVoucher {
   createdBy: string;
   cashboxId?: string;
   cashboxName?: string;
+  relatedEntityType?: string | null;
 }
 
 export interface JournalEntry {
@@ -234,8 +239,8 @@ export interface Tariff {
   fromCityName: string;
   toCityId: number;
   toCityName: string;
-  goodsTypeId: number;
-  goodsTypeName: string;
+  goodsTypeId?: number;
+  goodsTypeName?: string;
   pricePerKg: number;
   minimumCharge: number;
   validFrom: string;

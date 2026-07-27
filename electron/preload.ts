@@ -15,6 +15,7 @@ const allowedInvokeChannels = new Set([
   'fs:read-config',
   'fs:write-config',
   'fs:enable-local-packaged-server',
+  'app:relaunch',
   'printer:list',
   'printer:get-default',
   'printer:print',
@@ -22,6 +23,10 @@ const allowedInvokeChannels = new Set([
   'backup:get-config',
   'backup:open-directory',
   'backup:select-restore-file',
+  'backup:select-save-path',
+  'backup:copy-file',
+  'backup:download-to-path',
+  'backup:write-file',
   'diagnostics:health-check',
   'diagnostics:get-logs',
   'diagnostics:get-version-meta',
@@ -29,6 +34,10 @@ const allowedInvokeChannels = new Set([
   'system-settings:list',
   'system-settings:get',
   'system-settings:set',
+  'desktop-setup:get-status',
+  'desktop-setup:configure-postgres',
+  'desktop-setup:list-central-branches',
+  'desktop-setup:activate-sync',
 ]);
 
 function invokeAllowed<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -50,6 +59,7 @@ const runtimeBridge = {
   getLanAddresses: () => invokeAllowed<string[]>('runtime:get-lan-addresses'),
   getServerMode: () => invokeAllowed<string>('runtime:get-server-mode'),
   testLanServer: (ip: string, port: number) => invokeAllowed<{ ok: boolean; data?: unknown; error?: string }>('runtime:test-lan-server', ip, port),
+  relaunchApp: () => invokeAllowed<{ success: boolean }>('app:relaunch'),
 };
 
 const diagnosticsRuntime = {
@@ -81,6 +91,11 @@ const backupRuntime = {
   getConfig: () => invokeAllowed('backup:get-config'),
   openDirectory: () => invokeAllowed('backup:open-directory'),
   selectRestoreFile: () => invokeAllowed('backup:select-restore-file'),
+  selectSavePath: (payload?: { defaultFileName?: string }) => invokeAllowed('backup:select-save-path', payload),
+  copyFile: (payload: { sourcePath: string; destPath: string }) => invokeAllowed('backup:copy-file', payload),
+  downloadToPath: (payload: { downloadUrl: string; destPath: string; authToken?: string | null }) =>
+    invokeAllowed('backup:download-to-path', payload),
+  writeFile: (payload: { destPath: string; dataBase64: string }) => invokeAllowed('backup:write-file', payload),
 };
 
 const filesystemRuntime = {
@@ -94,12 +109,20 @@ const filesystemRuntime = {
   enableLocalPackagedServer: () => invokeAllowed<{ success: boolean }>('fs:enable-local-packaged-server'),
 };
 
+const desktopSetupRuntime = {
+  getStatus: () => invokeAllowed<{ configured: boolean; database: string }>('desktop-setup:get-status'),
+  configurePostgres: (password: string) => invokeAllowed<{ success: boolean; database?: string; error?: string }>('desktop-setup:configure-postgres', { password }),
+  listCentralBranches: () => invokeAllowed<{ success: boolean; error?: string; branches: Array<{ id: string; code: string; name: string }> }>('desktop-setup:list-central-branches'),
+  activateSync: (payload: { username: string; password: string; branchId: string }) => invokeAllowed<{ success: boolean; error?: string; deviceId?: string }>('desktop-setup:activate-sync', payload),
+};
+
 contextBridge.exposeInMainWorld('runtime', runtimeBridge);
 contextBridge.exposeInMainWorld('diagnosticsRuntime', diagnosticsRuntime);
 contextBridge.exposeInMainWorld('systemSettingsRuntime', systemSettingsRuntime);
 contextBridge.exposeInMainWorld('printerRuntime', printerRuntime);
 contextBridge.exposeInMainWorld('pdfRuntime', pdfRuntime);
 contextBridge.exposeInMainWorld('backupRuntime', backupRuntime);
+contextBridge.exposeInMainWorld('desktopSetupRuntime', desktopSetupRuntime);
 
 // Backward compatibility aliases
 contextBridge.exposeInMainWorld('fs', filesystemRuntime);

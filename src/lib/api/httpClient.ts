@@ -1,6 +1,10 @@
 import { rememberOwnCorrelationFromFetchResponse } from '../realtime/ownWriteCorrelation';
+import { isElectronRuntime } from '../runtime/runtimeMode';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4010/api/v1';
+const EXPLICIT_API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim();
+const ELECTRON_API_BASE_URL = 'http://localhost:4010/api/v1';
+const WEB_API_BASE_URL = '/api/v1';
+const API_BASE_URL = EXPLICIT_API_BASE_URL || (isElectronRuntime() ? ELECTRON_API_BASE_URL : WEB_API_BASE_URL);
 
 // ── LAN connection storage (localStorage persists across sessions) ────────────
 export const LAN_STORAGE = {
@@ -8,6 +12,9 @@ export const LAN_STORAGE = {
   SERVER_IP: 'lan.serverIp',
   CONNECTION_MODE: 'lan.connectionMode',
 } as const;
+
+/** منفذ API على VPS عندما يمر عبر Nginx (مثل :2730) — ليس 4010 الداخلي */
+export const CLOUD_API_PORT = 2730;
 
 export function saveLanConnection(serverIp: string, port = 4010): void {
   const apiBaseUrl = `http://${serverIp}:${port}/api/v1`;
@@ -25,6 +32,7 @@ export function clearLanConnection(): void {
   localStorage.removeItem(LAN_STORAGE.API_BASE_URL);
   localStorage.removeItem(LAN_STORAGE.SERVER_IP);
   localStorage.removeItem(LAN_STORAGE.CONNECTION_MODE);
+  localStorage.removeItem('lan.serverPort');
 }
 
 export function getLanState(): { mode: string; serverIp: string; apiBaseUrl: string } {
@@ -35,7 +43,7 @@ export function getLanState(): { mode: string; serverIp: string; apiBaseUrl: str
   };
 }
 
-type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 type UnauthorizedHandler = (message?: string) => 'retry' | void | Promise<'retry' | void>;
 type ForbiddenHandler = (message?: string) => void | Promise<void>;
 type ConflictHandler = (message?: string) => void | Promise<void>;
@@ -57,6 +65,7 @@ function createIdempotencyKey(): string {
 }
 
 async function readRuntimeHeaders(): Promise<Record<string, string>> {
+  if (!isElectronRuntime()) return {};
   const runtime = (window as any)?.runtime;
   if (!runtime?.getConfig || !runtime?.getMachineId) return {};
   try {
@@ -73,7 +82,9 @@ async function readRuntimeHeaders(): Promise<Record<string, string>> {
 }
 
 async function resolveApiBaseUrl(): Promise<string> {
+  if (EXPLICIT_API_BASE_URL) return EXPLICIT_API_BASE_URL;
   const runtime = (window as any)?.runtime;
+  if (!isElectronRuntime()) return WEB_API_BASE_URL;
   // 1. Electron packaged: إن كان الجهاز مضبوطاً كعقدة LAN، عنوان السيرفر في runtime.json هو المصدر الموثوق (حتى لو تُرك localStorage فارغاً).
   if (runtime?.getConfig) {
     try {
@@ -89,12 +100,12 @@ async function resolveApiBaseUrl(): Promise<string> {
   const lanUrl = localStorage.getItem(LAN_STORAGE.API_BASE_URL);
   if (lanUrl) return lanUrl;
   // 3. بقية إعدادات Electron أو الافتراضي
-  if (!runtime?.getConfig) return API_BASE_URL;
+  if (!runtime?.getConfig) return ELECTRON_API_BASE_URL;
   try {
     const cfg = await runtime.getConfig();
-    return String(cfg?.apiBaseUrl || API_BASE_URL);
+    return String(cfg?.apiBaseUrl || ELECTRON_API_BASE_URL);
   } catch {
-    return API_BASE_URL;
+    return ELECTRON_API_BASE_URL;
   }
 }
 
@@ -116,49 +127,50 @@ export function configureHttpClientAuth(config: {
   conflictHandler = config.onConflict;
 }
 
-async function request<T>(path: string, method: HttpMethod, body?: unknown, retryingAfterAuth = false, idempotencyKey?: string): Promise<T> {
+async function buildRequestHeaders(path: string, method: HttpMethod, idempotencyKey?: string) {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
   Object.assign(headers, await readRuntimeHeaders());
   const token = authTokenGetter?.();
-  // Logout must not send a bad/expired bearer: requestContext would return 401 before the route runs.
   const skipAuthHeader =
     path.startsWith('/auth/login') || path.startsWith('/auth/refresh') || path.startsWith('/auth/logout');
   if (token && !skipAuthHeader) {
     headers.Authorization = `Bearer ${token}`;
   }
   const activeBranchId = activeBranchGetter?.();
-  // /auth/me must resolve scope from the JWT's branch first; sending a stale
-  // x-branch-id here can lock session restore to the wrong branch vs login.
   const skipBranchHeaderForPath = path === '/auth/me';
   if (!skipBranchHeaderForPath && activeBranchId && uuidRegex.test(activeBranchId)) {
     headers['x-branch-id'] = activeBranchId;
   }
-  const writeMethod = method === 'POST' || method === 'PUT' || method === 'DELETE';
+  const writeMethod = method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE';
   if (writeMethod && !skipAuthHeader) {
     headers['x-idempotency-key'] = idempotencyKey ?? createIdempotencyKey();
   }
+  return { headers, skipAuthHeader };
+}
 
-  const executeFetch = () =>
-    resolveApiBaseUrl().then((baseUrl) =>
-      fetch(`${baseUrl}${path}`, {
+async function executeFetch(path: string, method: HttpMethod, headers: Record<string, string>, body?: unknown) {
+  const baseUrl = await resolveApiBaseUrl();
+  const run = () =>
+    fetch(`${baseUrl}${path}`, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
-      })
-    );
-
-  let response: Response;
+    });
   try {
-    response = await executeFetch();
+    return await run();
   } catch (error) {
     await new Promise((resolve) => setTimeout(resolve, 800));
-    response = await executeFetch().catch(() => {
+    return run().catch(() => {
       throw error;
     });
   }
+}
 
+async function request<T>(path: string, method: HttpMethod, body?: unknown, retryingAfterAuth = false, idempotencyKey?: string): Promise<T> {
+  const { headers, skipAuthHeader } = await buildRequestHeaders(path, method, idempotencyKey);
+  const response = await executeFetch(path, method, headers, body);
   let payload: any = null;
   try {
     payload = await response.json();
@@ -189,18 +201,83 @@ async function request<T>(path: string, method: HttpMethod, body?: unknown, retr
   }
 
   if (!response.ok || payload.success === false) {
-    throw new Error(payload?.error ?? `Request failed with status ${response.status}`);
+    const base = payload?.error ?? `Request failed with status ${response.status}`;
+    const detailSuffix =
+      payload?.details && typeof payload.details === 'string' && !String(base).includes(String(payload.details))
+        ? ` — ${payload.details}`
+        : '';
+    throw new Error(`${base}${detailSuffix}`);
   }
-  if ((method === 'POST' || method === 'PUT' || method === 'DELETE') && response.ok) {
+  if ((method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') && response.ok) {
     rememberOwnCorrelationFromFetchResponse(response);
   }
   return payload.data as T;
 }
 
+async function requestBlob(
+  path: string,
+  method: HttpMethod,
+  body?: unknown,
+  retryingAfterAuth = false,
+  idempotencyKey?: string,
+): Promise<Blob> {
+  const { headers, skipAuthHeader } = await buildRequestHeaders(path, method, idempotencyKey);
+  const response = await executeFetch(path, method, headers, body);
+
+  if (
+    response.status === 401 &&
+    unauthorizedHandler &&
+    !retryingAfterAuth &&
+    !path.startsWith('/auth/login') &&
+    !path.startsWith('/auth/refresh') &&
+    !path.startsWith('/auth/logout')
+  ) {
+    let payload: any = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    const action = await unauthorizedHandler(payload?.error);
+    if (action === 'retry') {
+      return requestBlob(path, method, body, true, headers['x-idempotency-key']);
+    }
+  }
+
+  if (response.status === 403 && forbiddenHandler) {
+    let payload: any = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    await forbiddenHandler(payload?.error);
+  }
+
+  if (!response.ok) {
+    let message = `Request failed with status ${response.status}`;
+    try {
+      const payload = await response.json();
+      if (payload?.error) message = String(payload.error);
+    } catch {
+      /* binary error body */
+    }
+    throw new Error(message);
+  }
+
+  if ((method === 'POST' || method === 'PUT' || method === 'DELETE') && response.ok) {
+    rememberOwnCorrelationFromFetchResponse(response);
+  }
+
+  return response.blob();
+}
+
 export const httpClient = {
   get: <T>(path: string) => request<T>(path, 'GET'),
   post: <T>(path: string, body: unknown) => request<T>(path, 'POST', body),
+  postBlob: (path: string, body: unknown) => requestBlob(path, 'POST', body),
   put: <T>(path: string, body: unknown) => request<T>(path, 'PUT', body),
+  patch: <T>(path: string, body: unknown) => request<T>(path, 'PATCH', body),
   delete: <T>(path: string) => request<T>(path, 'DELETE'),
 };
 

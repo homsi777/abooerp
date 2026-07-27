@@ -123,6 +123,14 @@ export class AuditService {
     return this.repository.listAuditLogsEnriched(companyId, filters, scope);
   }
 
+  listSummaryByUser(companyId: string, filters?: AuditLogFilters, scope?: DataScope) {
+    return this.repository.listActivitySummaryByUser(companyId, filters, scope);
+  }
+
+  getEnrichedById(companyId: string, id: string, scope?: DataScope) {
+    return this.repository.getAuditLogEnrichedById(companyId, id, scope);
+  }
+
   getById(id: string) {
     return this.repository.getAuditLogById(id);
   }

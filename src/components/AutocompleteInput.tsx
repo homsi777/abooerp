@@ -41,6 +41,7 @@ export default function AutocompleteInput({
 }: AutocompleteInputProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [filteredItems, setFilteredItems] = useState<AutocompleteItem[]>([]);
+  const [activeIdx, setActiveIdx] = useState(-1);
   const [inputValue, setInputValue] = useState(value);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -70,8 +71,10 @@ export default function AutocompleteInput({
       const rest = filtered.filter((item) => !item.name.toLowerCase().startsWith(q));
       setFilteredItems([...pref, ...rest]);
       setIsOpen(true);
+      setActiveIdx(-1);
     } else {
       setIsOpen(false);
+      setActiveIdx(-1);
     }
   };
 
@@ -105,32 +108,40 @@ export default function AutocompleteInput({
       }
     };
 
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!isOpen) return;
+      setActiveIdx((prev) => Math.min(prev + 1, filteredItems.length - 1));
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!isOpen) return;
+      setActiveIdx((prev) => Math.max(prev - 1, -1));
+      return;
+    }
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (isOpen && (filteredItems.length > 0 || showAddOption)) {
-        if (filteredItems.length > 0) {
-          handleSelect(filteredItems[0]);
-        } else if (showAddOption) {
-          onAddNew(inputValue.trim());
-        }
-        setIsOpen(false);
+      if (isOpen && activeIdx >= 0 && filteredItems[activeIdx]) {
+        handleSelect(filteredItems[activeIdx]);
         focusNext();
-      } else if (inputValue.trim()) {
+        return;
+      }
+      setIsOpen(false);
+      if (inputValue.trim()) {
         const exactMatch = items.find(
-          item => item.name.toLowerCase() === inputValue.toLowerCase()
+          (item) => item.name.toLowerCase() === inputValue.toLowerCase(),
         );
         if (exactMatch) {
           handleSelect(exactMatch);
-        } else {
+        } else if (!filteredItems.length) {
           onAddNew(inputValue.trim());
-          setIsOpen(false);
         }
-        focusNext();
-      } else {
-        focusNext();
       }
+      focusNext();
     } else if (e.key === 'Escape') {
       setIsOpen(false);
+      setActiveIdx(-1);
     } else if (e.key === 'Tab') {
       if (isOpen) {
         e.preventDefault();
@@ -163,6 +174,7 @@ export default function AutocompleteInput({
             const rest = filtered.filter((item) => !item.name.toLowerCase().startsWith(q));
             setFilteredItems([...pref, ...rest]);
             setIsOpen(true);
+            setActiveIdx(-1);
           }
         }}
         onBlur={() => {
@@ -173,11 +185,16 @@ export default function AutocompleteInput({
       />
       {isOpen && (
         <ul className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-auto">
-          {filteredItems.map(item => (
+          {filteredItems.map((item, idx) => (
             <li
               key={item.id}
-              className="px-3 py-2 cursor-pointer hover:bg-blue-50 border-b border-gray-100"
-              onClick={() => handleSelect(item)}
+              className={`px-3 py-2 cursor-pointer border-b border-gray-100 hover:bg-blue-50 ${
+                idx === activeIdx ? 'bg-blue-50' : ''
+              }`}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                handleSelect(item);
+              }}
             >
               {item.name}
             </li>

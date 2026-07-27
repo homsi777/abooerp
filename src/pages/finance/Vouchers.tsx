@@ -5,46 +5,18 @@ import { phase3FinanceGateway, type BackendCashboxRecord } from '../../lib/api/p
 import { useToast } from '../../components/Toast';
 import { useAuth } from '../../context/AuthProvider';
 import SmartPartyInput from '../../components/SmartPartyInput';
-import type { PaymentVoucher, ReceiptVoucher } from '../../types';
+import VoucherExcelGrid from '../../components/finance/VoucherExcelGrid';
+import VoucherRegisterPanel, { type RegisterFilters } from '../../components/finance/VoucherRegisterPanel';
+import type { ReceiptVoucher, PaymentVoucher } from '../../types';
 import { downloadCsv } from '../../lib/export/csvDownload';
 import { exportPdfTable } from '../../lib/export/pdfExport';
-
-interface Voucher {
-  id: number;
-  kind: 'receipt' | 'payment';
-  voucherNo: string;
-  voucherType: string;
-  date: string;
-  relatedParty: string;
-  customerId?: string | null;
-  agentId?: string | null;
-  amount: number;
-  currency: CurrencyCode;
-  amountUsd: number;
-  cashBox: string;
-  cashboxId?: string;
-  description: string;
-  refNo: string;
-  status: string;
-}
+import { type Voucher, voucherStatusColors, voucherStatusLabelAr } from './voucherTypes';
 
 const voucherTypes = ['سند قبض', 'سند دفع', 'تحويل', 'تسوية'];
+const statusColors = voucherStatusColors;
+const voucherStatusLabel = voucherStatusLabelAr;
 
-const statusColors: Record<string, string> = {
-  'مؤكد': 'bg-green-100 text-green-800',
-  'معلق': 'bg-yellow-100 text-yellow-800',
-  'مرفوض': 'bg-red-100 text-red-800',
-  draft: 'bg-yellow-100 text-yellow-800',
-  confirmed: 'bg-green-100 text-green-800',
-  cancelled: 'bg-red-100 text-red-800',
-};
-
-function voucherStatusLabel(s: string): string {
-  if (s === 'draft') return 'مسودة';
-  if (s === 'confirmed') return 'مؤكد';
-  if (s === 'cancelled') return 'ملغى';
-  return s;
-}
+type VoucherViewMode = 'entry' | 'register';
 
 function mapReceipt(r: ReceiptVoucher, rates: ReturnType<typeof getExchangeRatesToUsd>): Voucher {
   const currency = (r.currency || 'USD') as CurrencyCode;
@@ -57,6 +29,7 @@ function mapReceipt(r: ReceiptVoucher, rates: ReturnType<typeof getExchangeRates
     relatedParty: r.customerName || 'غير محدد',
     customerId: r.customerBackendId ?? null,
     agentId: r.agentBackendId ?? null,
+    relatedEntityType: r.relatedEntityType ?? null,
     amount: r.amount,
     currency,
     amountUsd: r.amountUsd ?? convertToUsd(r.amount, currency, rates),
@@ -79,6 +52,7 @@ function mapPayment(p: PaymentVoucher, rates: ReturnType<typeof getExchangeRates
     relatedParty: p.vendorName || 'غير محدد',
     customerId: p.customerBackendId ?? null,
     agentId: p.agentBackendId ?? null,
+    relatedEntityType: p.relatedEntityType ?? null,
     amount: p.amount,
     currency,
     amountUsd: p.amountUsd ?? convertToUsd(p.amount, currency, rates),
@@ -97,11 +71,22 @@ export default function FinanceVouchers() {
   const [searchParams] = useSearchParams();
   const isAgent = user?.userType === 'agent';
   const canUpdateVoucher = hasPermission('finance.vouchers.update') || hasPermission('finance.vouchers.write');
+  const todayIso = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const canBackdateVoucher = useMemo(() => {
+    if (user?.userType === 'admin') return true;
+    return hasPermission('finance.vouchers.backdate');
+  }, [user?.userType, hasPermission]);
 
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [cashboxes, setCashboxes] = useState<BackendCashboxRecord[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
+  const [viewMode, setViewMode] = useState<VoucherViewMode>('entry');
+  const [registerFilters, setRegisterFilters] = useState<RegisterFilters>({
+    searchTerm: '',
+    typeFilter: '',
+    statusFilter: '',
+    dateFrom: '',
+    dateTo: '',
+  });
   const [showForm, setShowForm] = useState(false);
   const [editingVoucher, setEditingVoucher] = useState<Voucher | null>(null);
   const [formData, setFormData] = useState({
@@ -114,15 +99,26 @@ export default function FinanceVouchers() {
     amount: 0,
     currency: 'USD' as CurrencyCode,
     cashboxId: '' as string,
+    transferCashboxId: '' as string,
     description: '',
     refNo: '',
     status: 'draft' as 'draft' | 'confirmed' | 'cancelled',
   });
+  const canEditVoucherDate = canBackdateVoucher && (!editingVoucher || editingVoucher.status === 'draft');
 
   const cashboxesForCurrency = useMemo(
     () => cashboxes.filter((c) => c.is_active && c.currency_code === formData.currency),
     [cashboxes, formData.currency],
   );
+
+  const targetCashboxesForCurrency = useMemo(
+    () => cashboxesForCurrency.filter((c) => c.id !== formData.cashboxId),
+    [cashboxesForCurrency, formData.cashboxId],
+  );
+  const isManualPartyDraft =
+    !formData.customerId &&
+    !formData.agentId &&
+    formData.relatedParty.trim().length > 0;
 
   const agentNameById = useMemo(() => {
     const m = new Map<string, string>();
@@ -136,6 +132,10 @@ export default function FinanceVouchers() {
   }, [cashboxes]);
 
   const displayRelatedParty = (voucher: Voucher) => {
+    if (voucher.relatedEntityType === 'expense') return 'مصروف داخلي';
+    if (voucher.relatedEntityType === 'cashbox_transfer') return 'مناقلة بين الصناديق';
+    if (voucher.relatedEntityType === 'salary_record') return 'راتب موظف';
+    if (voucher.relatedEntityType === 'manual_party') return voucher.relatedParty || 'جهة يدوية';
     if (voucher.customerId) return voucher.relatedParty;
     if (voucher.agentId) {
       const label = agentNameById.get(voucher.agentId);
@@ -180,17 +180,29 @@ export default function FinanceVouchers() {
     const preCashbox = searchParams.get('cashboxId');
     const kind = searchParams.get('kind');
     const newKind = searchParams.get('new');
+    const agentId = searchParams.get('agentId');
+    const agentName = searchParams.get('agentName');
+    const amount = searchParams.get('amount');
+    const currency = searchParams.get('currency');
+    const notes = searchParams.get('notes');
+    const status = searchParams.get('status');
     const voucherTypeFromLink =
       kind === 'payment' || newKind === 'payment'
         ? 'سند دفع'
         : kind === 'receipt' || newKind === 'receipt'
           ? 'سند قبض'
           : null;
-    if (preCashbox || voucherTypeFromLink) {
+    if (preCashbox || voucherTypeFromLink || agentId || amount || notes) {
       setFormData((prev) => ({
         ...prev,
         ...(preCashbox ? { cashboxId: preCashbox } : {}),
         ...(voucherTypeFromLink ? { voucherType: voucherTypeFromLink } : {}),
+        ...(agentId ? { agentId, customerId: null } : {}),
+        ...(agentName ? { relatedParty: agentName } : {}),
+        ...(amount ? { amount: parseDecimalAmount(amount) } : {}),
+        ...(currency ? { currency: currency as CurrencyCode } : {}),
+        ...(notes ? { description: notes } : {}),
+        ...(status === 'confirmed' || status === 'draft' || status === 'cancelled' ? { status } : {}),
       }));
       setShowForm(true);
     }
@@ -220,14 +232,24 @@ export default function FinanceVouchers() {
     () => vouchers.filter((v) => v.kind === 'payment').reduce((sum, v) => sum + v.amountUsd, 0),
     [vouchers],
   );
+  const pendingAgentCount = useMemo(
+    () => vouchers.filter((v) => v.status === 'draft' && (v.relatedEntityType === 'agent_remittance' || v.relatedEntityType === 'agent_receipt_from_branch')).length,
+    [vouchers],
+  );
   const pendingCount = useMemo(() => vouchers.filter((v) => v.status === 'draft').length, [vouchers]);
   const totalNet = useMemo(() => totalReceipt - totalPayment, [totalPayment, totalReceipt]);
 
-  const filteredVouchers = vouchers.filter((v) => {
-    if (searchTerm && !v.voucherNo.includes(searchTerm) && !v.relatedParty.includes(searchTerm)) return false;
-    if (typeFilter && v.voucherType !== typeFilter) return false;
-    return true;
-  });
+  const filteredVouchers = useMemo(() => {
+    return vouchers.filter((v) => {
+      const { searchTerm, typeFilter, statusFilter, dateFrom, dateTo } = registerFilters;
+      if (searchTerm && !v.voucherNo.includes(searchTerm) && !v.relatedParty.includes(searchTerm)) return false;
+      if (typeFilter && v.voucherType !== typeFilter) return false;
+      if (statusFilter && v.status !== statusFilter) return false;
+      if (dateFrom && v.date < dateFrom) return false;
+      if (dateTo && v.date > dateTo) return false;
+      return true;
+    });
+  }, [vouchers, registerFilters]);
 
   const exportCsv = () => {
     downloadCsv(
@@ -252,8 +274,12 @@ export default function FinanceVouchers() {
 
   const exportPdf = async () => {
     const subtitleParts: string[] = [];
-    if (typeFilter) subtitleParts.push(`النوع: ${typeFilter}`);
-    if (searchTerm.trim()) subtitleParts.push(`بحث: ${searchTerm.trim()}`);
+    if (registerFilters.typeFilter) subtitleParts.push(`النوع: ${registerFilters.typeFilter}`);
+    if (registerFilters.statusFilter) subtitleParts.push(`الحالة: ${voucherStatusLabel(registerFilters.statusFilter)}`);
+    if (registerFilters.searchTerm.trim()) subtitleParts.push(`بحث: ${registerFilters.searchTerm.trim()}`);
+    if (registerFilters.dateFrom || registerFilters.dateTo) {
+      subtitleParts.push(`التاريخ: ${registerFilters.dateFrom || '…'} → ${registerFilters.dateTo || '…'}`);
+    }
     const subtitle = subtitleParts.length ? subtitleParts.join(' | ') : undefined;
 
     const result = await exportPdfTable({
@@ -290,6 +316,7 @@ export default function FinanceVouchers() {
       amount: 0,
       currency: 'USD',
       cashboxId: '',
+      transferCashboxId: '',
       description: '',
       refNo: '',
       status: 'draft',
@@ -299,6 +326,7 @@ export default function FinanceVouchers() {
 
   const handleEdit = (voucher: Voucher) => {
     if (isAgent || !canUpdateVoucher) return;
+    setViewMode('entry');
     setEditingVoucher(voucher);
     setFormData({
       voucherNo: voucher.voucherNo,
@@ -310,6 +338,7 @@ export default function FinanceVouchers() {
       amount: voucher.amount,
       currency: voucher.currency,
       cashboxId: voucher.cashboxId ?? '',
+      transferCashboxId: '',
       description: voucher.description,
       refNo: voucher.refNo,
       status: (voucher.status as 'draft' | 'confirmed' | 'cancelled') || 'draft',
@@ -319,13 +348,42 @@ export default function FinanceVouchers() {
 
   const handleSave = async () => {
     try {
-      if (!formData.customerId && !formData.agentId) {
-        showToast('يجب اختيار الجهة المعنية (عميل أو وكيل) من القائمة.', 'error');
+      if (formData.date > todayIso) {
+        showToast('لا يمكن إنشاء سند بتاريخ مستقبلي.', 'error');
+        return;
+      }
+      if (formData.date !== todayIso && !canBackdateVoucher) {
+        showToast('لا يمكن إنشاء أو تعديل سند بتاريخ سابق.', 'error');
+        return;
+      }
+      if (editingVoucher && formData.date !== editingVoucher.date && editingVoucher.status !== 'draft') {
+        showToast('لا يمكن تغيير تاريخ سند مؤكد أو ملغى.', 'error');
+        return;
+      }
+
+      const manualPartyName = formData.relatedParty.trim();
+      const isManualParty = !formData.transferCashboxId && !formData.customerId && !formData.agentId && manualPartyName.length > 0;
+      if (!formData.transferCashboxId && !formData.customerId && !formData.agentId && !isManualParty) {
+        showToast('يجب اختيار الجهة المعنية أو كتابة اسم الجهة يدوياً.', 'error');
         return;
       }
       if (formData.status === 'confirmed' && !formData.cashboxId) {
         showToast('يجب اختيار صندوق لتأكيد السند.', 'error');
         return;
+      }
+      if (formData.transferCashboxId) {
+        if (formData.transferCashboxId === formData.cashboxId) {
+          showToast('لا يمكن تحويل المبلغ إلى نفس صندوق المصدر.', 'error');
+          return;
+        }
+        if (formData.status !== 'confirmed') {
+          showToast('مناقلة الصناديق يجب أن تكون بسند مؤكد.', 'error');
+          return;
+        }
+        if (editingVoucher) {
+          showToast('لا يمكن تعديل سند موجود إلى مناقلة صندوق. أنشئ مناقلة جديدة.', 'error');
+          return;
+        }
       }
 
       const voucherNo =
@@ -339,12 +397,44 @@ export default function FinanceVouchers() {
         exchangeRateToUsd: getRateToUsd(formData.currency, rates),
         customerId: formData.customerId || undefined,
         agentId: formData.agentId || undefined,
-        notes: String(formData.description || '').trim(),
+        relatedEntityType: isManualParty ? 'manual_party' : undefined,
+        notes: isManualParty
+          ? [`جهة: ${manualPartyName}`, String(formData.description || '').trim()].filter(Boolean).join(' - ')
+          : String(formData.description || '').trim(),
         status: formData.status,
         cashboxId: formData.cashboxId || undefined,
       };
 
-      if (formData.voucherType === 'سند قبض') {
+      if (canBackdateVoucher && canEditVoucherDate && formData.date) {
+        payload.createdAt = new Date(`${formData.date}T12:00:00`).toISOString();
+      }
+
+      if (formData.transferCashboxId) {
+        const sourceCashbox = cashboxes.find((c) => c.id === formData.cashboxId);
+        const targetCashbox = cashboxes.find((c) => c.id === formData.transferCashboxId);
+        const transferNo = formData.voucherNo || `TR-${Date.now()}`;
+        const notes =
+          String(formData.description || '').trim() ||
+          `مناقلة صندوق من ${sourceCashbox?.name ?? 'صندوق مصدر'} إلى ${targetCashbox?.name ?? 'صندوق نهائي'}`;
+        await phase3FinanceGateway.paymentVouchers.create({
+          ...payload,
+          voucherNo: `${transferNo}-OUT`,
+          relatedEntityType: 'cashbox_transfer',
+          customerId: undefined,
+          agentId: undefined,
+          notes,
+          cashboxId: formData.cashboxId,
+        });
+        await phase3FinanceGateway.receiptVouchers.create({
+          ...payload,
+          voucherNo: `${transferNo}-IN`,
+          relatedEntityType: 'cashbox_transfer',
+          customerId: undefined,
+          agentId: undefined,
+          notes,
+          cashboxId: formData.transferCashboxId,
+        });
+      } else if (formData.voucherType === 'سند قبض') {
         if (editingVoucher) {
           const backendId = phase3FinanceGateway.receiptVouchers.getBackendIdFromSynthetic(editingVoucher.id);
           if (!backendId) throw new Error('Missing backend mapping for receipt voucher update');
@@ -373,19 +463,27 @@ export default function FinanceVouchers() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-bold">السندات المالية</h2>
-        <div className="flex gap-2">
-          <button type="button" onClick={() => setShowForm(!showForm)} className="toolbar-btn primary">
-            + سند جديد
+        <div className="voucher-view-tabs">
+          <button
+            type="button"
+            className={`toolbar-btn${viewMode === 'entry' ? ' primary' : ''}`}
+            onClick={() => setViewMode('entry')}
+          >
+            إدخال سريع
           </button>
-          <button type="button" className="toolbar-btn">
-            طباعة
+          <button
+            type="button"
+            className={`toolbar-btn${viewMode === 'register' ? ' primary' : ''}`}
+            onClick={() => setViewMode('register')}
+          >
+            سجل السندات
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
         <div className="stat-card">
           <div className="stat-value">{formatCurrency(totalReceipt, 'USD')}</div>
           <div className="stat-label">سندات القبض (USD)</div>
@@ -395,8 +493,12 @@ export default function FinanceVouchers() {
           <div className="stat-label">سندات الدفع (USD)</div>
         </div>
         <div className="stat-card">
+          <div className="stat-value">{pendingAgentCount}</div>
+          <div className="stat-label">سندات وكيل بانتظار الاعتماد</div>
+        </div>
+        <div className="stat-card">
           <div className="stat-value">{pendingCount}</div>
-          <div className="stat-label">مسودة</div>
+          <div className="stat-label">مسودة (كل السندات)</div>
         </div>
         <div className="stat-card">
           <div className="stat-value">{formatCurrency(totalNet, 'USD')}</div>
@@ -406,7 +508,7 @@ export default function FinanceVouchers() {
 
       {showForm && (
         <div className="card">
-          <div className="card-header">سند جديد</div>
+          <div className="card-header">{editingVoucher ? `تعديل ${editingVoucher.voucherNo}` : 'سند متقدم (مناقلة / تعديل)'}</div>
           <div className="grid grid-cols-4 gap-4">
             <div className="form-group">
               <label className="form-label">نوع السند</label>
@@ -430,14 +532,20 @@ export default function FinanceVouchers() {
                 type="date"
                 className="form-input w-full"
                 value={formData.date}
+                min={canBackdateVoucher ? undefined : todayIso}
+                max={todayIso}
+                readOnly={!canEditVoucherDate}
                 onChange={(e) => setFormData({ ...formData, date: e.target.value })}
               />
+              {!canBackdateVoucher ? (
+                <p className="text-xs text-gray-500 mt-1">التاريخ مقيد بيوم اليوم — يلزم صلاحية السندات بتاريخ سابق للتعديل.</p>
+              ) : null}
             </div>
             <div className="form-group">
               <label className="form-label">الجهة المعنية</label>
               <SmartPartyInput
                 value={formData.relatedParty}
-                onChange={(value) => setFormData((prev) => ({ ...prev, relatedParty: value, customerId: null, agentId: null }))}
+                onChange={(value) => setFormData((prev) => ({ ...prev, relatedParty: value, customerId: null, agentId: null, transferCashboxId: '' }))}
                 onSelect={(p) => {
                   if (p.source_table === 'customers') {
                     setFormData((prev) => ({ ...prev, relatedParty: p.name, customerId: p.id, agentId: null }));
@@ -483,7 +591,7 @@ export default function FinanceVouchers() {
               <select
                 className="form-select w-full"
                 value={formData.currency}
-                onChange={(e) => setFormData({ ...formData, currency: e.target.value as CurrencyCode, cashboxId: '' })}
+                onChange={(e) => setFormData({ ...formData, currency: e.target.value as CurrencyCode, cashboxId: '', transferCashboxId: '' })}
               >
                 <option value="USD">USD</option>
                 <option value="SYP">SYP</option>
@@ -495,7 +603,7 @@ export default function FinanceVouchers() {
               <select
                 className="form-select w-full"
                 value={formData.cashboxId}
-                onChange={(e) => setFormData({ ...formData, cashboxId: e.target.value })}
+                onChange={(e) => setFormData({ ...formData, cashboxId: e.target.value, transferCashboxId: formData.transferCashboxId === e.target.value ? '' : formData.transferCashboxId })}
               >
                 <option value="">— اختر صندوقاً —</option>
                 {cashboxesForCurrency.map((c) => (
@@ -507,6 +615,27 @@ export default function FinanceVouchers() {
               {cashboxesForCurrency.length === 0 && (
                 <p className="text-xs text-amber-700 mt-1">لا يوجد صندوق بهذه العملة ضمن النطاق المسموح.</p>
               )}
+            </div>
+            <div className="form-group">
+              <label className="form-label">صندوق تحويل</label>
+              <select
+                className="form-select w-full"
+                value={formData.transferCashboxId}
+                onChange={(e) => setFormData({ ...formData, transferCashboxId: e.target.value })}
+                disabled={!formData.cashboxId || isManualPartyDraft}
+              >
+                <option value="">— بدون مناقلة —</option>
+                {targetCashboxesForCurrency.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.code} — {c.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-600 mt-1">
+                {isManualPartyDraft
+                  ? 'عند كتابة جهة يدوية يكفي اختيار الصندوق النهائي للسند.'
+                  : 'عند الاختيار سيتم إخراج المبلغ من الصندوق وتحويله للصندوق النهائي.'}
+              </p>
             </div>
             <div className="form-group">
               <label className="form-label">رقم المرجع</label>
@@ -567,91 +696,30 @@ export default function FinanceVouchers() {
         </div>
       )}
 
-      <div className="card">
-        <div className="flex flex-wrap gap-2 items-center">
-          <input
-            type="text"
-            placeholder="بحث برقم السند أو الجهة..."
-            className="form-input flex-1 min-w-[240px]"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-          <select className="form-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-            <option value="">كل الأنواع</option>
-            {voucherTypes
-              .filter((type) => type === 'سند قبض' || type === 'سند دفع')
-              .map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-          </select>
-          <button type="button" className="toolbar-btn" onClick={exportCsv}>
-            تصدير Excel (CSV)
-          </button>
-          <button type="button" className="toolbar-btn" onClick={() => void exportPdf()}>
-            تصدير PDF
-          </button>
-        </div>
-      </div>
+      {viewMode === 'entry' ? (
+        <VoucherExcelGrid
+          cashboxes={cashboxes}
+          canBackdate={canBackdateVoucher}
+          canUpdate={canUpdateVoucher}
+          todayIso={todayIso}
+          onSaved={loadVouchers}
+        />
+      ) : (
+        <VoucherRegisterPanel
+          vouchers={filteredVouchers}
+          filters={registerFilters}
+          onFiltersChange={(patch) => setRegisterFilters((prev) => ({ ...prev, ...patch }))}
+          displayRelatedParty={displayRelatedParty}
+          voucherStatusLabel={voucherStatusLabel}
+          statusColors={statusColors}
+          isAgent={isAgent}
+          canUpdateVoucher={canUpdateVoucher}
+          onEdit={handleEdit}
+          onExportCsv={exportCsv}
+          onExportPdf={() => void exportPdf()}
+        />
+      )}
 
-      <div className="card overflow-auto">
-        <table className="data-grid">
-          <thead>
-            <tr>
-              <th>رقم السند</th>
-              <th>النوع</th>
-              <th>التاريخ</th>
-              <th>الجهة</th>
-              <th>المبلغ الأصلي</th>
-              <th>المبلغ USD</th>
-              <th>الصندوق</th>
-              <th>الوصف</th>
-              <th>المرجع</th>
-              <th>الحالة</th>
-              {!isAgent && canUpdateVoucher && <th>إجراء</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {filteredVouchers.map((voucher) => (
-              <tr
-                key={`${voucher.kind}-${voucher.id}`}
-                className={
-                  voucher.kind === 'receipt'
-                    ? 'bg-green-50 hover:bg-green-100/60'
-                    : voucher.kind === 'payment'
-                      ? 'bg-red-50 hover:bg-red-100/60'
-                      : undefined
-                }
-              >
-                <td>{voucher.voucherNo}</td>
-                <td>{voucher.voucherType}</td>
-                <td>{voucher.date}</td>
-                <td>{displayRelatedParty(voucher)}</td>
-                <td className="text-left">{formatCurrency(voucher.amount, voucher.currency)}</td>
-                <td className="text-left">
-                  {formatCurrency(voucher.amountUsd || convertToUsd(voucher.amount, voucher.currency, rates), 'USD')}
-                </td>
-                <td>{voucher.cashBox}</td>
-                <td>{voucher.description}</td>
-                <td>{voucher.refNo || '-'}</td>
-                <td>
-                  <span className={`status-badge ${statusColors[voucher.status] ?? 'bg-gray-100 text-gray-800'}`}>
-                    {voucherStatusLabel(voucher.status)}
-                  </span>
-                </td>
-                {!isAgent && canUpdateVoucher && (
-                  <td>
-                    <button type="button" className="toolbar-btn" onClick={() => handleEdit(voucher)}>
-                      تعديل
-                    </button>
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 }

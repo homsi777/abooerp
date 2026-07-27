@@ -1,4 +1,5 @@
 import { pool } from '../db/pool.js';
+import { shouldExpandCompanyBranches } from '../utils/dailyLedgerAccess.js';
 import type { DataScope } from '../utils/scope.js';
 
 export interface RequestUserContext {
@@ -45,6 +46,7 @@ export async function loadUserContextByUserId(userId: string): Promise<RequestUs
     agent_governorate: string | null;
     agent_city: string | null;
     agent_area: string | null;
+    agent_branch_id: string | null;
   }>(
     `
     select
@@ -61,13 +63,14 @@ export async function loadUserContextByUserId(userId: string): Promise<RequestUs
       ,a.governorate as agent_governorate
       ,a.city as agent_city
       ,a.area as agent_area
+      ,a.branch_id as agent_branch_id
     from users u
     join roles r on r.id = u.role_id
     left join agents a on a.id = u.agent_id
     left join role_permissions rp on rp.role_id = u.role_id
     left join permissions p on p.id = rp.permission_id and p.is_active = true
     where u.id = $1
-    group by u.id, u.username, u.role_id, r.code, u.status, u.is_active, u.agent_id, u.user_type, u.company_id, a.governorate, a.city, a.area
+    group by u.id, u.username, u.role_id, r.code, u.status, u.is_active, u.agent_id, u.user_type, u.company_id, a.governorate, a.city, a.area, a.branch_id
     `,
     [userId],
   );
@@ -109,7 +112,23 @@ export async function loadUserContextByUserId(userId: string): Promise<RequestUs
     `,
     [user.id, companyId],
   );
-  const allowedBranchIds = allowedResult.rows.map((row) => row.branch_id);
+  let allowedBranchIds = allowedResult.rows.map((row) => row.branch_id);
+  if (!allowedBranchIds.length && user.user_type === 'agent' && user.agent_branch_id) {
+    allowedBranchIds = [user.agent_branch_id];
+  }
+  if (!allowedBranchIds.length && shouldExpandCompanyBranches(user.role_code, user.user_type)) {
+    const allBranches = await pool.query<{ id: string }>(
+      `
+      select id
+      from branches
+      where company_id = $1
+        and is_active = true
+      order by created_at asc
+      `,
+      [companyId],
+    );
+    allowedBranchIds = allBranches.rows.map((row) => row.id);
+  }
 
   const baseCurrencyResult = await pool.query<{ code: string }>(
     `
