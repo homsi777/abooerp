@@ -35,13 +35,18 @@ function rememberInsertedKeys(target:Map<string,Map<string,Set<string>>>,table:s
   }
 }
 
-function hasReferencedParent(included:Map<string,Map<string,Set<string>>>,table:string,column:string,value:unknown){
-  const values=included.get(table)?.get(column);
-  // Parent table absent from the snapshot scope → do not block (legacy behaviour for
-  // tables outside snapshotOrder). Parent present but key missing → block/skip.
-  if(!included.has(table))return true;
+async function hasReferencedParent(
+  client:PoolClient,
+  included:Map<string,Map<string,Set<string>>>,
+  table:string,
+  column:string,
+  value:unknown,
+){
   if(value===null||value===undefined)return true;
-  return Boolean(values?.has(String(value)));
+  if(included.has(table))return Boolean(included.get(table)?.get(column)?.has(String(value)));
+  if(!/^[a-z_][a-z0-9_]*$/i.test(table)||!/^[a-z_][a-z0-9_]*$/i.test(column))return false;
+  const existing=await client.query(`select 1 from ${table} where ${column}=$1 limit 1`,[value]);
+  return Boolean(existing.rowCount);
 }
 
 async function tableColumns(client:PoolClient,table:string){
@@ -170,7 +175,7 @@ async function upsertSnapshotRow(client:PoolClient,table:string,row:Record<strin
   let normalizedRow={...row};
   for(const foreignKey of await singleColumnForeignKeys(client,table)){
     const value=normalizedRow[foreignKey.columnName];
-    if(!hasReferencedParent(includedKeys,foreignKey.referencedTable,foreignKey.referencedColumn,value)){
+    if(!await hasReferencedParent(client,includedKeys,foreignKey.referencedTable,foreignKey.referencedColumn,value)){
       if(foreignKey.nullable)normalizedRow[foreignKey.columnName]=null;
       else{
         console.warn('[SYNC] Skipped scoped snapshot row with an unavailable required parent.',{table,id:normalizedRow.id,column:foreignKey.columnName,referencedTable:foreignKey.referencedTable,referencedColumn:foreignKey.referencedColumn});
@@ -237,8 +242,13 @@ export async function applyScopedSnapshot(snapshot:any){
 
 async function ensureSnapshotReady():Promise<boolean>{
   if(!env.CENTRAL_SYNC_API_BASE_URL||(!env.CENTRAL_SYNC_ACCESS_TOKEN&&!env.CENTRAL_SYNC_DEVICE_TOKEN)||!env.SYNC_DEVICE_ID)return false;
-  const state=await pool.query<{snapshot_initialized_at:string|null;resnapshot_required:boolean}>(`select snapshot_initialized_at,resnapshot_required from sync_local_state where singleton=true`);
-  if(state.rows[0]?.snapshot_initialized_at&&!state.rows[0]?.resnapshot_required)return true;
+  const state=await pool.query<{snapshot_initialized_at:string|null;resnapshot_required:boolean;offline_grant_expires_at:string|null}>(
+    `select snapshot_initialized_at,resnapshot_required,offline_grant_expires_at from sync_local_state where singleton=true`,
+  );
+  const grantActive=Boolean(
+    state.rows[0]?.offline_grant_expires_at&&Date.parse(state.rows[0].offline_grant_expires_at)>Date.now(),
+  );
+  if(state.rows[0]?.snapshot_initialized_at&&!state.rows[0]?.resnapshot_required&&grantActive)return true;
   const response=await fetch(`${env.CENTRAL_SYNC_API_BASE_URL.replace(/\/$/,'')}/sync/snapshot`,{
     method:'POST',headers:{'content-type':'application/json',...(env.CENTRAL_SYNC_ACCESS_TOKEN?{authorization:`Bearer ${env.CENTRAL_SYNC_ACCESS_TOKEN}`}:{'x-sync-device-id':env.SYNC_DEVICE_ID,'x-sync-device-token':env.CENTRAL_SYNC_DEVICE_TOKEN!})},
     body:JSON.stringify({deviceId:env.SYNC_DEVICE_ID}),
@@ -350,7 +360,7 @@ async function pullOnce():Promise<void>{
   const client=await pool.connect();try{
     await client.query('begin');
     for(const change of changes){
-      if(!writableEntities.has(String(change.entity_type)))continue;
+      if(!mirroredEntities.has(String(change.entity_type)))continue;
       const pending=await client.query<Record<string,unknown>>(`select * from sync_outbox where entity_type=$1 and entity_id=$2::uuid and sync_status in ('PENDING','SENDING','RETRY','BLOCKED') order by device_sequence desc limit 1`,[change.entity_type,change.entity_id]);
       if(pending.rows[0]&&String(change.source_device_id??'')!==env.SYNC_DEVICE_ID){
         const local=await client.query<Record<string,unknown>>(`select * from ${change.entity_type} where id=$1::uuid`,[change.entity_id]);
@@ -372,7 +382,11 @@ async function pullOnce():Promise<void>{
         );
       }
     }
-    await client.query(`update sync_local_state set last_central_cursor=$1,last_pull_at=now(),last_successful_sync_at=now(),updated_at=now() where singleton=true`,[data.nextCursor]);
+    await client.query(
+      `update sync_local_state set last_central_cursor=$1,offline_grant_expires_at=$2::timestamptz,
+       last_pull_at=now(),last_successful_sync_at=now(),updated_at=now() where singleton=true`,
+      [data.nextCursor,data.offlineGrantExpiresAt??new Date(Date.now()+env.OFFLINE_AUTH_MAX_AGE_HOURS*3600000).toISOString()],
+    );
     await client.query('commit');
   }catch(error){await client.query('rollback');throw error}finally{client.release()}
 }

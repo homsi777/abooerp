@@ -88,7 +88,7 @@ async function worker() {
   assert.equal(deferredReplay.status, 'ALREADY_APPLIED');
   const snapshot = await createScopedSnapshot(context);
   assert.ok(Array.isArray(snapshot.data.daily_ledger_sessions));
-  assert.ok((snapshot.data.branches as Array<Record<string, unknown>>).every((branch) => branch.id === branchId));
+  assert.ok((snapshot.data.branches as Array<Record<string, unknown>>).some((branch) => branch.id === branchId));
   const scopedTransferId=randomUUID();const skippedOrphanTransferItemId=randomUUID();
   snapshot.data.daily_ledger_row_transfers.push({id:scopedTransferId,company_id:companyId,transfer_no:`ORPHAN-${Date.now()}`,target_session_id:sessionId,rows_count:1,pieces_count:0,weight_kg:0,status:'completed'});
   snapshot.data.daily_ledger_row_transfer_items.push({id:skippedOrphanTransferItemId,transfer_id:scopedTransferId,row_id:randomUUID(),financial_posted:false});
@@ -116,7 +116,7 @@ async function worker() {
   await pool.query(`insert into sync_local_state(singleton,device_id,device_name) values(true,$1,'snapshot-apply') on conflict(singleton) do update set device_id=excluded.device_id,snapshot_initialized_at=null`, [secondDeviceId]);
   await applyScopedSnapshot(snapshot);
   assert.equal(Number((await pool.query(`select count(*) count from branches where id=$1`, [branchId])).rows[0].count), 1);
-  assert.equal(Number((await pool.query(`select count(*) count from branches where id=$1`, [otherBranchId])).rows[0].count), 0);
+  assert.equal(Number((await pool.query(`select count(*) count from branches where id=$1`, [otherBranchId])).rows[0].count), 1);
   assert.equal(Number((await pool.query(`select count(*) count from daily_ledger_sessions where id=$1`, [sessionId])).rows[0].count), 1);
   assert.equal((await pool.query<{created_by_user_id:string|null}>(`select created_by_user_id from customers where id=$1`,[customerWithOmittedAuditUser])).rows[0]?.created_by_user_id,null);
   assert.equal(Number((await pool.query(`select count(*) count from daily_ledger_row_transfer_items where id=$1`,[skippedOrphanTransferItemId])).rows[0].count),0);

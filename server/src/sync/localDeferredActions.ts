@@ -7,7 +7,6 @@ async function queueCentralAction(input:{
   userId?:string;
   entityType:string;
   entityId?:string;
-  actionType:string;
   payload:Record<string,unknown>;
 }){
   const client=await pool.connect();try{
@@ -25,8 +24,8 @@ async function queueCentralAction(input:{
     );
     await client.query(
       `insert into sync_deferred_actions(operation_id,company_id,branch_id,entity_type,entity_id,action_type,payload)
-       values($1,$2,$3,$4,$5,$6,$7::jsonb)`,
-      [operationId,input.companyId,input.branchId,input.entityType,entityId,input.actionType,JSON.stringify(payload)],
+       values($1,$2,$3,$4,$5,'CENTRAL_ACTION',$6::jsonb)`,
+      [operationId,input.companyId,input.branchId,input.entityType,entityId,JSON.stringify(payload)],
     );
     await client.query('commit');return{operationId,entityId,deviceSequence:sequence};
   }catch(error){await client.query('rollback');throw error}finally{client.release()}
@@ -36,7 +35,6 @@ export async function queuePostShipmentsAction(input:{companyId:string;branchId:
   return queueCentralAction({
     ...input,
     entityType:'central_action.post_shipments',
-    actionType:'POST_DAILY_LEDGER_SHIPMENTS',
     payload:{action:'POST_DAILY_LEDGER_SHIPMENTS',...input.payload},
   });
 }
@@ -50,7 +48,6 @@ export async function queueCompleteTransferAction(input:{
     userId:input.userId,
     entityType:'central_action.transfer_complete',
     entityId:input.transferId,
-    actionType:'COMPLETE_TRANSFER',
     payload:{action:'COMPLETE_TRANSFER',transferId:input.transferId,cashboxId:input.cashboxId,voucherNo:input.voucherNo},
   });
 }
@@ -64,7 +61,6 @@ export async function queueCancelTransferAction(input:{
     userId:input.userId,
     entityType:'central_action.transfer_cancel',
     entityId:input.transferId,
-    actionType:'CANCEL_TRANSFER',
     payload:{action:'CANCEL_TRANSFER',transferId:input.transferId,reason:input.reason},
   });
 }

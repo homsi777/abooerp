@@ -376,11 +376,12 @@ export async function applyPushOperation(context: SyncRequestContext, operation:
 }
 
 export async function pullChanges(context: SyncRequestContext,input:{deviceId:string;lastCursor:number;batchSize:number}) {
+  const offlineGrantExpiresAt=new Date(Date.now()+env.OFFLINE_AUTH_MAX_AGE_HOURS*3600000).toISOString();
   const device = await pool.query<{sync_state:string;is_blocked:boolean;company_id:string}>(
     `select sync_state,is_blocked,company_id from linked_devices where id=$1::uuid`,[input.deviceId],
   );
   if (!device.rows[0] || device.rows[0].company_id!==context.companyId || device.rows[0].is_blocked || device.rows[0].sync_state!=='active') {
-    return { deviceRejected:true, changes:[], nextCursor:input.lastCursor, hasMore:false, resnapshotRequired:false };
+    return { deviceRejected:true, changes:[], nextCursor:input.lastCursor, hasMore:false, resnapshotRequired:false, offlineGrantExpiresAt };
   }
   const retention=await pool.query<{min_cursor:string|null,max_cursor:string|null}>(
     `select min(cursor_id)::text min_cursor,max(cursor_id)::text max_cursor from sync_change_feed where company_id=$1`,[context.companyId],
@@ -388,7 +389,7 @@ export async function pullChanges(context: SyncRequestContext,input:{deviceId:st
   const minCursor=Number(retention.rows[0]?.min_cursor ?? 0);
   const maxCursor=Number(retention.rows[0]?.max_cursor ?? input.lastCursor);
   if(input.lastCursor>0 && minCursor>0 && input.lastCursor<minCursor-1){
-    return {deviceRejected:false,changes:[],nextCursor:input.lastCursor,hasMore:false,resnapshotRequired:true};
+    return {deviceRejected:false,changes:[],nextCursor:input.lastCursor,hasMore:false,resnapshotRequired:true,offlineGrantExpiresAt};
   }
   const changes=await pool.query<Record<string,unknown>>(
     `select cursor_id,company_id,branch_id,agent_id,entity_type,entity_id,operation_type,authoritative_version,authoritative_payload,source_device_id,tombstone,created_at
@@ -398,7 +399,7 @@ export async function pullChanges(context: SyncRequestContext,input:{deviceId:st
     [context.companyId,input.lastCursor,context.allowedBranchIds,input.batchSize],
   );
   const nextCursor=changes.rows.length?Number(changes.rows.at(-1)?.cursor_id):input.lastCursor;
-  return {deviceRejected:false,changes:changes.rows,nextCursor,hasMore:nextCursor<maxCursor,resnapshotRequired:false};
+  return {deviceRejected:false,changes:changes.rows,nextCursor,hasMore:nextCursor<maxCursor,resnapshotRequired:false,offlineGrantExpiresAt};
 }
 
 export async function createScopedSnapshot(context:SyncRequestContext){
