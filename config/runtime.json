@@ -6,7 +6,7 @@
   "backendResolutionMode": "localhost",
   "manualLanHost": "",
   "backendPort": 4010,
-  "schemaVersion": "116_desktop_company_finance_scope_sync",
+  "schemaVersion": "117_desktop_branch_users_resnapshot",
   "deviceName": "حلب-الجميلية",
   "featureFlags": {
     "desktopMode": true
