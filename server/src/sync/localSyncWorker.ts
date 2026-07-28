@@ -329,21 +329,46 @@ async function pushOnce():Promise<void>{
             const paymentVoucherResult=actionResult.paymentVoucher&&typeof actionResult.paymentVoucher==='object'
               ?actionResult.paymentVoucher as Record<string,unknown>
               :null;
+            let localCashboxId=cashboxResult?.id?String(cashboxResult.id):null;
             if(cashboxResult?.id){
-              await applyAuthoritativeRow(
-                applyClient,
-                'cashboxes',
-                String(cashboxResult.id),
-                cashboxResult,
-                Number(cashboxResult.sync_version??0),
+              const matchingLocalCashbox=await applyClient.query<{id:string}>(
+                `select id
+                   from cashboxes
+                  where company_id=$1::uuid
+                    and (
+                      (agent_id=$2::uuid and upper(currency_code)=upper($3::text))
+                      or code=$4::text
+                    )
+                  order by case when agent_id=$2::uuid and upper(currency_code)=upper($3::text) then 0 else 1 end
+                  limit 1`,
+                [
+                  cashboxResult.company_id,
+                  cashboxResult.agent_id??null,
+                  cashboxResult.currency_code,
+                  cashboxResult.code,
+                ],
               );
+              if(matchingLocalCashbox.rows[0]?.id){
+                localCashboxId=matchingLocalCashbox.rows[0].id;
+              }else{
+                await applyAuthoritativeRow(
+                  applyClient,
+                  'cashboxes',
+                  String(cashboxResult.id),
+                  cashboxResult,
+                  Number(cashboxResult.sync_version??0),
+                );
+              }
             }
             if(paymentVoucherResult?.id){
               await applyAuthoritativeRow(
                 applyClient,
                 'payment_vouchers',
                 String(paymentVoucherResult.id),
-                paymentVoucherResult,
+                {
+                  ...paymentVoucherResult,
+                  cashbox_id:localCashboxId??paymentVoucherResult.cashbox_id,
+                },
                 Number(paymentVoucherResult.sync_version??0),
               );
             }
@@ -351,7 +376,11 @@ async function pushOnce():Promise<void>{
               applyClient,
               'transfers',
               String(row.entity_id),
-              transferResult,
+              {
+                ...transferResult,
+                posted_cashbox_id:localCashboxId??transferResult.posted_cashbox_id,
+                payout_cashbox_id:localCashboxId??transferResult.payout_cashbox_id,
+              },
               Number(transferResult.sync_version??0),
             );
           }
