@@ -50,14 +50,46 @@ export async function executeCentralDeferredAction(context:SyncRequestContext,pa
     if(!context.permissionCodes?.includes('transfers.write'))throw new Error('DEFERRED_ACTION_PERMISSION_REJECTED');
     const transfersService=new TransfersService(new TransfersRepository(pool),new FinanceRepository());
     if(input.action==='COMPLETE_TRANSFER'){
-      return transfersService.completeTransfer({
+      let cashboxId=input.cashboxId;
+      const selectedCashbox=await pool.query<{id:string}>(
+        `select id from cashboxes where id=$1::uuid and company_id=$2::uuid and is_active=true limit 1`,
+        [cashboxId,context.companyId],
+      );
+      if(!selectedCashbox.rowCount){
+        const compatibleCashboxes=await pool.query<{id:string}>(
+          `select cb.id
+             from transfers t
+             join cashboxes cb
+               on cb.company_id=t.company_id
+              and cb.agent_id=coalesce(t.destination_agent_id,t.agent_id)
+              and upper(cb.currency_code)=upper(t.currency)
+              and cb.is_active=true
+            where t.id=$1::uuid and t.company_id=$2::uuid
+            order by cb.created_at asc`,
+          [input.transferId,context.companyId],
+        );
+        if(compatibleCashboxes.rowCount!==1)throw new Error('CENTRAL_CASHBOX_MAPPING_REQUIRED');
+        cashboxId=compatibleCashboxes.rows[0].id;
+      }
+      const transfer=await transfersService.completeTransfer({
         id:input.transferId,
         companyId:context.companyId,
-        cashboxId:input.cashboxId,
+        cashboxId,
         voucherNo:input.voucherNo,
         userId:context.userId,
         baseCurrency:context.baseCurrency,
       });
+      const [cashbox,paymentVoucher]=await Promise.all([
+        pool.query(`select * from cashboxes where id=$1::uuid and company_id=$2::uuid limit 1`,[cashboxId,context.companyId]),
+        transfer?.payout_payment_voucher_id
+          ?pool.query(`select * from payment_vouchers where id=$1::uuid and company_id=$2::uuid limit 1`,[transfer.payout_payment_voucher_id,context.companyId])
+          :Promise.resolve({rows:[]}),
+      ]);
+      return {
+        transfer,
+        cashbox:cashbox.rows[0]??null,
+        paymentVoucher:paymentVoucher.rows[0]??null,
+      };
     }
     return transfersService.cancelTransfer({
       id:input.transferId,

@@ -10,7 +10,7 @@ const writableEntities = new Set([
   'daily_ledger_row_transfers','daily_ledger_row_transfer_items',
   'daily_ledger_print_events','daily_ledger_print_documents',
 ]);
-const mirroredEntities = new Set([...writableEntities,'cashboxes','transfers']);
+const mirroredEntities = new Set([...writableEntities,'cashboxes','payment_vouchers','transfers']);
 const softDeleteEntities = new Set([
   'daily_ledger_sessions','daily_ledger_rows','daily_ledger_dispatch_definitions',
 ]);
@@ -319,12 +319,40 @@ async function pushOnce():Promise<void>{
             (entityType==='central_action.transfer_complete'||entityType==='central_action.transfer_cancel')&&
             authoritative?.actionResult&&typeof authoritative.actionResult==='object'
           ){
+            const actionResult=authoritative.actionResult as Record<string,unknown>;
+            const transferResult=actionResult.transfer&&typeof actionResult.transfer==='object'
+              ?actionResult.transfer as Record<string,unknown>
+              :actionResult;
+            const cashboxResult=actionResult.cashbox&&typeof actionResult.cashbox==='object'
+              ?actionResult.cashbox as Record<string,unknown>
+              :null;
+            const paymentVoucherResult=actionResult.paymentVoucher&&typeof actionResult.paymentVoucher==='object'
+              ?actionResult.paymentVoucher as Record<string,unknown>
+              :null;
+            if(cashboxResult?.id){
+              await applyAuthoritativeRow(
+                applyClient,
+                'cashboxes',
+                String(cashboxResult.id),
+                cashboxResult,
+                Number(cashboxResult.sync_version??0),
+              );
+            }
+            if(paymentVoucherResult?.id){
+              await applyAuthoritativeRow(
+                applyClient,
+                'payment_vouchers',
+                String(paymentVoucherResult.id),
+                paymentVoucherResult,
+                Number(paymentVoucherResult.sync_version??0),
+              );
+            }
             await applyAuthoritativeRow(
               applyClient,
               'transfers',
               String(row.entity_id),
-              authoritative.actionResult as Record<string,unknown>,
-              Number((authoritative.actionResult as Record<string,unknown>).sync_version??0),
+              transferResult,
+              Number(transferResult.sync_version??0),
             );
           }
           await applyClient.query(`update sync_outbox set sync_status='ACKNOWLEDGED',acknowledged_at=now(),acknowledged_central_version=$2,central_result_id=$3,last_error_code=null,last_error_message=null,updated_at=now() where operation_id=$1`,[operationId,result.centralVersion??null,result.resultId??null]);

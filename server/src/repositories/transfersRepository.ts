@@ -137,8 +137,8 @@ export class TransfersRepository {
              a.name as agent_name,
              origin_agent.name as origin_agent_name,
              destination_agent.name as destination_agent_name,
-             rv.voucher_no as receipt_voucher_no,
-             cb.name as posted_cashbox_name,
+             coalesce(rv.voucher_no, payout_pv.voucher_no) as receipt_voucher_no,
+             coalesce(cb.name, payout_cb.name) as posted_cashbox_name,
              shipment_sender.full_name as shipment_sender_name,
              shipment_receiver.full_name as shipment_receiver_name,
              CASE
@@ -159,6 +159,8 @@ export class TransfersRepository {
       LEFT JOIN agents destination_agent ON t.destination_agent_id = destination_agent.id
       LEFT JOIN receipt_vouchers rv ON rv.id = t.receipt_voucher_id
       LEFT JOIN cashboxes cb ON cb.id = t.posted_cashbox_id
+      LEFT JOIN payment_vouchers payout_pv ON payout_pv.id = t.payout_payment_voucher_id
+      LEFT JOIN cashboxes payout_cb ON payout_cb.id = t.payout_cashbox_id
       WHERE t.company_id = $1
     `;
     const values: any[] = [filters.company_id];
