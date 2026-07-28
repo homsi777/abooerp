@@ -473,21 +473,60 @@ export class TransfersService {
       const exchangeRateToUsd = await this.resolveExchangeRateToUsd({
         originalCurrency: currency, companyId: input.companyId, baseCurrency: input.baseCurrency,
       });
-      const voucher = await this.financeRepository.createPaymentVoucherWithClient(client, {
-        voucherNo: input.voucherNo || `PV-TR-PAY-${Date.now()}-${String(transfer.id).slice(0, 6)}`,
-        branchId: payoutCashbox.branch_id ?? transfer.branch_id ?? undefined,
-        shipmentId: transfer.shipment_id ?? undefined,
-        relatedEntityType: 'transfer_payout',
-        relatedEntityId: transfer.id,
-        status: 'confirmed',
-        notes: `دفع أصل حوالة للمستلم — ${transfer.sender_name} إلى ${transfer.receiver_name}`,
-        originalAmount: Number(transfer.amount),
-        originalCurrency: currency,
-        exchangeRateToUsd,
-        companyId: input.companyId,
-        cashboxId: input.cashboxId,
-        createdByUserId: input.userId,
-      });
+      const payoutNotes = `دفع أصل حوالة للمستلم — ${transfer.sender_name} إلى ${transfer.receiver_name}`;
+      const existingVoucherResult = await client.query(
+        `select * from payment_vouchers
+          where company_id=$1::uuid
+            and related_entity_type='transfer_payout'
+            and related_entity_id=$2::uuid
+          for update`,
+        [input.companyId, transfer.id],
+      );
+      let voucher = existingVoucherResult.rows[0];
+      if (voucher) {
+        if (
+          Number(voucher.original_amount) !== Number(transfer.amount)
+          || String(voucher.original_currency).toUpperCase() !== currency
+        ) {
+          throw new HttpError(409, 'سند دفع الحوالة الموجود لا يطابق مبلغ الحوالة أو عملتها.');
+        }
+        await client.query(
+          `update payment_vouchers
+              set branch_id=coalesce($2::uuid,branch_id),
+                  cashbox_id=$3::uuid,
+                  shipment_id=coalesce(shipment_id,$4::uuid),
+                  updated_at=now()
+            where id=$1::uuid`,
+          [voucher.id, payoutCashbox.branch_id ?? transfer.branch_id ?? null, input.cashboxId, transfer.shipment_id ?? null],
+        );
+        if (String(voucher.status).toLowerCase() !== 'confirmed') {
+          voucher = await this.financeRepository.updatePaymentVoucherWithClient(client, String(voucher.id), {
+            status: 'confirmed',
+            notes: payoutNotes,
+            originalAmount: Number(transfer.amount),
+            originalCurrency: currency,
+            exchangeRateToUsd,
+          });
+        } else {
+          voucher = (await client.query(`select * from payment_vouchers where id=$1::uuid`, [voucher.id])).rows[0];
+        }
+      } else {
+        voucher = await this.financeRepository.createPaymentVoucherWithClient(client, {
+          voucherNo: input.voucherNo || `PV-TR-PAY-${Date.now()}-${String(transfer.id).slice(0, 6)}`,
+          branchId: payoutCashbox.branch_id ?? transfer.branch_id ?? undefined,
+          shipmentId: transfer.shipment_id ?? undefined,
+          relatedEntityType: 'transfer_payout',
+          relatedEntityId: transfer.id,
+          status: 'confirmed',
+          notes: payoutNotes,
+          originalAmount: Number(transfer.amount),
+          originalCurrency: currency,
+          exchangeRateToUsd,
+          companyId: input.companyId,
+          cashboxId: input.cashboxId,
+          createdByUserId: input.userId,
+        });
+      }
       const destinationAgentId = String(transfer.destination_agent_id ?? transfer.agent_id ?? '');
       if (destinationAgentId && String(payoutCashbox.agent_id ?? '') !== destinationAgentId) {
         throw new HttpError(400, 'صندوق تسليم الحوالة يجب أن يكون تابعاً لوكيل الوجهة.');
