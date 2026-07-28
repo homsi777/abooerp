@@ -80,7 +80,7 @@ function getDefaultRuntimeConfig(): RuntimeConfig {
     backendResolutionMode: 'localhost',
     manualLanHost: '',
     backendPort: 4010,
-    schemaVersion: '115_desktop_finance_history_sync',
+    schemaVersion: '116_desktop_company_finance_scope_sync',
     deviceName: os.hostname() || 'desktop-node',
     featureFlags: {
       desktopMode: true,

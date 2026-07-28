@@ -448,14 +448,14 @@ export async function createScopedSnapshot(context:SyncRequestContext){
       :[];
     data.receipt_vouchers=await query(
       `select * from receipt_vouchers where company_id=$1
-       and branch_id=any($2::uuid[])
+       and (branch_id is null or branch_id=any($2::uuid[]))
        and ($3::uuid is null or agent_id=$3::uuid)
        order by created_at,id`,
       [context.companyId,branches,context.agentId??null],
     );
     data.payment_vouchers=await query(
       `select * from payment_vouchers where company_id=$1
-       and branch_id=any($2::uuid[])
+       and (branch_id is null or branch_id=any($2::uuid[]))
        and ($3::uuid is null or agent_id=$3::uuid)
        order by created_at,id`,
       [context.companyId,branches,context.agentId??null],
@@ -468,14 +468,14 @@ export async function createScopedSnapshot(context:SyncRequestContext){
     );
     data.cashbox_transactions=await query(
       `select * from cashbox_transactions where company_id=$1
-       and branch_id=any($2::uuid[])
+       and (branch_id is null or branch_id=any($2::uuid[]))
        and ($3::uuid is null or agent_id=$3::uuid)
        order by (reversal_of_cashbox_transaction_id is not null),created_at,id`,
       [context.companyId,branches,context.agentId??null],
     );
     data.party_financial_movements=await query(
       `select pfm.* from party_financial_movements pfm
-       where pfm.branch_id=any($1::uuid[])
+       where (pfm.branch_id is null or pfm.branch_id=any($1::uuid[]))
        and ($2::uuid is null or pfm.agent_id=$2::uuid)
        order by (pfm.reversal_of_movement_id is not null),pfm.created_at,pfm.id`,
       [branches,context.agentId??null],
