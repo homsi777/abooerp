@@ -999,7 +999,8 @@ export default function ShipmentQuickLedger() {
           normalizeName(row.destination ?? '').includes(needle) ||
           normalizeName(row.sender ?? '').includes(needle) ||
           normalizeName(row.receiver ?? '').includes(needle) ||
-          normalizeName(row.receiptNo ?? '').includes(needle)
+          normalizeName(row.receiptNo ?? '').includes(needle) ||
+          normalizeName(row.notes ?? '').includes(needle)
         );
       });
     }
@@ -1144,7 +1145,8 @@ export default function ShipmentQuickLedger() {
             normalizeName(row.destination ?? '').includes(needle) ||
             normalizeName(row.sender_name ?? '').includes(needle) ||
             normalizeName(row.receiver_name ?? '').includes(needle) ||
-            normalizeName(row.receipt_no ?? '').includes(needle),
+            normalizeName(row.receipt_no ?? '').includes(needle) ||
+            normalizeName(row.notes ?? '').includes(needle),
         )
       : printable;
     const totals = computeTotalsFromRemoteRows(filteredRemote);
@@ -4591,7 +4593,7 @@ export default function ShipmentQuickLedger() {
               <input
                 value={pageSearchQuery}
                 onChange={(e) => setPageSearchQuery(e.target.value)}
-                placeholder="جهة، مرسل، مستلم، رقم إيصال — أسطر هذه الصفحة فقط..."
+                placeholder="جهة، مرسل، مستلم، رقم إيصال، ملاحظات — أسطر هذه الصفحة فقط..."
                 title="يبحث فقط ضمن الأسطر المعروضة حالياً في هذه الصفحة"
               />
               {pageSearchQuery.trim() ? (
