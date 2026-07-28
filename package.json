@@ -3,7 +3,7 @@
   "description": "شركة عبو المحمود لنقل والخدمات الوجستية",
   "author": "شركة عبو المحمود لنقل والخدمات الوجستية",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -161,6 +161,7 @@
       }
     ],
     "win": {
+      "icon": "public/favicon.png",
       "target": [
         {
           "target": "nsis",
