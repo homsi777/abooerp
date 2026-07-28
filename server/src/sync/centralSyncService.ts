@@ -434,11 +434,50 @@ export async function createScopedSnapshot(context:SyncRequestContext){
     data.tariffs=await query(`select * from tariffs where is_active=true`);
     data.drivers=await query(`select * from drivers where status='active' and (branch_id is null or branch_id=any($1::uuid[])) and ($2::uuid is null or agent_id is null or agent_id=$2::uuid)`,[branches,context.agentId??null]);
     data.vehicles=await query(`select * from vehicles where status='active' and (branch_id is null or branch_id=any($1::uuid[])) and ($2::uuid is null or agent_id is null or agent_id=$2::uuid)`,[branches,context.agentId??null]);
-    data.users=await query(`select id,username,full_name,email,phone,password_hash,role_id,branch_id,agent_id,status,role,company_id,is_active,user_type,created_at,updated_at,last_login_at from users where id=$1 and company_id=$2`,[context.userId,context.companyId]);
-    data.roles=await query(`select r.* from roles r join users u on u.role_id=r.id where u.id=$1`,[context.userId]);
-    data.permissions=await query(`select p.* from permissions p join role_permissions rp on rp.permission_id=p.id join users u on u.role_id=rp.role_id where u.id=$1 and p.is_active=true`,[context.userId]);
-    data.role_permissions=await query(`select rp.* from role_permissions rp join users u on u.role_id=rp.role_id where u.id=$1`,[context.userId]);
-    data.user_branches=await query(`select ub.* from user_branches ub where ub.user_id=$1 and ub.branch_id=any($2::uuid[])`,[context.userId,branches]);
+    // Offline login must not depend on whichever administrator activated the device.
+    // Mirror only active users who are assigned to one of this device's scoped branches,
+    // together with the exact RBAC rows required to authenticate and authorize them.
+    data.users=await query(
+      `select distinct u.id,u.username,u.full_name,u.email,u.phone,u.password_hash,u.role_id,
+              u.branch_id,u.agent_id,u.status,u.role,u.company_id,u.is_active,u.user_type,
+              u.created_at,u.updated_at,u.last_login_at
+         from users u
+         left join user_branches ub on ub.user_id=u.id
+        where u.company_id=$1
+          and u.status='active'
+          and u.is_active=true
+          and (u.branch_id=any($2::uuid[]) or ub.branch_id=any($2::uuid[]))
+        order by u.username`,
+      [context.companyId,branches],
+    );
+    const scopedUserIds=(data.users as Array<Record<string,unknown>>).map(row=>row.id);
+    data.roles=scopedUserIds.length
+      ?await query(`select distinct r.* from roles r join users u on u.role_id=r.id where u.id=any($1::uuid[])`,[scopedUserIds])
+      :[];
+    data.permissions=scopedUserIds.length
+      ?await query(
+        `select distinct p.* from permissions p
+         join role_permissions rp on rp.permission_id=p.id
+         join users u on u.role_id=rp.role_id
+         where u.id=any($1::uuid[]) and p.is_active=true`,
+        [scopedUserIds],
+      )
+      :[];
+    data.role_permissions=scopedUserIds.length
+      ?await query(
+        `select distinct rp.* from role_permissions rp
+         join users u on u.role_id=rp.role_id
+         where u.id=any($1::uuid[])`,
+        [scopedUserIds],
+      )
+      :[];
+    data.user_branches=scopedUserIds.length
+      ?await query(
+        `select distinct ub.* from user_branches ub
+         where ub.user_id=any($1::uuid[]) and ub.branch_id=any($2::uuid[])`,
+        [scopedUserIds,branches],
+      )
+      :[];
     data.system_settings=await query(`select * from system_settings where is_encrypted=false and (key like 'daily_ledger.%' or key like 'printing.%' or key like 'terminology.%')`);
     data.printers=await query(`select * from printers where company_id=$1 and is_active=true and (branch_id is null or branch_id=any($2::uuid[]))`,[context.companyId,branches]);
     data.shipments=await query(`select * from shipments where company_id=$1 and deleted_at is null and branch_id=any($2::uuid[]) and ($3::uuid is null or agent_id is null or agent_id=$3::uuid)`,[context.companyId,branches,context.agentId??null]);
