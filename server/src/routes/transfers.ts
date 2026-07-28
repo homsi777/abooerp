@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { asyncHandler } from '../utils/http.js';
 import { requirePermissions } from '../middleware/authorization.js';
 import { requireIdempotencyKey } from '../middleware/idempotency.js';
+import { env } from '../config/env.js';
+import { pool } from '../db/pool.js';
+import { queueCancelTransferAction, queueCompleteTransferAction } from '../sync/localDeferredActions.js';
+import { runLocalSyncCycle } from '../sync/localSyncWorker.js';
 import { parseDataScope } from '../utils/scope.js';
 import { TransfersService } from '../services/transfersService.js';
 import { HttpError } from '../utils/errors.js';
@@ -181,6 +185,32 @@ export function createTransfersRouter(transfersService: TransfersService) {
         return;
       }
       const baseCurrency = (req as any).requestUserContext?.baseCurrency as string | undefined;
+      if (env.SYNC_NODE_ROLE === 'local') {
+        if (!scope.branchId) throw new HttpError(400, 'يجب اختيار الفرع قبل تسليم الحوالة.');
+        const queued = await queueCompleteTransferAction({
+          companyId: String(scope.companyId),
+          branchId: String(scope.branchId),
+          userId: scope.userId,
+          transferId: String(req.params.id),
+          cashboxId: data.cashboxId,
+          voucherNo: data.voucherNo,
+        });
+        await runLocalSyncCycle();
+        const operation = await pool.query<{ sync_status: string }>(
+          `select sync_status from sync_outbox where operation_id=$1::uuid`,
+          [queued.operationId],
+        );
+        const localTransfer = await pool.query(
+          `select * from transfers where id=$1::uuid and company_id=$2::uuid`,
+          [String(req.params.id), String(scope.companyId)],
+        );
+        const pendingCentral = operation.rows[0]?.sync_status !== 'ACKNOWLEDGED';
+        res.status(pendingCentral ? 202 : 200).json({
+          success: true,
+          data: { ...(localTransfer.rows[0] ?? {}), pendingCentral, operationId: queued.operationId },
+        });
+        return;
+      }
       const transfer = await transfersService.completeTransfer({
         id: String(req.params.id),
         companyId: String(scope.companyId),
@@ -215,6 +245,31 @@ export function createTransfersRouter(transfersService: TransfersService) {
       const data = cancelTransferSchema.parse(req.body);
       if (!scope.companyId) {
         res.status(403).json({ success: false, error: 'Company scope required' });
+        return;
+      }
+      if (env.SYNC_NODE_ROLE === 'local') {
+        if (!scope.branchId) throw new HttpError(400, 'يجب اختيار الفرع قبل إلغاء الحوالة.');
+        const queued = await queueCancelTransferAction({
+          companyId: String(scope.companyId),
+          branchId: String(scope.branchId),
+          userId: scope.userId,
+          transferId: String(req.params.id),
+          reason: data.reason,
+        });
+        await runLocalSyncCycle();
+        const operation = await pool.query<{ sync_status: string }>(
+          `select sync_status from sync_outbox where operation_id=$1::uuid`,
+          [queued.operationId],
+        );
+        const localTransfer = await pool.query(
+          `select * from transfers where id=$1::uuid and company_id=$2::uuid`,
+          [String(req.params.id), String(scope.companyId)],
+        );
+        const pendingCentral = operation.rows[0]?.sync_status !== 'ACKNOWLEDGED';
+        res.status(pendingCentral ? 202 : 200).json({
+          success: true,
+          data: { ...(localTransfer.rows[0] ?? {}), pendingCentral, operationId: queued.operationId },
+        });
         return;
       }
       const transfer = await transfersService.cancelTransfer({

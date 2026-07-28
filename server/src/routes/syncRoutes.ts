@@ -43,7 +43,14 @@ function contextFromRequest(req:any):SyncRequestContext{
   if(!user?.companyId) throw new HttpError(401,'Authentication required.');
   const allowedBranchIds=Array.isArray(user.allowedBranchIds)?user.allowedBranchIds:[];
   if(!allowedBranchIds.length) throw new HttpError(403,'SYNC_BRANCH_SCOPE_REQUIRED');
-  return {companyId:user.companyId,userId:user.userId,allowedBranchIds,agentId:user.agentId??user.scope?.agentId};
+  return {
+    companyId:user.companyId,
+    userId:user.userId,
+    allowedBranchIds,
+    agentId:user.agentId??user.scope?.agentId,
+    baseCurrency:user.baseCurrency,
+    permissionCodes:Array.isArray(user.permissions)?user.permissions:[],
+  };
 }
 
 export function createSyncRouter(){

@@ -8,7 +8,6 @@ import { forbidUserTypes, requireAnyPermissions, requirePermissions } from '../m
 import { currencyCodeSchema } from '../utils/money.js';
 import { AuditService } from '../services/auditService.js';
 import { requireIdempotencyKey } from '../middleware/idempotency.js';
-import { licenseGuard } from '../middleware/licenseGuard.js';
 import { calculateShipmentFinancialBreakdown } from '../utils/shipmentFinancialBreakdown.js';
 import { computeAgentRemittanceDue } from '../utils/agentShipmentSettlement.js';
 import { HttpError } from '../utils/errors.js';
@@ -332,7 +331,6 @@ export function createFinanceRouter(service: FinanceService) {
     '/receipt-vouchers',
     requireAnyPermissions(['finance.read', 'finance.write', 'finance.view']),
     requireAnyPermissions(['finance.vouchers.create', 'finance.vouchers.write']),
-    licenseGuard('receipt'),
     requireIdempotencyKey('finance.receipt.create'),
     asyncHandler(async (req, res) => {
       try {

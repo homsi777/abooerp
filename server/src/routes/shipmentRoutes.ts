@@ -7,7 +7,6 @@ import { parseDataScope } from '../utils/scope.js';
 import { requirePermissions } from '../middleware/authorization.js';
 import { requireIdempotencyKey } from '../middleware/idempotency.js';
 import { AuditService } from '../services/auditService.js';
-import { licenseGuard } from '../middleware/licenseGuard.js';
 import { emit } from '../events/eventBus.js';
 import { sendAgentShipmentNotification, sendLinkedPartyShipmentNotifications } from '../services/telegramService.js';
 import { CANONICAL_SHIPMENT_STATUSES, type CanonicalShipmentStatus } from '../domain/shipmentStatus.js';
@@ -163,7 +162,6 @@ export function createShipmentRouter(service: ShipmentService) {
   router.post(
     '/',
     requirePermissions(['shipments.write']),
-    licenseGuard('shipment'),
     requireIdempotencyKey('shipments.create'),
     asyncHandler(async (req, res) => {
       const scope = parseDataScope(req);

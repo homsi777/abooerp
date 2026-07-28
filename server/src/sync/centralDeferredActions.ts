@@ -13,11 +13,27 @@ import { ShipmentService } from '../services/shipmentService.js';
 import { TransfersService } from '../services/transfersService.js';
 import type { SyncRequestContext } from './centralSyncService.js';
 
-const payloadSchema=z.object({
+const postLedgerShipmentsSchema=z.object({
   action:z.literal('POST_DAILY_LEDGER_SHIPMENTS'),branchId:z.string().uuid(),ledgerDate:z.string().min(1),lineLabel:z.string().min(1),
   sessionId:z.string().uuid().optional(),rowIds:z.array(z.string().uuid()).optional(),createdByUserId:z.string().uuid().optional(),
   saveOperationId:z.string().uuid().optional(),
 });
+const completeTransferSchema=z.object({
+  action:z.literal('COMPLETE_TRANSFER'),
+  transferId:z.string().uuid(),
+  cashboxId:z.string().uuid(),
+  voucherNo:z.string().trim().min(1).max(100).optional(),
+});
+const cancelTransferSchema=z.object({
+  action:z.literal('CANCEL_TRANSFER'),
+  transferId:z.string().uuid(),
+  reason:z.string().trim().max(1000).optional(),
+});
+const payloadSchema=z.discriminatedUnion('action',[
+  postLedgerShipmentsSchema,
+  completeTransferSchema,
+  cancelTransferSchema,
+]);
 
 let service:DailyLedgerService|null=null;
 function postingService(){
@@ -30,6 +46,26 @@ function postingService(){
 
 export async function executeCentralDeferredAction(context:SyncRequestContext,payload:Record<string,unknown>){
   const input=payloadSchema.parse(payload);
+  if(input.action==='COMPLETE_TRANSFER'||input.action==='CANCEL_TRANSFER'){
+    if(!context.permissionCodes?.includes('transfers.write'))throw new Error('DEFERRED_ACTION_PERMISSION_REJECTED');
+    const transfersService=new TransfersService(new TransfersRepository(pool),new FinanceRepository());
+    if(input.action==='COMPLETE_TRANSFER'){
+      return transfersService.completeTransfer({
+        id:input.transferId,
+        companyId:context.companyId,
+        cashboxId:input.cashboxId,
+        voucherNo:input.voucherNo,
+        userId:context.userId,
+        baseCurrency:context.baseCurrency,
+      });
+    }
+    return transfersService.cancelTransfer({
+      id:input.transferId,
+      companyId:context.companyId,
+      userId:context.userId,
+      reason:input.reason,
+    });
+  }
   if(!context.allowedBranchIds.includes(input.branchId))throw new Error('DEFERRED_ACTION_SCOPE_REJECTED');
   return postingService().postPendingShipments(
     {companyId:context.companyId,branchId:input.branchId,userId:context.userId},

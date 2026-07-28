@@ -1,6 +1,5 @@
 import { ReactNode, useEffect, useState } from 'react';
 import TopMegaNavigation from '../components/navigation/TopMegaNavigation';
-import LicenseQuotaBar from '../components/layout/LicenseQuotaBar';
 import PrimaryRemoteUpdateBanner from '../components/layout/PrimaryRemoteUpdateBanner';
 import { getLanPort, getLanState, getResolvedApiBaseUrl } from '../lib/api/httpClient';
 import { phase15Gateway } from '../lib/api/phase15Gateway';
@@ -213,9 +212,6 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
         <div className="content-area" style={{ flex: 1, overflow: 'auto', padding: '16px' }}>
           {children}
         </div>
-
-        {/* ── License quota warning bar (TEST licenses only) ── */}
-        <LicenseQuotaBar />
 
         <footer className="app-footer">
           <div className="flex items-center gap-4" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>

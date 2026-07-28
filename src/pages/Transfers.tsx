@@ -163,7 +163,13 @@ export default function Transfers() {
     }
     try {
       setPosting(true);
-      await transfersGateway.complete(postingTransfer.id, { cashboxId: postingCashboxId });
+      const result = await transfersGateway.complete(postingTransfer.id, { cashboxId: postingCashboxId });
+      if (result.pendingCentral) {
+        showToast('تم حفظ طلب التسليم وسيُنفّذ تلقائياً عند عودة اتصال السحابة', 'info');
+        closeCompleteDialog();
+        void loadData();
+        return;
+      }
       showToast('تم ترحيل الحوالة وإنشاء سند القبض', 'success');
       closeCompleteDialog();
       void loadData();
@@ -177,7 +183,12 @@ export default function Transfers() {
   const handleCancel = async (transfer: Transfer) => {
     const reason = prompt('سبب الإلغاء (اختياري):') || undefined;
     try {
-      await transfersGateway.cancel(transfer.id, { reason });
+      const result = await transfersGateway.cancel(transfer.id, { reason });
+      if (result.pendingCentral) {
+        showToast('تم حفظ طلب الإلغاء وسيُنفّذ تلقائياً عند عودة اتصال السحابة', 'info');
+        void loadData();
+        return;
+      }
       showToast('تم إلغاء الحوالة وعكس القيود', 'success');
       void loadData();
     } catch (err: any) {

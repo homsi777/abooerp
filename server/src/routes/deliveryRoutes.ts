@@ -8,7 +8,6 @@ import { parseDataScope } from '../utils/scope.js';
 import { requirePermissions } from '../middleware/authorization.js';
 import { requireIdempotencyKey } from '../middleware/idempotency.js';
 import { AuditService } from '../services/auditService.js';
-import { licenseGuard } from '../middleware/licenseGuard.js';
 
 const deliveryCreateSchema = z.object({
   deliveryNo: z.string().min(1),
@@ -58,7 +57,6 @@ export function createDeliveryRouter(service: DeliveryService) {
   router.post(
     '/',
     requirePermissions(['deliveries.write']),
-    licenseGuard('delivery'),
     requireIdempotencyKey('deliveries.create'),
     asyncHandler(async (req, res) => {
       const scope = parseDataScope(req);

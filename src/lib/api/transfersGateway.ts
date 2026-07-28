@@ -53,6 +53,8 @@ export interface Transfer {
   cancellation_reason?: string | null;
   receipt_voucher_no?: string | null;
   posted_cashbox_name?: string | null;
+  pendingCentral?: boolean;
+  operationId?: string;
   created_at: string;
 }
 

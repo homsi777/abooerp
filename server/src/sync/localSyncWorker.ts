@@ -10,6 +10,7 @@ const writableEntities = new Set([
   'daily_ledger_row_transfers','daily_ledger_row_transfer_items',
   'daily_ledger_print_events','daily_ledger_print_documents',
 ]);
+const mirroredEntities = new Set([...writableEntities,'cashboxes','transfers']);
 const softDeleteEntities = new Set([
   'daily_ledger_sessions','daily_ledger_rows','daily_ledger_dispatch_definitions',
 ]);
@@ -126,7 +127,7 @@ async function preferNewerLedgerSession(
 }
 
 async function applyAuthoritativeRow(client:PoolClient,entityType:string,entityId:string,payload:Record<string,unknown>|null,version:number,tombstone=false){
-  if(!writableEntities.has(entityType))return;
+  if(!mirroredEntities.has(entityType))return;
   await client.query(`select set_config('app.sync_suppress_feed','1',true)`);
   await client.query(`select set_config('app.sync_suppress_outbox','1',true)`);
   if(tombstone||!payload){
@@ -159,8 +160,8 @@ async function applyAuthoritativeRow(client:PoolClient,entityType:string,entityI
 
 const snapshotOrder=[
   'companies','roles','permissions','branches','agents','users','role_permissions','user_branches',
-  'currencies','cities','goods_types','tariffs','drivers','vehicles','customers','senders_receivers',
-  'system_settings','printers','shipments','shipment_status_history','manifests','manifest_shipments',
+  'currencies','cashboxes','cities','goods_types','tariffs','drivers','vehicles','customers','senders_receivers',
+  'system_settings','printers','shipments','transfers','shipment_status_history','manifests','manifest_shipments',
   'daily_ledger_sessions','daily_ledger_dispatch_definitions','daily_ledger_row_transfers',
   'daily_ledger_rows','daily_ledger_row_transfer_items','daily_ledger_print_events','daily_ledger_print_documents',
 ];
@@ -301,7 +302,21 @@ async function pushOnce():Promise<void>{
       if(result.status==='ACCEPTED'||result.status==='ALREADY_APPLIED'){
         const applyClient=await pool.connect();try{
           await applyClient.query('begin');
-          if(result.authoritativePayload)await applyAuthoritativeRow(applyClient,String(row.entity_type),String(row.entity_id),result.authoritativePayload,Number(result.centralVersion??0));
+          const entityType=String(row.entity_type);
+          const authoritative=result.authoritativePayload as Record<string,unknown>|undefined;
+          if(authoritative)await applyAuthoritativeRow(applyClient,entityType,String(row.entity_id),authoritative,Number(result.centralVersion??0));
+          if(
+            (entityType==='central_action.transfer_complete'||entityType==='central_action.transfer_cancel')&&
+            authoritative?.actionResult&&typeof authoritative.actionResult==='object'
+          ){
+            await applyAuthoritativeRow(
+              applyClient,
+              'transfers',
+              String(row.entity_id),
+              authoritative.actionResult as Record<string,unknown>,
+              Number((authoritative.actionResult as Record<string,unknown>).sync_version??0),
+            );
+          }
           await applyClient.query(`update sync_outbox set sync_status='ACKNOWLEDGED',acknowledged_at=now(),acknowledged_central_version=$2,central_result_id=$3,last_error_code=null,last_error_message=null,updated_at=now() where operation_id=$1`,[operationId,result.centralVersion??null,result.resultId??null]);
           await applyClient.query(`update sync_deferred_actions set status='CONFIRMED',safe_error_code=null,safe_error_message=null,completed_at=now(),updated_at=now() where operation_id=$1`,[operationId]);
           await applyClient.query(`update sync_local_state set last_push_at=now(),last_successful_sync_at=now(),updated_at=now() where singleton=true`);

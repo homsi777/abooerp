@@ -27,6 +27,8 @@ export type SyncRequestContext = {
   userId?: string;
   allowedBranchIds: string[];
   agentId?: string;
+  baseCurrency?: string;
+  permissionCodes?: string[];
 };
 
 export type PushOperationResult = {
@@ -188,6 +190,12 @@ async function processDeferredAction(client:PoolClient,context:SyncRequestContex
   }finally{await client.query(`select pg_advisory_unlock(hashtextextended($1,0))`,[operation.operationId]).catch(()=>undefined)}
 }
 
+const supportedDeferredActionEntities=new Set([
+  'central_action.post_shipments',
+  'central_action.transfer_complete',
+  'central_action.transfer_cancel',
+]);
+
 export async function applyPushOperation(context: SyncRequestContext, operation: PushOperation): Promise<PushOperationResult> {
   const client = await pool.connect();
   let durableResultId: string | undefined;
@@ -207,7 +215,7 @@ export async function applyPushOperation(context: SyncRequestContext, operation:
         await client.query('commit');
         return { operationId: operation.operationId, entityId: operation.entityId, status: 'VALIDATION_REJECTED', errorCode: 'OPERATION_HASH_MISMATCH', errorMessage: 'Operation ID was already used with a different payload.' };
       }
-      if(operation.operation==='ACTION'&&operation.entityType==='central_action.post_shipments'&&['PROCESSING','CENTRAL_PROCESSING_FAILED'].includes(String(stored.rows[0].result_status))){
+      if(operation.operation==='ACTION'&&supportedDeferredActionEntities.has(operation.entityType)&&['PROCESSING','CENTRAL_PROCESSING_FAILED'].includes(String(stored.rows[0].result_status))){
         const resultId=String(stored.rows[0].id);await client.query('commit');return processDeferredAction(client,context,operation,resultId);
       }
       await client.query('commit');
@@ -231,7 +239,7 @@ export async function applyPushOperation(context: SyncRequestContext, operation:
     );
     const resultId = createdResult.rows[0].id;
     durableResultId = resultId;
-    if(operation.operation==='ACTION'&&operation.entityType==='central_action.post_shipments'){
+    if(operation.operation==='ACTION'&&supportedDeferredActionEntities.has(operation.entityType)){
       await client.query('commit');return processDeferredAction(client,context,operation,resultId);
     }
     const spec = entitySpecs[operation.entityType];
@@ -400,14 +408,25 @@ export async function createScopedSnapshot(context:SyncRequestContext){
     const query=async(sql:string,values:unknown[]=[])=>(await client.query<Record<string,unknown>>(sql,values)).rows;
     const data:Record<string,unknown[]>={};
     data.companies=await query(`select * from companies where id=$1`,[context.companyId]);
-    data.branches=await query(`select * from branches where company_id=$1 and id=any($2::uuid[])`,[context.companyId,branches]);
-    data.agents=await query(`select * from agents where is_active=true and (branch_id is null or branch_id=any($1::uuid[])) and ($2::uuid is null or id=$2::uuid)`,[branches,context.agentId??null]);
+    // Destination lookup in the daily ledger needs the full company reference catalog,
+    // even when this desktop device may write only to one assigned branch.
+    data.branches=await query(`select * from branches where company_id=$1 and is_active=true`,[context.companyId]);
+    data.agents=await query(
+      `select a.* from agents a join branches b on b.id=a.branch_id
+       where a.is_active=true and b.company_id=$1 and ($2::uuid is null or a.id=$2::uuid)`,
+      [context.companyId,context.agentId??null],
+    );
     data.senders_receivers=await query(`select * from senders_receivers where status='active' and (branch_id is null or branch_id=any($1::uuid[])) and ($2::uuid is null or agent_id is null or agent_id=$2::uuid)`,[branches,context.agentId??null]);
     data.customers=await query(`select * from customers where status='active' and (company_id is null or company_id=$1) and (branch_id is null or branch_id=any($2::uuid[])) and ($3::uuid is null or agent_id is null or agent_id=$3::uuid)`,[context.companyId,branches,context.agentId??null]);
     data.cities=await query(`select * from cities where is_active=true`);
     // Include inactive currencies too: shipments/history still reference them, and
     // scoped snapshot apply skips any child whose required parent UUID is absent.
     data.currencies=await query(`select * from currencies where company_id=$1`,[context.companyId]);
+    data.cashboxes=await query(
+      `select * from cashboxes where company_id=$1 and is_active=true
+       and (branch_id is null or branch_id=any($2::uuid[]))`,
+      [context.companyId,branches],
+    );
     data.goods_types=await query(`select * from goods_types where is_active=true`);
     data.tariffs=await query(`select * from tariffs where is_active=true`);
     data.drivers=await query(`select * from drivers where status='active' and (branch_id is null or branch_id=any($1::uuid[])) and ($2::uuid is null or agent_id is null or agent_id=$2::uuid)`,[branches,context.agentId??null]);
@@ -420,6 +439,12 @@ export async function createScopedSnapshot(context:SyncRequestContext){
     data.system_settings=await query(`select * from system_settings where is_encrypted=false and (key like 'daily_ledger.%' or key like 'printing.%' or key like 'terminology.%')`);
     data.printers=await query(`select * from printers where company_id=$1 and is_active=true and (branch_id is null or branch_id=any($2::uuid[]))`,[context.companyId,branches]);
     data.shipments=await query(`select * from shipments where company_id=$1 and deleted_at is null and branch_id=any($2::uuid[]) and ($3::uuid is null or agent_id is null or agent_id=$3::uuid)`,[context.companyId,branches,context.agentId??null]);
+    data.transfers=await query(
+      `select * from transfers where company_id=$1
+       and (branch_id is null or branch_id=any($2::uuid[]))
+       and ($3::uuid is null or agent_id=$3::uuid or origin_agent_id=$3::uuid or destination_agent_id=$3::uuid)`,
+      [context.companyId,branches,context.agentId??null],
+    );
     const shipmentIds=(data.shipments as Array<Record<string,unknown>>).map(row=>row.id);
     data.shipment_status_history=shipmentIds.length?await query(`select * from shipment_status_history where shipment_id=any($1::uuid[])`,[shipmentIds]):[];
     data.manifests=await query(`select * from manifests where company_id=$1 and deleted_at is null and branch_id=any($2::uuid[])`,[context.companyId,branches]);

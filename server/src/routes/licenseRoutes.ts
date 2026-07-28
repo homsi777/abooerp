@@ -89,54 +89,18 @@ export function createLicenseRouter(repo: LicenseRepository) {
   router.post(
     '/activate',
     asyncHandler(async (req, res) => {
-      const { licenseCode, machineId } = activateSchema.parse(req.body);
-
-      const def = resolveKeyDef(licenseCode);
-      if (!def) {
-        throw new HttpError(
-          400,
-          'INVALID_LICENSE_CODE: المفتاح غير معرّف على هذا الخادم — أضفه إلى LICENSE_LOCAL_KEYS أو LICENSE_CLOUD_KEYS في server/.env ثم أعد تشغيل الخادم.',
-        );
-      }
-
-      let companyId = (req as any).requestUserContext?.companyId as string | undefined;
-      if (!companyId) companyId = (await repo.resolveDefaultCompanyId()) ?? undefined;
-      if (!companyId) throw new HttpError(503, 'No company found in database');
-
-      const record = await repo.activate({
-        companyId,
-        licenseCode,
-        licenseType: def.type,
-        machineId: machineId ?? null,
-        cloudEnabled: def.cloudEnabled,
-        shipmentLimit: def.shipmentLimit,
-        deliveryLimit: def.deliveryLimit,
-        receiptLimit: def.receiptLimit,
-      });
-
-      const usage = await repo.getUsage(companyId);
-
-      // Fire activation Telegram notification (non-blocking, never fails the request)
-      const deviceName = (req as any).requestUserContext?.deviceName as string | undefined;
-      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? undefined;
-      void sendActivationNotification(companyId, {
-        licenseType: record.licenseType,
-        deviceName,
-        ipAddress: ip,
-        appVersion: '1.0.0',
-      });
-
       res.json({
         success: true,
         data: {
-          licenseType: record.licenseType,
-          cloudEnabled: record.cloudEnabled,
-          shipmentLimit: record.shipmentLimit,
-          deliveryLimit: record.deliveryLimit,
-          receiptLimit: record.receiptLimit,
-          activatedAt: record.activatedAt,
-          usage,
-          quotaRemaining: buildQuotaRemaining(record, usage),
+          licenseActive: true,
+          licenseType: 'COMPANY_OWNED',
+          cloudEnabled: true,
+          shipmentLimit: null,
+          deliveryLimit: null,
+          receiptLimit: null,
+          activatedAt: null,
+          usage: { shipmentsUsed: 0, deliveriesUsed: 0, receiptsUsed: 0 },
+          quotaRemaining: { shipments: null, deliveries: null, receipts: null },
         },
       });
     }),
@@ -147,57 +111,19 @@ export function createLicenseRouter(repo: LicenseRepository) {
    */
   router.get(
     '/status',
-    asyncHandler(async (req, res) => {
-      if (env.SYNC_NODE_ROLE === 'local') {
-        const state = await pool.query<{snapshot_initialized_at:string|null;offline_grant_expires_at:string|null}>(
-          `select snapshot_initialized_at,offline_grant_expires_at from sync_local_state where singleton=true`,
-        );
-        const grant = state.rows[0];
-        const grantActive = Boolean(
-          grant?.snapshot_initialized_at && grant.offline_grant_expires_at && Date.parse(grant.offline_grant_expires_at) > Date.now(),
-        );
-        res.json({
-          success: true,
-          data: {
-            licenseActive: grantActive,
-            licenseType: grantActive ? 'CENTRAL_OFFLINE_GRANT' : null,
-            cloudEnabled: true,
-            shipmentLimit: null,
-            deliveryLimit: null,
-            receiptLimit: null,
-            activatedAt: grant?.snapshot_initialized_at ?? null,
-            usage: { shipmentsUsed: 0, deliveriesUsed: 0, receiptsUsed: 0 },
-            quotaRemaining: { shipments: null, deliveries: null, receipts: null },
-          },
-        });
-        return;
-      }
-      let companyId = (req as any).requestUserContext?.companyId as string | undefined;
-      if (!companyId) companyId = (await repo.resolveDefaultCompanyId()) ?? undefined;
-      if (!companyId) {
-        res.json({ success: true, data: { licenseActive: false } });
-        return;
-      }
-
-      const license = await repo.findActiveByCompany(companyId);
-      if (!license) {
-        res.json({ success: true, data: { licenseActive: false } });
-        return;
-      }
-
-      const usage = await repo.getUsage(companyId);
+    asyncHandler(async (_req, res) => {
       res.json({
         success: true,
         data: {
           licenseActive: true,
-          licenseType: license.licenseType,
-          cloudEnabled: license.cloudEnabled,
-          shipmentLimit: license.shipmentLimit,
-          deliveryLimit: license.deliveryLimit,
-          receiptLimit: license.receiptLimit,
-          activatedAt: license.activatedAt,
-          usage,
-          quotaRemaining: buildQuotaRemaining(license, usage),
+          licenseType: 'COMPANY_OWNED',
+          cloudEnabled: true,
+          shipmentLimit: null,
+          deliveryLimit: null,
+          receiptLimit: null,
+          activatedAt: null,
+          usage: { shipmentsUsed: 0, deliveriesUsed: 0, receiptsUsed: 0 },
+          quotaRemaining: { shipments: null, deliveries: null, receipts: null },
         },
       });
     }),

@@ -6,7 +6,7 @@
   "backendResolutionMode": "localhost",
   "manualLanHost": "",
   "backendPort": 4010,
-  "schemaVersion": "112_offline_sync_foundation",
+  "schemaVersion": "114_desktop_reference_and_transfer_sync",
   "deviceName": "حلب-الجميلية",
   "featureFlags": {
     "desktopMode": true

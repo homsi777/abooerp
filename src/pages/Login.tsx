@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthProvider';
 import { getLanState, httpClient } from '../lib/api/httpClient';
-import ActivationModal, { getStoredLicense } from '../components/login/ActivationModal';
 import LanConnectionModal from '../components/login/LanConnectionModal';
 import DeviceLoginBootstrap, { resolveLoginBootstrapOverlay } from '../components/login/DeviceLoginBootstrap';
 import { registerDesktopDeviceFromLogin, type DeviceRegistrationStatus } from '../lib/deviceRegistration';
@@ -63,12 +62,10 @@ export default function Login() {
 
   // Gear menu & modals
   const [gearOpen, setGearOpen] = useState(false);
-  const [showActivation, setShowActivation] = useState(false);
   const [showLan, setShowLan] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const gearRef = useRef<HTMLDivElement>(null);
   const [lanState, setLanState] = useState(() => getLanState());
-  const [licenseActive, setLicenseActive] = useState(() => !!getStoredLicense());
   const [localConnected, setLocalConnected] = useState(false);
   const [cloudConnected, setCloudConnected] = useState(() => navigator.onLine);
 
@@ -84,13 +81,6 @@ export default function Login() {
   }, []);
 
   const loginBootstrapReady = deviceBootstrap === 'off';
-
-  useEffect(() => {
-    if (!loginBootstrapReady) return;
-    void httpClient.get<{ licenseActive?: boolean }>('/license/status')
-      .then((status) => setLicenseActive(status.licenseActive === true))
-      .catch(() => setLicenseActive(!!getStoredLicense()));
-  }, [loginBootstrapReady]);
 
   useEffect(() => {
     if (!loginBootstrapReady) return;
@@ -185,8 +175,7 @@ export default function Login() {
 
   const isDeviceBlocked = deviceStatus === 'blocked';
   const isDevicePending = deviceStatus === 'pending';
-  // يُقفل النظام إذا لم يكن مُفعَّلاً بعد — يجب التفعيل عبر ⚙️ أولاً
-  const loginDisabled   = isDeviceBlocked || isDevicePending || deviceChecking || !licenseActive;
+  const loginDisabled = isDeviceBlocked || isDevicePending || deviceChecking;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -288,23 +277,6 @@ export default function Login() {
             boxShadow: '0 16px 40px rgba(0,0,0,.5)',
             animation: 'fadeUp .15s ease both',
           }}>
-            {/* تفعيل النظام */}
-            <button
-              onClick={() => { setGearOpen(false); setShowActivation(true); }}
-              style={{
-                width: '100%', padding: '10px 14px', background: 'none',
-                border: 'none', borderRadius: '8px', color: '#f1f5f9',
-                fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px',
-                textAlign: 'right',
-              }}
-              onMouseEnter={(e) => Object.assign(e.currentTarget.style, { background: 'rgba(255,255,255,.08)' })}
-              onMouseLeave={(e) => Object.assign(e.currentTarget.style, { background: 'none' })}
-            >
-              <span>🔑</span>
-              <span style={{ flex: 1 }}>تفعيل النظام</span>
-              {licenseActive && <span style={{ fontSize: '10px', color: '#10b981', background: 'rgba(16,185,129,.15)', padding: '2px 6px', borderRadius: '20px' }}>مفعّل</span>}
-            </button>
-
             {/* ربط محلي */}
             <button
               onClick={() => { setGearOpen(false); setShowLan(true); }}
@@ -573,11 +545,6 @@ export default function Login() {
       )}
 
       {/* Modals */}
-      {showActivation && (
-        <ActivationModal
-          onClose={() => { setShowActivation(false); setLicenseActive(!!getStoredLicense()); }}
-        />
-      )}
       {showLan && (
         <LanConnectionModal
           onClose={() => { setShowLan(false); setLanState(getLanState()); }}
@@ -639,49 +606,6 @@ export default function Login() {
           <h2 style={styles.welcomeTitle}>👋 مرحباً بعودتك</h2>
           <p style={styles.welcomeSub}>سجّل دخولك لإدارة منظومتك</p>
 
-          {/* ── ACTIVATION REQUIRED BANNER ── */}
-          {!licenseActive && (
-            <div style={{
-              background: 'linear-gradient(135deg,rgba(234,88,12,.25),rgba(220,38,38,.2))',
-              border: '1px solid rgba(234,88,12,.5)',
-              borderRadius: '12px',
-              padding: '16px',
-              marginBottom: '20px',
-              textAlign: 'center',
-            }}>
-              <div style={{ fontSize: 28, marginBottom: 6 }}>🔒</div>
-              <div style={{ color: '#fed7aa', fontWeight: 800, fontSize: 14, marginBottom: 6 }}>
-                النظام بحاجة إلى التفعيل
-              </div>
-              <div style={{ color: 'rgba(255,255,255,.65)', fontSize: 12, marginBottom: 14, lineHeight: 1.6 }}>
-                اضغط على زر ⚙️ في الزاوية اليسرى<br />
-                ثم اختر <strong style={{ color: '#fed7aa' }}>"تفعيل النظام"</strong> وأدخل المفتاح
-              </div>
-              <div style={{
-                display: 'inline-flex', alignItems: 'center', gap: 8,
-                background: 'rgba(0,0,0,.3)', border: '1px solid rgba(245,158,11,.4)',
-                borderRadius: 8, padding: '6px 14px',
-              }}>
-                <span style={{ color: '#fde68a', fontSize: 11 }}>مفتاح التجربة:</span>
-                <code style={{ color: '#fbbf24', fontWeight: 900, fontSize: 16, letterSpacing: 2 }}>TEST1</code>
-              </div>
-              <div style={{ marginTop: 12 }}>
-                <button
-                  type="button"
-                  onClick={() => setShowActivation(true)}
-                  style={{
-                    background: 'linear-gradient(135deg,#f59e0b,#ea580c)',
-                    border: 'none', borderRadius: 8, color: '#fff',
-                    padding: '9px 22px', fontWeight: 800, fontSize: 13, cursor: 'pointer',
-                    boxShadow: '0 4px 12px rgba(245,158,11,.4)',
-                  }}
-                >
-                  🔑 تفعيل النظام الآن
-                </button>
-              </div>
-            </div>
-          )}
-
           {/* session expired banner */}
           {sessionExpiredMessage && (
             <div style={styles.sessionBanner}>
@@ -690,7 +614,7 @@ export default function Login() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} autoComplete="off" style={{ opacity: licenseActive ? 1 : 0.4, pointerEvents: licenseActive ? 'auto' : 'none', transition: 'opacity .3s' }}>
+          <form onSubmit={handleSubmit} autoComplete="off">
             {/* username */}
             <div style={styles.field}>
               <label style={styles.label}>اسم المستخدم</label>
@@ -699,8 +623,7 @@ export default function Login() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="أدخل اسم المستخدم"
-                autoFocus={licenseActive}
-                disabled={!licenseActive}
+                autoFocus
                 style={styles.input}
                 onFocus={(e) => Object.assign(e.currentTarget.style, styles.inputFocus)}
                 onBlur={(e) => Object.assign(e.currentTarget.style, { boxShadow: 'none', borderColor: 'rgba(255,255,255,.12)' })}
@@ -716,7 +639,6 @@ export default function Login() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  disabled={!licenseActive}
                   style={{ ...styles.input, paddingLeft: '40px' }}
                   onFocus={(e) => Object.assign(e.currentTarget.style, styles.inputFocus)}
                   onBlur={(e) => Object.assign(e.currentTarget.style, { boxShadow: 'none', borderColor: 'rgba(255,255,255,.12)', paddingLeft: '40px' })}

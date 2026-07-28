@@ -15,6 +15,7 @@ const allowedLocalWritePaths=[
   /^\/api\/v1\/daily-ledger\/print\/(?:record|document)$/,
   /^\/api\/v1\/daily-ledger\/print\/documents\/[0-9a-f-]+$/i,
   /^\/api\/v1\/daily-ledger\/client-logs$/,
+  /^\/api\/v1\/transfers\/[0-9a-f-]+\/(?:complete|cancel)$/i,
 ];
 
 export async function localOfflinePolicyMiddleware(req:Request,res:Response,next:NextFunction){
