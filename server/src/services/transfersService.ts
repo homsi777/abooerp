@@ -475,7 +475,7 @@ export class TransfersService {
       });
       const voucher = await this.financeRepository.createPaymentVoucherWithClient(client, {
         voucherNo: input.voucherNo || `PV-TR-PAY-${Date.now()}-${String(transfer.id).slice(0, 6)}`,
-        branchId: transfer.branch_id ?? undefined,
+        branchId: payoutCashbox.branch_id ?? transfer.branch_id ?? undefined,
         shipmentId: transfer.shipment_id ?? undefined,
         relatedEntityType: 'transfer_payout',
         relatedEntityId: transfer.id,
@@ -494,13 +494,13 @@ export class TransfersService {
       }
       if (destinationAgentId) {
         await this.insertAgentTransferMovement(client, {
-          agentId: destinationAgentId, transferId: transfer.id, branchId: transfer.branch_id,
+          agentId: destinationAgentId, transferId: transfer.id, branchId: payoutCashbox.branch_id ?? transfer.branch_id,
           movementType: 'transfer_principal_paid', direction: 'credit',
           amount: Number(transfer.amount), currency, exchangeRateToUsd,
           notes: `دفع أصل حوالة للمستلم — ${transfer.sender_name} إلى ${transfer.receiver_name}`, userId: input.userId,
         });
         await this.insertAgentTransferMovement(client, {
-          agentId: destinationAgentId, transferId: transfer.id, branchId: transfer.branch_id,
+          agentId: destinationAgentId, transferId: transfer.id, branchId: payoutCashbox.branch_id ?? transfer.branch_id,
           movementType: 'transfer_agent_commission', direction: 'credit',
           amount: Number(transfer.agent_commission ?? 0), currency: transfer.agent_commission_currency ?? currency,
           exchangeRateToUsd, notes: `عمولة حوالة — ${transfer.sender_name} إلى ${transfer.receiver_name}`, userId: input.userId,

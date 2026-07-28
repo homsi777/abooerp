@@ -60,6 +60,49 @@ const transferReportQuerySchema = z.object({
   destinationCity: z.string().min(1).optional(),
 });
 
+async function resolveLocalTransferActionBranch(input: {
+  companyId: string;
+  transferId: string;
+  cashboxId?: string;
+  allowedBranchIds?: string[];
+}) {
+  const result = await pool.query<{ branch_id: string | null; cashbox_id: string | null }>(
+    `
+    select coalesce(
+      case when $3::uuid is not null then payout_cashbox.branch_id end,
+      destination_agent.branch_id,
+      t.branch_id,
+      origin_agent.branch_id
+    ) as branch_id,
+    payout_cashbox.id as cashbox_id
+    from transfers t
+    left join cashboxes payout_cashbox
+      on payout_cashbox.id = $3::uuid
+     and payout_cashbox.company_id = t.company_id
+    left join agents destination_agent
+      on destination_agent.id = coalesce(t.destination_agent_id, t.agent_id)
+    left join agents origin_agent
+      on origin_agent.id = t.origin_agent_id
+    where t.id = $1::uuid
+      and t.company_id = $2::uuid
+    limit 1
+    `,
+    [input.transferId, input.companyId, input.cashboxId ?? null],
+  );
+  if (!result.rowCount) throw new HttpError(404, 'الحوالة غير موجودة.');
+  if (input.cashboxId && !result.rows[0]?.cashbox_id) {
+    throw new HttpError(400, 'صندوق التسليم غير موجود ضمن الشركة.');
+  }
+  const branchId = result.rows[0]?.branch_id;
+  if (!branchId) throw new HttpError(400, 'تعذر تحديد فرع الحوالة أو صندوق التسليم.');
+
+  const allowedBranchIds = input.allowedBranchIds ?? [];
+  if (allowedBranchIds.length > 0 && !allowedBranchIds.includes(branchId)) {
+    throw new HttpError(403, 'فرع صندوق التسليم خارج نطاق صلاحيات المستخدم.');
+  }
+  return branchId;
+}
+
 export function createTransfersRouter(transfersService: TransfersService) {
   const router = Router();
   const auditService = new AuditService();
@@ -186,10 +229,15 @@ export function createTransfersRouter(transfersService: TransfersService) {
       }
       const baseCurrency = (req as any).requestUserContext?.baseCurrency as string | undefined;
       if (env.SYNC_NODE_ROLE === 'local') {
-        if (!scope.branchId) throw new HttpError(400, 'يجب اختيار الفرع قبل تسليم الحوالة.');
+        const branchId = await resolveLocalTransferActionBranch({
+          companyId: String(scope.companyId),
+          transferId: String(req.params.id),
+          cashboxId: data.cashboxId,
+          allowedBranchIds: (req as any).requestUserContext?.allowedBranchIds,
+        });
         const queued = await queueCompleteTransferAction({
           companyId: String(scope.companyId),
-          branchId: String(scope.branchId),
+          branchId,
           userId: scope.userId,
           transferId: String(req.params.id),
           cashboxId: data.cashboxId,
@@ -248,10 +296,14 @@ export function createTransfersRouter(transfersService: TransfersService) {
         return;
       }
       if (env.SYNC_NODE_ROLE === 'local') {
-        if (!scope.branchId) throw new HttpError(400, 'يجب اختيار الفرع قبل إلغاء الحوالة.');
+        const branchId = await resolveLocalTransferActionBranch({
+          companyId: String(scope.companyId),
+          transferId: String(req.params.id),
+          allowedBranchIds: (req as any).requestUserContext?.allowedBranchIds,
+        });
         const queued = await queueCancelTransferAction({
           companyId: String(scope.companyId),
-          branchId: String(scope.branchId),
+          branchId,
           userId: scope.userId,
           transferId: String(req.params.id),
           reason: data.reason,
