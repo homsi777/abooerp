@@ -414,17 +414,19 @@ export async function createScopedSnapshot(context:SyncRequestContext){
     data.branches=await query(`select * from branches where company_id=$1 and is_active=true`,[context.companyId]);
     data.agents=await query(
       `select a.* from agents a join branches b on b.id=a.branch_id
-       where a.is_active=true and b.company_id=$1 and ($2::uuid is null or a.id=$2::uuid)`,
+       where b.company_id=$1 and ($2::uuid is null or a.id=$2::uuid)`,
       [context.companyId,context.agentId??null],
     );
-    data.senders_receivers=await query(`select * from senders_receivers where status='active' and (branch_id is null or branch_id=any($1::uuid[])) and ($2::uuid is null or agent_id is null or agent_id=$2::uuid)`,[branches,context.agentId??null]);
-    data.customers=await query(`select * from customers where status='active' and (company_id is null or company_id=$1) and (branch_id is null or branch_id=any($2::uuid[])) and ($3::uuid is null or agent_id is null or agent_id=$3::uuid)`,[context.companyId,branches,context.agentId??null]);
+    // Historical finance rows must retain their party names even when the party
+    // is no longer active. The UI still filters active choices for new entries.
+    data.senders_receivers=await query(`select * from senders_receivers where (branch_id is null or branch_id=any($1::uuid[])) and ($2::uuid is null or agent_id is null or agent_id=$2::uuid)`,[branches,context.agentId??null]);
+    data.customers=await query(`select * from customers where (company_id is null or company_id=$1) and (branch_id is null or branch_id=any($2::uuid[])) and ($3::uuid is null or agent_id is null or agent_id=$3::uuid)`,[context.companyId,branches,context.agentId??null]);
     data.cities=await query(`select * from cities where is_active=true`);
     // Include inactive currencies too: shipments/history still reference them, and
     // scoped snapshot apply skips any child whose required parent UUID is absent.
     data.currencies=await query(`select * from currencies where company_id=$1`,[context.companyId]);
     data.cashboxes=await query(
-      `select * from cashboxes where company_id=$1 and is_active=true
+      `select * from cashboxes where company_id=$1
        and (branch_id is null or branch_id=any($2::uuid[]))`,
       [context.companyId,branches],
     );
@@ -440,13 +442,44 @@ export async function createScopedSnapshot(context:SyncRequestContext){
     data.system_settings=await query(`select * from system_settings where is_encrypted=false and (key like 'daily_ledger.%' or key like 'printing.%' or key like 'terminology.%')`);
     data.printers=await query(`select * from printers where company_id=$1 and is_active=true and (branch_id is null or branch_id=any($2::uuid[]))`,[context.companyId,branches]);
     data.shipments=await query(`select * from shipments where company_id=$1 and deleted_at is null and branch_id=any($2::uuid[]) and ($3::uuid is null or agent_id is null or agent_id=$3::uuid)`,[context.companyId,branches,context.agentId??null]);
+    const shipmentIds=(data.shipments as Array<Record<string,unknown>>).map(row=>row.id);
+    data.deliveries=shipmentIds.length
+      ?await query(`select * from deliveries where company_id=$1 and deleted_at is null and shipment_id=any($2::uuid[])`,[context.companyId,shipmentIds])
+      :[];
+    data.receipt_vouchers=await query(
+      `select * from receipt_vouchers where company_id=$1
+       and branch_id=any($2::uuid[])
+       and ($3::uuid is null or agent_id=$3::uuid)
+       order by created_at,id`,
+      [context.companyId,branches,context.agentId??null],
+    );
+    data.payment_vouchers=await query(
+      `select * from payment_vouchers where company_id=$1
+       and branch_id=any($2::uuid[])
+       and ($3::uuid is null or agent_id=$3::uuid)
+       order by created_at,id`,
+      [context.companyId,branches,context.agentId??null],
+    );
     data.transfers=await query(
       `select * from transfers where company_id=$1
        and (branch_id is null or branch_id=any($2::uuid[]))
        and ($3::uuid is null or agent_id=$3::uuid or origin_agent_id=$3::uuid or destination_agent_id=$3::uuid)`,
       [context.companyId,branches,context.agentId??null],
     );
-    const shipmentIds=(data.shipments as Array<Record<string,unknown>>).map(row=>row.id);
+    data.cashbox_transactions=await query(
+      `select * from cashbox_transactions where company_id=$1
+       and branch_id=any($2::uuid[])
+       and ($3::uuid is null or agent_id=$3::uuid)
+       order by (reversal_of_cashbox_transaction_id is not null),created_at,id`,
+      [context.companyId,branches,context.agentId??null],
+    );
+    data.party_financial_movements=await query(
+      `select pfm.* from party_financial_movements pfm
+       where pfm.branch_id=any($1::uuid[])
+       and ($2::uuid is null or pfm.agent_id=$2::uuid)
+       order by (pfm.reversal_of_movement_id is not null),pfm.created_at,pfm.id`,
+      [branches,context.agentId??null],
+    );
     data.shipment_status_history=shipmentIds.length?await query(`select * from shipment_status_history where shipment_id=any($1::uuid[])`,[shipmentIds]):[];
     data.manifests=await query(`select * from manifests where company_id=$1 and deleted_at is null and branch_id=any($2::uuid[])`,[context.companyId,branches]);
     const manifestIds=(data.manifests as Array<Record<string,unknown>>).map(row=>row.id);

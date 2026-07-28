@@ -10,7 +10,11 @@ const writableEntities = new Set([
   'daily_ledger_row_transfers','daily_ledger_row_transfer_items',
   'daily_ledger_print_events','daily_ledger_print_documents',
 ]);
-const mirroredEntities = new Set([...writableEntities,'cashboxes','payment_vouchers','transfers']);
+const mirroredEntities = new Set([
+  ...writableEntities,
+  'cashboxes','deliveries','receipt_vouchers','payment_vouchers','transfers',
+  'cashbox_transactions','party_financial_movements',
+]);
 const softDeleteEntities = new Set([
   'daily_ledger_sessions','daily_ledger_rows','daily_ledger_dispatch_definitions',
 ]);
@@ -168,7 +172,8 @@ async function applyAuthoritativeRow(client:PoolClient,entityType:string,entityI
 const snapshotOrder=[
   'companies','roles','permissions','branches','agents','users','role_permissions','user_branches',
   'currencies','cashboxes','cities','goods_types','tariffs','drivers','vehicles','customers','senders_receivers',
-  'system_settings','printers','shipments','transfers','shipment_status_history','manifests','manifest_shipments',
+  'system_settings','printers','shipments','deliveries','receipt_vouchers','payment_vouchers','transfers',
+  'cashbox_transactions','party_financial_movements','shipment_status_history','manifests','manifest_shipments',
   'daily_ledger_sessions','daily_ledger_dispatch_definitions','daily_ledger_row_transfers',
   'daily_ledger_rows','daily_ledger_row_transfer_items','daily_ledger_print_events','daily_ledger_print_documents',
 ];

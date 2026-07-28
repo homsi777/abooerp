@@ -90,7 +90,7 @@ const envSchema = z.object({
   SYNC_PUSH_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(50),
   SYNC_PULL_BATCH_SIZE: z.coerce.number().int().min(1).max(500).default(200),
   SYNC_APP_VERSION: z.string().max(64).default('development'),
-  SYNC_SCHEMA_VERSION: z.string().max(128).default('114_desktop_reference_and_transfer_sync'),
+  SYNC_SCHEMA_VERSION: z.string().max(128).default('115_desktop_finance_history_sync'),
   OFFLINE_AUTH_MAX_AGE_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(72),
   LOCAL_BACKUP_KEY: z.string().optional(),
   LOCAL_BACKUP_INTERVAL_HOURS: z.coerce.number().int().min(1).max(168).default(6),

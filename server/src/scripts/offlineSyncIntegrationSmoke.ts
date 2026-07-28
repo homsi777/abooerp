@@ -86,8 +86,40 @@ async function worker() {
   assert.equal(deferredAction.status, 'ACCEPTED');
   const deferredReplay = await applyPushOperation(context, actionOperation);
   assert.equal(deferredReplay.status, 'ALREADY_APPLIED');
+  const currencyCode = (await pool.query<{ code: string }>(`select code from currencies where company_id=$1 order by is_base desc,code limit 1`, [companyId])).rows[0]?.code;
+  assert.ok(currencyCode);
+  const financeCashboxId = (await pool.query<{ id: string }>(
+    `insert into cashboxes(company_id,branch_id,code,name,type,currency_code)
+     values($1,$2,$3,'Finance sync cashbox','BRANCH',$4) returning id`,
+    [companyId, branchId, `SYNC-CB-${Date.now()}`, currencyCode],
+  )).rows[0].id;
+  const receiptVoucherId = (await pool.query<{ id: string }>(
+    `insert into receipt_vouchers(voucher_no,company_id,branch_id,customer_id,cashbox_id,status,original_amount,original_currency,exchange_rate_to_usd,base_amount_usd,created_by_user_id)
+     values($1,$2,$3,$4,$5,'confirmed',10,$6,1,10,$7) returning id`,
+    [`SYNC-RV-${Date.now()}`, companyId, branchId, customerWithOmittedAuditUser, financeCashboxId, currencyCode, userId],
+  )).rows[0].id;
+  const paymentVoucherId = (await pool.query<{ id: string }>(
+    `insert into payment_vouchers(voucher_no,company_id,branch_id,customer_id,cashbox_id,status,original_amount,original_currency,exchange_rate_to_usd,base_amount_usd,created_by_user_id)
+     values($1,$2,$3,$4,$5,'confirmed',3,$6,1,3,$7) returning id`,
+    [`SYNC-PV-${Date.now()}`, companyId, branchId, customerWithOmittedAuditUser, financeCashboxId, currencyCode, userId],
+  )).rows[0].id;
+  const cashboxTransactionId = (await pool.query<{ id: string }>(
+    `insert into cashbox_transactions(transaction_type,source_voucher_type,source_voucher_id,company_id,branch_id,cashbox_id,original_amount,original_currency,exchange_rate_to_usd,base_amount_usd,created_by_user_id)
+     values('inflow','receipt',$1,$2,$3,$4,10,$5,1,10,$6) returning id`,
+    [receiptVoucherId, companyId, branchId, financeCashboxId, currencyCode, userId],
+  )).rows[0].id;
+  const partyMovementId = (await pool.query<{ id: string }>(
+    `insert into party_financial_movements(party_type,party_id,movement_type,voucher_type,voucher_id,branch_id,direction,original_amount,original_currency,exchange_rate_to_usd,base_amount_usd,created_by_user_id)
+     values('customer',$1,'voucher_receipt','receipt',$2,$3,'inflow',10,$4,1,10,$5) returning id`,
+    [customerWithOmittedAuditUser, receiptVoucherId, branchId, currencyCode, userId],
+  )).rows[0].id;
   const snapshot = await createScopedSnapshot(context);
   assert.ok(Array.isArray(snapshot.data.daily_ledger_sessions));
+  assert.ok(Array.isArray(snapshot.data.deliveries));
+  assert.ok((snapshot.data.receipt_vouchers as Array<Record<string, unknown>>).some((row) => row.id === receiptVoucherId));
+  assert.ok((snapshot.data.payment_vouchers as Array<Record<string, unknown>>).some((row) => row.id === paymentVoucherId));
+  assert.ok((snapshot.data.cashbox_transactions as Array<Record<string, unknown>>).some((row) => row.id === cashboxTransactionId));
+  assert.ok((snapshot.data.party_financial_movements as Array<Record<string, unknown>>).some((row) => row.id === partyMovementId));
   assert.ok((snapshot.data.branches as Array<Record<string, unknown>>).some((branch) => branch.id === branchId));
   const scopedTransferId=randomUUID();const skippedOrphanTransferItemId=randomUUID();
   snapshot.data.daily_ledger_row_transfers.push({id:scopedTransferId,company_id:companyId,transfer_no:`ORPHAN-${Date.now()}`,target_session_id:sessionId,rows_count:1,pieces_count:0,weight_kg:0,status:'completed'});
@@ -95,6 +127,8 @@ async function worker() {
   const pulled = await pullChanges(context, { deviceId: secondDeviceId, lastCursor: 0, batchSize: 200 });
   assert.equal(pulled.deviceRejected, false);
   assert.ok(pulled.changes.length > 0);
+  assert.ok(pulled.changes.some((change) => change.entity_type === 'receipt_vouchers' && change.entity_id === receiptVoucherId));
+  assert.ok(pulled.changes.some((change) => change.entity_type === 'party_financial_movements' && change.entity_id === partyMovementId));
 
   const local = new pg.Client({ host: process.env.PGHOST, port: Number(process.env.PGPORT || 5432), user: process.env.PGUSER, password: process.env.PGPASSWORD, database: process.env.PGDATABASE, options: '-c app.node_role=local' });
   await local.connect();
@@ -118,6 +152,10 @@ async function worker() {
   assert.equal(Number((await pool.query(`select count(*) count from branches where id=$1`, [branchId])).rows[0].count), 1);
   assert.equal(Number((await pool.query(`select count(*) count from branches where id=$1`, [otherBranchId])).rows[0].count), 1);
   assert.equal(Number((await pool.query(`select count(*) count from daily_ledger_sessions where id=$1`, [sessionId])).rows[0].count), 1);
+  assert.equal(Number((await pool.query(`select count(*) count from receipt_vouchers where id=$1`, [receiptVoucherId])).rows[0].count), 1);
+  assert.equal(Number((await pool.query(`select count(*) count from payment_vouchers where id=$1`, [paymentVoucherId])).rows[0].count), 1);
+  assert.equal(Number((await pool.query(`select count(*) count from cashbox_transactions where id=$1`, [cashboxTransactionId])).rows[0].count), 1);
+  assert.equal(Number((await pool.query(`select count(*) count from party_financial_movements where id=$1`, [partyMovementId])).rows[0].count), 1);
   assert.equal((await pool.query<{created_by_user_id:string|null}>(`select created_by_user_id from customers where id=$1`,[customerWithOmittedAuditUser])).rows[0]?.created_by_user_id,null);
   assert.equal(Number((await pool.query(`select count(*) count from daily_ledger_row_transfer_items where id=$1`,[skippedOrphanTransferItemId])).rows[0].count),0);
   const queued=await queuePostShipmentsAction({companyId,branchId,userId,payload:{branchId,ledgerDate:'2099-01-01',lineLabel:'queued',rowIds:[]}});
