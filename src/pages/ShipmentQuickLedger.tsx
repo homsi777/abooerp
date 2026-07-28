@@ -3696,25 +3696,6 @@ export default function ShipmentQuickLedger() {
         return;
       }
 
-      const rowsMissingDriver = rowsToPost.filter((row) => {
-        if (options.overrideFleet?.driverId) return false;
-        const fleet = resolveFleetForLedgerRow(row, trip, drivers, vehicles);
-        return !fleet.driverId;
-      });
-      if (rowsMissingDriver.length) {
-        const message =
-          'يرجى اختيار السائق من أعلى الدفتر أو التأكد أن السطر مرتبط بسائق — مطلوب لحفظ الشحنات الجديدة.';
-        const items = progressItems.map((item) =>
-          rowsMissingDriver.some((row) => String(row.id) === item.key)
-            ? { ...item, status: 'error' as const, message: 'السائق مطلوب' }
-            : item,
-        );
-        failBatch('فشل التحقق — السائق مطلوب', message, items, {
-          missingDriverCount: rowsMissingDriver.length,
-        });
-        return;
-      }
-
       setSaveProgress((prev) => ({
         ...prev,
         phase: 'upserting',

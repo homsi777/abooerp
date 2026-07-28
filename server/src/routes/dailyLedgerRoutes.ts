@@ -27,6 +27,7 @@ import {
 } from '../utils/dailyLedgerAudit.js';
 import { env } from '../config/env.js';
 import { queuePostShipmentsAction } from '../sync/localDeferredActions.js';
+import { runLocalSyncCycle } from '../sync/localSyncWorker.js';
 
 const uuid = z.string().uuid();
 
@@ -688,6 +689,7 @@ export function createDailyLedgerRouter(
             userId: createdByUserId ?? scope.userId,
             payload: { ...input, createdByUserId },
           });
+          await runLocalSyncCycle();
           res.status(202).json({ success: true, data: {
             posted: [], skipped: [], errors: [], pendingCentral: true,
             operationId: queued.operationId, queuedRowIds: input.rowIds ?? [],

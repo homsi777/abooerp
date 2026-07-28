@@ -147,18 +147,20 @@ async function applyAuthoritativeRow(client:PoolClient,entityType:string,entityI
   }
   const entries=Object.entries(sanitized).filter(([key])=>key!=='id'&&key!=='sync_central_version'&&key!=='sync_version'&&allowed.has(key));
   const exists=await client.query(`select 1 from ${entityType} where id=$1::uuid`,[entityId]);
-  // Ensure version columns appear once even when the central payload already carries them.
+  const versionMetadata:Record<string,unknown>={};
+  if(allowed.has('sync_central_version'))versionMetadata.sync_central_version=version;
+  if(allowed.has('sync_version'))versionMetadata.sync_version=version;
   const updateEntries=Object.entries({
     ...Object.fromEntries(entries),
-    sync_central_version:version,
-    sync_version:version,
+    ...versionMetadata,
   });
   if(exists.rowCount){
     const assignments=updateEntries.map(([key],index)=>`${key}=$${index+2}`);
     await client.query(`update ${entityType} set ${assignments.join(',')} where id=$1::uuid`,[entityId,...updateEntries.map(([,value])=>serializeValue(value))]);
   }else{
-    const keys=['id',...entries.map(([key])=>key),'sync_central_version','sync_version'];
-    const values=[entityId,...entries.map(([,value])=>serializeValue(value)),version,version];
+    const versionEntries=Object.entries(versionMetadata);
+    const keys=['id',...entries.map(([key])=>key),...versionEntries.map(([key])=>key)];
+    const values=[entityId,...entries.map(([,value])=>serializeValue(value)),...versionEntries.map(([,value])=>value)];
     await client.query(`insert into ${entityType}(${keys.join(',')}) values(${values.map((_,i)=>`$${i+1}`).join(',')})`,values);
   }
 }
