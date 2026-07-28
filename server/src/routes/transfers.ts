@@ -69,9 +69,9 @@ async function resolveLocalTransferActionBranch(input: {
   const result = await pool.query<{ branch_id: string | null; cashbox_id: string | null }>(
     `
     select coalesce(
+      t.branch_id,
       case when $3::uuid is not null then payout_cashbox.branch_id end,
       destination_agent.branch_id,
-      t.branch_id,
       origin_agent.branch_id
     ) as branch_id,
     payout_cashbox.id as cashbox_id
