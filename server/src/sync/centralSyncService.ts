@@ -383,6 +383,19 @@ export async function pullChanges(context: SyncRequestContext,input:{deviceId:st
   if (!device.rows[0] || device.rows[0].company_id!==context.companyId || device.rows[0].is_blocked || device.rows[0].sync_state!=='active') {
     return { deviceRejected:true, changes:[], nextCursor:input.lastCursor, hasMore:false, resnapshotRequired:false, offlineGrantExpiresAt };
   }
+  // A device only sends lastCursor after it has durably applied all earlier
+  // changes.  Persist that acknowledgement centrally so maintenance can keep
+  // every feed row required by an active device and safely identify a future
+  // retention watermark.  Never advance it from the server's proposed cursor.
+  if (input.lastCursor > 0) {
+    await pool.query(
+      `update linked_devices
+          set last_central_cursor=greatest(coalesce(last_central_cursor,0),$2),
+              last_sync_success_at=now(),updated_at=now()
+        where id=$1::uuid`,
+      [input.deviceId,input.lastCursor],
+    );
+  }
   const retention=await pool.query<{min_cursor:string|null,max_cursor:string|null}>(
     `select min(cursor_id)::text min_cursor,max(cursor_id)::text max_cursor from sync_change_feed where company_id=$1`,[context.companyId],
   );

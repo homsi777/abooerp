@@ -20,6 +20,8 @@
     "server:db:ensure": "node server/scripts/ensureDatabase.cjs",
     "server:migrate": "tsx server/src/db/migrate.ts",
     "server:migrate:status": "tsx server/scripts/migrate-status.ts",
+    "server:retention:dry-run": "tsx server/src/scripts/retentionMaintenance.ts",
+    "server:retention:apply": "tsx server/src/scripts/retentionMaintenance.ts --apply",
     "server:seed": "tsx server/src/db/seed.ts",
     "server:clean-transactional": "node server/scripts/cleanTransactionalData.cjs",
     "server:wipe-bare": "node server/scripts/wipeAllBareAdmin.cjs",

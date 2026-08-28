@@ -310,7 +310,11 @@ export function createDailyLedgerRouter(
       previousSnapshot != null
         ? diffDailyLedgerRowSnapshots(previousSnapshot, afterSnapshot)
         : { changedFields: [] as string[], changes: {} as Record<string, { before: unknown; after: unknown }> };
-    auditService.logAsync({
+    // Saving an unchanged row used to generate a full before/after audit payload
+    // every time the editor retried or re-submitted it.  There is no business
+    // event to audit in that case, and the repeated payloads were the main
+    // source of abnormal audit table growth.
+    if (!isUpdate || diff.changedFields.length > 0) auditService.logAsync({
       req,
       context: { branchId: row.branch_id },
       action: isUpdate ? 'DAILY_LEDGER_ROW_UPDATED' : 'DAILY_LEDGER_ROW_CREATED',
