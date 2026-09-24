@@ -13,8 +13,8 @@ android {
     applicationId = "com.aistudio.agentapp.abooerp"
     minSdk = 24
     targetSdk = 35
-    versionCode = 2
-    versionName = "1.1"
+    versionCode = 5
+    versionName = "1.2"
     multiDexEnabled = true
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

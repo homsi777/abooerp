@@ -3,7 +3,9 @@ package com.example.ui.auth
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -43,15 +45,21 @@ fun LoginScreen(
     }
 
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+        // Scrollable + imePadding so the keyboard never traps the form: without
+        // these the screen was a rigid 50/50 split that couldn't shrink or
+        // scroll, so the keyboard just covered the fields with no way to see
+        // what was being typed.
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(ScreenDark),
+                .background(ScreenDark)
+                .verticalScroll(rememberScrollState())
+                .imePadding(),
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(0.50f)
+                    .height(260.dp)
                     .background(
                         Brush.verticalGradient(
                             colors = listOf(
@@ -94,11 +102,10 @@ fun LoginScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(0.50f)
                     .padding(horizontal = 28.dp)
-                    .padding(bottom = 24.dp),
+                    .padding(top = 24.dp, bottom = 24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween,
+                verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
                 Column(
                     horizontalAlignment = Alignment.Start,
