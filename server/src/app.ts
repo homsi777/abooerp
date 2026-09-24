@@ -179,6 +179,48 @@ app.get('/api/health', (_req, res) => {
   res.json({ success: true, service: 'backend-phase1', status: 'ok' });
 });
 
+// ── App update manifest — lets sideloaded apps (Android agent app, no Play
+// Store) check for a new release from our own domain, and download the APK
+// straight from here. Public: the app checks this before/without a fresh
+// login token, same as /api/health.
+app.get('/api/v1/app/version', async (req, res) => {
+  const { pool: dbPool } = await import('./db/pool.js');
+  const platform = String(req.query.platform ?? 'android');
+  const result = await dbPool.query<{
+    version_code: number;
+    version_name: string;
+    apk_url: string;
+    changelog: string | null;
+    mandatory: boolean;
+  }>(
+    `select version_code, version_name, apk_url, changelog, mandatory
+     from app_releases
+     where platform = $1
+     order by version_code desc
+     limit 1`,
+    [platform],
+  );
+  const release = result.rows[0];
+  if (!release) {
+    res.json({ success: true, data: null });
+    return;
+  }
+  res.json({
+    success: true,
+    data: {
+      versionCode: release.version_code,
+      versionName: release.version_name,
+      apkUrl: release.apk_url,
+      changelog: release.changelog,
+      mandatory: release.mandatory,
+    },
+  });
+});
+
+// Static hosting for the APK files referenced by app_releases.apk_url —
+// kept outside the git-tracked dist/ so redeploys never touch it.
+app.use('/releases', express.static('releases'));
+
 // ── LAN health — used by secondary devices to test connectivity ───────────────
 app.get('/api/v1/system/lan-health', async (_req, res) => {
   const { pool: dbPool } = await import('./db/pool.js');

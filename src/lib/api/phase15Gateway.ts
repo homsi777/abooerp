@@ -144,6 +144,16 @@ const cityLookup = new Map<number, City>();
 const goodsTypeLookup = new Map<number, GoodsType>();
 const shipmentLookup = new Map<number, Shipment>();
 
+// Notes used to silently override the goods type whenever both were present,
+// so it never reached the description agents/customers see. Keep both.
+function combineGoodsTypeAndNotes(notes: string | undefined, goodsTypeName: string | undefined): string {
+  const goodsType = (goodsTypeName ?? '').trim();
+  const trimmedNotes = (notes ?? '').trim();
+  if (goodsType && trimmedNotes) return `نوع البضاعة: ${goodsType} — ${trimmedNotes}`;
+  if (goodsType) return `نوع البضاعة: ${goodsType}`;
+  return trimmedNotes;
+}
+
 function mapShipmentStatusToFrontend(status: BackendShipmentRecord['status']): Shipment['status'] {
   const normalized = normalizeShipmentStatus(status);
   if (normalized === 'UNKNOWN') return 'UNKNOWN';
@@ -719,7 +729,7 @@ export const phase15Gateway = {
         agentId: agentBackendId,
         originCity: data.originName || data.branchName || '',
         destinationCity: data.destinationName || '',
-        description: data.notes || data.goodsTypeName || '',
+        description: combineGoodsTypeAndNotes(data.notes, data.goodsTypeName),
         piecesCount: data.quantity || 1,
         weightKg: typeof data.weight === 'number' && data.weight > 0 ? data.weight : undefined,
         status: backendStatus,
@@ -758,7 +768,7 @@ export const phase15Gateway = {
         agentId: agentBackendId,
         originCity: data.originName ?? data.branchName,
         destinationCity: data.destinationName,
-        description: data.notes ?? data.goodsTypeName,
+        description: combineGoodsTypeAndNotes(data.notes, data.goodsTypeName),
         piecesCount: data.quantity,
         weightKg: data.weight,
         status: data.status ? mapShipmentStatusToBackend(data.status) : undefined,

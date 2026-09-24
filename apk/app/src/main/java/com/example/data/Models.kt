@@ -411,6 +411,15 @@ data class AgentDocumentationRow(
 )
 
 @JsonClass(generateAdapter = false)
+data class AppVersionInfo(
+    val versionCode: Int,
+    val versionName: String,
+    val apkUrl: String,
+    val changelog: String? = null,
+    val mandatory: Boolean = false,
+)
+
+@JsonClass(generateAdapter = false)
 data class AgentDocumentationDetail(
     val id: String,
     @Json(name = "ledger_date") val ledgerDate: String? = null,

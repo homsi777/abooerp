@@ -56,8 +56,8 @@ npm run server:build
 
 echo "Publishing frontend to: $FRONTEND_DIR"
 sudo install -d -m 0755 "$FRONTEND_DIR"
-sudo find "$FRONTEND_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
-sudo cp -r dist/. "$FRONTEND_DIR/"
+sudo find "${FRONTEND_DIR:?}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+sudo cp -r dist/. "${FRONTEND_DIR:?}/"
 sudo chown -R "$WEB_OWNER" "$FRONTEND_DIR"
 
 echo "Reloading Nginx"

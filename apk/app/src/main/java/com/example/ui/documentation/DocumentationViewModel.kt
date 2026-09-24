@@ -9,6 +9,7 @@ import com.example.network.ApiService
 import java.io.IOException
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -64,31 +65,50 @@ class DocumentationViewModel(private val apiService: ApiService) : ViewModel() {
             val today = LocalDate.now(damascusZone)
             val dateFrom = today.minusDays(30).toString()
             val dateTo = today.toString()
-            try {
-                val response = apiService.getAgentDocumentation(
-                    dateFrom = dateFrom,
-                    dateTo = dateTo,
-                    limit = 200,
-                )
-                if (response.success && response.data != null) {
-                    val filtered = applyTransitFilter(response.data, _transitFilter.value)
-                    _listState.value = DocumentationListState.Success(filtered, dateFrom, dateTo, _transitFilter.value)
-                } else {
-                    _listState.value = DocumentationListState.Error(response.error ?: "تعذر تحميل التوثيق")
+
+            // Transient network hiccups (cold connection on first entry to the screen,
+            // brief signal drop, etc.) used to surface as a raw error that only cleared
+            // once the agent left and re-entered the section. Retry silently a couple of
+            // times before showing anything, instead of making the user do that by hand.
+            var attempt = 0
+            while (true) {
+                attempt++
+                try {
+                    val response = apiService.getAgentDocumentation(
+                        dateFrom = dateFrom,
+                        dateTo = dateTo,
+                        limit = 200,
+                    )
+                    if (response.success && response.data != null) {
+                        // Defend against duplicate rows coming back from the server
+                        // (e.g. a print action that was retried) by keeping one card per id.
+                        val deduped = response.data.distinctBy { it.id }
+                        val filtered = applyTransitFilter(deduped, _transitFilter.value)
+                        _listState.value = DocumentationListState.Success(filtered, dateFrom, dateTo, _transitFilter.value)
+                    } else {
+                        _listState.value = DocumentationListState.Error(response.error ?: "تعذر تحميل التوثيق")
+                    }
+                    return@launch
+                } catch (e: retrofit2.HttpException) {
+                    _listState.value = DocumentationListState.Error(
+                        when (e.code()) {
+                            401 -> "انتهت الجلسة، يرجى تسجيل الدخول مجدداً"
+                            404 -> "خدمة التوثيق غير متوفرة على الخادم — يُرجى تحديث السيرفر ثم إعادة المحاولة"
+                            403 -> "لا تملك صلاحية عرض التوثيق"
+                            else -> "استجابة غير متوقعة من الخادم"
+                        },
+                    )
+                    return@launch
+                } catch (e: IOException) {
+                    if (attempt >= 3) {
+                        _listState.value = DocumentationListState.Error("تعذر الاتصال بالخادم")
+                        return@launch
+                    }
+                    delay(800L * attempt)
+                } catch (e: Exception) {
+                    _listState.value = DocumentationListState.Error("تعذر تحميل التوثيق")
+                    return@launch
                 }
-            } catch (e: retrofit2.HttpException) {
-                _listState.value = DocumentationListState.Error(
-                    when (e.code()) {
-                        401 -> "انتهت الجلسة، يرجى تسجيل الدخول مجدداً"
-                        404 -> "خدمة التوثيق غير متوفرة على الخادم — يُرجى تحديث السيرفر ثم إعادة المحاولة"
-                        403 -> "لا تملك صلاحية عرض التوثيق"
-                        else -> "استجابة غير متوقعة من الخادم"
-                    },
-                )
-            } catch (e: Exception) {
-                _listState.value = DocumentationListState.Error(
-                    if (e is IOException) "تعذر الاتصال بالخادم" else "تعذر تحميل التوثيق",
-                )
             }
         }
     }
@@ -126,7 +146,8 @@ class DocumentationViewModel(private val apiService: ApiService) : ViewModel() {
                         limit = 200,
                     )
                     if (response.success && response.data != null) {
-                        val filtered = applyTransitFilter(response.data, _transitFilter.value)
+                        val deduped = response.data.distinctBy { it.id }
+                        val filtered = applyTransitFilter(deduped, _transitFilter.value)
                         _listState.value = current.copy(items = filtered, transitFilter = _transitFilter.value)
                     }
                 } catch (_: Exception) {

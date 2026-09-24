@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.data.AuthStorage
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -30,13 +31,34 @@ object NetworkModule {
             level = HttpLoggingInterceptor.Level.NONE
         }
 
-        val client = OkHttpClient.Builder()
-            .addInterceptor(authInterceptor)
-            .addInterceptor(loggingInterceptor)
-            .build()
-
         val moshi = Moshi.Builder()
             .add(KotlinJsonAdapterFactory())
+            .build()
+
+        // Plain client with no auth header and no authenticator — used only to call
+        // auth/refresh, so refreshing the token can never itself trigger another refresh.
+        val refreshClient = OkHttpClient.Builder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(20, TimeUnit.SECONDS)
+            .build()
+        val refreshApi = Retrofit.Builder()
+            .baseUrl(DEFAULT_BASE_URL)
+            .client(refreshClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+            .create(ApiService::class.java)
+
+        val tokenAuthenticator = TokenAuthenticator(authStorage, refreshApi)
+
+        val client = OkHttpClient.Builder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(20, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .addInterceptor(authInterceptor)
+            .addInterceptor(loggingInterceptor)
+            .authenticator(tokenAuthenticator)
             .build()
 
         val retrofit = Retrofit.Builder()

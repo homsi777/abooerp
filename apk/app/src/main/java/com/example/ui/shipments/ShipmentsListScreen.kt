@@ -10,6 +10,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -38,6 +40,7 @@ fun ShipmentsListScreen(viewModel: ShipmentsViewModel, onBack: () -> Unit, onShi
     val selectedDate by viewModel.selectedDate.collectAsStateWithLifecycle()
     var showCreateDialog by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
     val damascusZone = remember { ZoneId.of("Asia/Damascus") }
     val todayIso = remember { LocalDate.now(damascusZone).toString() }
     Scaffold(
@@ -75,6 +78,24 @@ fun ShipmentsListScreen(viewModel: ShipmentsViewModel, onBack: () -> Unit, onShi
                         label = { Text("أمس") },
                     )
                 }
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = 8.dp),
+                    placeholder = { Text("بحث برقم الإيصال أو اسم المرسل أو المستلم") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Clear, contentDescription = "مسح البحث")
+                            }
+                        }
+                    },
+                    singleLine = true,
+                )
             }
         },
     ) { padding ->
@@ -94,15 +115,31 @@ fun ShipmentsListScreen(viewModel: ShipmentsViewModel, onBack: () -> Unit, onShi
                         Spacer(Modifier.height(12.dp))
                         Button(onClick = viewModel::loadShipments) { Text("إعادة المحاولة") }
                     }
-                    is ShipmentsState.Success -> if (current.shipments.isEmpty()) {
-                        Text(
-                            "لا توجد شحنات في ${formatIsoDateOnly(current.selectedDate)}",
-                            modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                        )
-                    } else {
-                        LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            items(current.shipments, key = { it.id }) { shipment ->
-                                ShipmentCard(shipment) { onShipmentClick(shipment) }
+                    is ShipmentsState.Success -> {
+                        val query = searchQuery.trim()
+                        val visibleShipments = if (query.isBlank()) {
+                            current.shipments
+                        } else {
+                            current.shipments.filter { shipment ->
+                                shipment.trackingNumber?.contains(query, ignoreCase = true) == true ||
+                                    shipment.senderName?.contains(query, ignoreCase = true) == true ||
+                                    shipment.receiverName?.contains(query, ignoreCase = true) == true
+                            }
+                        }
+                        if (visibleShipments.isEmpty()) {
+                            Text(
+                                if (query.isBlank()) {
+                                    "لا توجد شحنات في ${formatIsoDateOnly(current.selectedDate)}"
+                                } else {
+                                    "لا توجد نتائج مطابقة لـ \"$query\""
+                                },
+                                modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                            )
+                        } else {
+                            LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                items(visibleShipments, key = { it.id }) { shipment ->
+                                    ShipmentCard(shipment) { onShipmentClick(shipment) }
+                                }
                             }
                         }
                     }

@@ -87,4 +87,7 @@ interface ApiService {
 
     @GET("agent-portal/documentation/{id}")
     suspend fun getAgentDocumentationDetail(@Path("id") id: String): ApiResponse<AgentDocumentationDetail>
+
+    @GET("app/version")
+    suspend fun getAppVersion(@Query("platform") platform: String = "android"): ApiResponse<AppVersionInfo>
 }

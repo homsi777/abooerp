@@ -145,11 +145,21 @@ export function registerPrinterIpc() {
     if (!listing.available) {
       return { available: false, printer: null, message: listing.message };
     }
-    const defaultPrinter = listing.printers.find((printer) => printer.isDefault) ?? null;
+    // Windows doesn't always report a printer as the OS-level default (network
+    // printers, driver reinstalls, etc. can leave nothing flagged). Rather than
+    // block printing entirely in that case, fall back to the first printer the
+    // OS actually lists — printing to *some* installed printer beats refusing.
+    const defaultPrinter =
+      listing.printers.find((printer) => printer.isDefault) ?? listing.printers[0] ?? null;
+    const usedFallback = Boolean(defaultPrinter) && !defaultPrinter?.isDefault;
     return {
       available: true,
       printer: defaultPrinter,
-      message: defaultPrinter ? 'Default printer resolved.' : 'No default printer reported by OS.',
+      message: defaultPrinter
+        ? usedFallback
+          ? `لا توجد طابعة افتراضية محددة بالويندوز — سيتم الطباعة على '${defaultPrinter.displayName}'.`
+          : 'Default printer resolved.'
+        : 'No printers reported by OS.',
     };
   });
 

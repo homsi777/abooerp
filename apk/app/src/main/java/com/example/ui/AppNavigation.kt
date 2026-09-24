@@ -28,6 +28,7 @@ import com.example.ui.shipments.ShipmentsViewModel
 import com.example.ui.documentation.DocumentationDetailScreen
 import com.example.ui.documentation.DocumentationScreen
 import com.example.ui.documentation.DocumentationViewModel
+import com.example.update.UpdateGate
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -55,6 +56,8 @@ fun AppNavigation() {
 
     val startDestination = if (appContainer.authStorage.getAccessToken() != null) HomeRoute else LoginRoute
     val navController = rememberNavController()
+
+    UpdateGate(appContainer.apiService)
 
     // Create ViewModel scoped to NavHost (or parent) to share state
     val shipmentsViewModel: ShipmentsViewModel = viewModel(factory = ShipmentsViewModel.Factory(appContainer.apiService))

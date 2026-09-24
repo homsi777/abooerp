@@ -46,6 +46,15 @@ function normalizeName(value: string | null | undefined): string {
   return String(value ?? '').trim().replace(/\s+/g, ' ');
 }
 
+// Notes used to silently overwrite the goods type whenever both were present,
+// so the agent portal never showed it. Keep both, clearly labeled.
+function combineGoodsTypeAndNotes(parcelType: string | null | undefined, notes: string): string {
+  const goodsType = normalizeName(parcelType);
+  if (goodsType && notes) return `نوع البضاعة: ${goodsType} — ${notes}`;
+  if (goodsType) return `نوع البضاعة: ${goodsType}`;
+  return notes;
+}
+
 function amountsFromLedgerRow(row: LedgerRowRecord) {
   let collect = money(row.collect_amount_usd);
   let prepaid = money(row.prepaid_amount_usd);
@@ -456,7 +465,7 @@ export class DailyLedgerShipmentPostingService {
         customerId: accountCustomer?.id,
         originCity: normalizeName(row.origin_label) || normalizeName(row.line_label),
         destinationCity,
-        description: notes || normalizeName(row.parcel_type),
+        description: combineGoodsTypeAndNotes(row.parcel_type, notes),
         piecesCount: Number(row.parcel_count) || 1,
         weightKg: row.weight_kg == null ? undefined : Number(row.weight_kg),
         originalAmount: amounts.total,
@@ -662,7 +671,7 @@ export class DailyLedgerShipmentPostingService {
         companyId: row.company_id,
         originCity: normalizeName(row.origin_label) || normalizeName(row.line_label),
         destinationCity,
-        description: notes || normalizeName(row.parcel_type),
+        description: combineGoodsTypeAndNotes(row.parcel_type, notes),
         piecesCount: Number(row.parcel_count) || 1,
         weightKg: row.weight_kg == null ? undefined : Number(row.weight_kg),
         status: 'CONFIRMED',
