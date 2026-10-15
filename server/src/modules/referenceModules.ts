@@ -59,6 +59,7 @@ const driverCreateSchema = z.object({
   branch_id: z.string().uuid().optional(),
   agent_id: z.string().uuid().optional(),
   status: statusSchema.optional(),
+  trip_wage_usd: z.coerce.number().nonnegative().optional(),
 });
 const driverUpdateSchema = driverCreateSchema.partial();
 
@@ -131,8 +132,8 @@ export function createReferenceRouters() {
 
   const driversRepository = new ReferenceRepository({
     table: 'drivers',
-    createFields: ['code', 'full_name', 'phone', 'license_number', 'branch_id', 'status', 'agent_id'],
-    updateFields: ['code', 'full_name', 'phone', 'license_number', 'branch_id', 'status', 'agent_id'],
+    createFields: ['code', 'full_name', 'phone', 'license_number', 'branch_id', 'status', 'agent_id', 'trip_wage_usd'],
+    updateFields: ['code', 'full_name', 'phone', 'license_number', 'branch_id', 'status', 'agent_id', 'trip_wage_usd'],
   });
 
   const vehiclesRepository = new ReferenceRepository({

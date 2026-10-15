@@ -93,6 +93,7 @@ import { DailyLedgerTransferService } from './services/dailyLedgerTransferServic
 import { createDailyLedgerRouter } from './routes/dailyLedgerRoutes.js';
 import { createGoodsPricingRouter } from './routes/goodsPricingRoutes.js';
 import { createGoodsShippingPricesRouter } from './routes/goodsShippingPricesRoutes.js';
+import { createDriverAdvancesRouter } from './routes/driverAdvancesRoutes.js';
 import { GoodsPricingRepository } from './repositories/goodsPricingRepository.js';
 import { GoodsPricingService } from './services/goodsPricing/service.js';
 import { createSyncRouter } from './routes/syncRoutes.js';
@@ -280,6 +281,7 @@ app.use('/api/v1/customers', customerRouter);
 app.use('/api/v1/parties', partiesRouter);
 app.use('/api/v1/senders-receivers', referenceRouters.sendersReceivers);
 app.use('/api/v1/drivers', referenceRouters.drivers);
+app.use('/api/v1/drivers', createDriverAdvancesRouter(financeRepository));
 app.use('/api/v1/vehicles', referenceRouters.vehicles);
 app.use('/api/v1/cities', referenceRouters.cities);
 app.use('/api/v1/goods-types', referenceRouters.goodsTypes);

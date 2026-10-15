@@ -44,6 +44,8 @@ export interface Driver {
   licenseExpiry: string;
   address: string;
   isActive: boolean;
+  /** أجرة السفرة الثابتة بالدولار — أساس حساب المتبقي/الذمة عند تسجيل مبالغ أخذها من وكلاء أثناء الرحلة */
+  tripWageUsd?: number | null;
 }
 
 export interface Vehicle {

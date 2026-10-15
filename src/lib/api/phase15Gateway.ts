@@ -23,6 +23,7 @@ type BackendRefRecord = {
   plate_number?: string;
   license_number?: string;
   driver_id?: string | null;
+  trip_wage_usd?: number | string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -220,6 +221,7 @@ function mapDriver(record: BackendRefRecord): Driver {
     licenseExpiry: '',
     address: record.address ?? '',
     isActive: record.status !== 'inactive',
+    tripWageUsd: record.trip_wage_usd != null ? Number(record.trip_wage_usd) : null,
   };
   driverLookup.set(mapped.id, mapped);
   return mapped;
@@ -621,6 +623,7 @@ export const phase15Gateway = {
         license_number: data.licenseNumber || '',
         address: data.address || '',
         status: data.isActive === false ? 'inactive' : 'active',
+        trip_wage_usd: data.tripWageUsd ?? undefined,
       });
       return mapDriver(created);
     },
@@ -634,6 +637,7 @@ export const phase15Gateway = {
         license_number: data.licenseNumber,
         address: data.address,
         status: data.isActive === false ? 'inactive' : 'active',
+        trip_wage_usd: data.tripWageUsd ?? undefined,
       });
       return mapDriver(updated);
     },
