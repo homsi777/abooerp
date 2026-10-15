@@ -5,10 +5,14 @@ import { httpClient } from '../../lib/api/httpClient';
 import SmartPartyInput, { type SelectedParty } from '../../components/SmartPartyInput';
 import { goodsShippingPricesGateway, type GoodsShippingPriceRow } from '../../lib/api/goodsShippingPricesGateway';
 
-interface BranchRow {
-  city: string | null;
+interface AgentRow {
+  governorate: string | null;
   is_active: boolean;
 }
+
+/** الفرع الرئيسي (حلب) ليس له وكيل منفصل — يُدار عبر "صندوق رئيسي" مباشرة،
+ * لذا يُضاف هنا يدوياً لأنه ليس له إشارة "وكيل نشط" مثل بقية الوجهات. */
+const ALWAYS_ACTIVE_DESTINATIONS = ['حلب'];
 
 const inputStyle: React.CSSProperties = {
   minHeight: '44px',
@@ -55,13 +59,14 @@ export default function GoodsPricing() {
 
   useEffect(() => {
     void load();
-    void httpClient.get<BranchRow[]>('/branches').then((branches) => {
+    void httpClient.get<AgentRow[]>('/agents').then((agents) => {
       const cities = Array.from(
-        new Set(
-          branches
-            .filter((b) => b.is_active && b.city && b.city.trim() && b.city.trim() !== 'غير محدد')
-            .map((b) => b.city!.trim()),
-        ),
+        new Set([
+          ...ALWAYS_ACTIVE_DESTINATIONS,
+          ...agents
+            .filter((a) => a.is_active && a.governorate && a.governorate.trim())
+            .map((a) => a.governorate!.trim()),
+        ]),
       ).sort((a, b) => a.localeCompare(b, 'ar'));
       setDestinations(cities);
     }).catch(() => setDestinations([]));
