@@ -3,6 +3,7 @@ import { httpClient } from './httpClient';
 export interface GoodsShippingPriceRow {
   id: string;
   goods_name: string;
+  origin: string | null;
   destination: string;
   weight_kg: string | null;
   parcel_count: number | null;
@@ -16,6 +17,7 @@ export const goodsShippingPricesGateway = {
     httpClient.get(`/finance/goods-shipping-prices?limit=${limit}`),
   create: (input: {
     goodsName: string;
+    origin: string;
     destination: string;
     weightKg?: number | null;
     parcelCount?: number | null;

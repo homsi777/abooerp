@@ -33,6 +33,7 @@ export default function GoodsPricing() {
   const { showToast } = useToast();
 
   const [goodsName, setGoodsName] = useState('');
+  const [origin, setOrigin] = useState('حلب');
   const [destination, setDestination] = useState('');
   const [weightKg, setWeightKg] = useState('');
   const [parcelCount, setParcelCount] = useState('');
@@ -79,13 +80,20 @@ export default function GoodsPricing() {
     setUnitPriceUsd('');
     setCustomerName('');
     setCustomerConfirmed(false);
-    if (!keepFocusField) setDestination('');
+    if (!keepFocusField) {
+      setDestination('');
+      setOrigin('حلب');
+    }
   };
 
   const validate = (): boolean => {
     setError('');
     if (!goodsName.trim()) {
       setError('اكتبي اسم البضاعة.');
+      return false;
+    }
+    if (!origin.trim()) {
+      setError('اختاري المصدر.');
       return false;
     }
     if (!destination.trim()) {
@@ -109,6 +117,7 @@ export default function GoodsPricing() {
     try {
       const created = await goodsShippingPricesGateway.create({
         goodsName: goodsName.trim(),
+        origin: origin.trim(),
         destination: destination.trim(),
         weightKg: weightKg.trim() ? Number(weightKg) : null,
         parcelCount: parcelCount.trim() ? Number(parcelCount) : null,
@@ -174,7 +183,19 @@ export default function GoodsPricing() {
             </div>
 
             <div>
-              <label style={labelStyle}>الوجهة</label>
+              <label style={labelStyle}>المصدر (من أين تُحمَّل)</label>
+              <select style={inputStyle} value={origin} onChange={(e) => setOrigin(e.target.value)}>
+                <option value="">— اختر —</option>
+                {destinations.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label style={labelStyle}>الوجهة (إلى أين تُشحن)</label>
               <select style={inputStyle} value={destination} onChange={(e) => setDestination(e.target.value)}>
                 <option value="">— اختر —</option>
                 {destinations.map((d) => (
@@ -310,6 +331,7 @@ export default function GoodsPricing() {
                 <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #e2e8f0' }}>
                   <th style={{ padding: '9px 10px', textAlign: 'center', fontWeight: 700 }}>الرقم</th>
                   <th style={{ padding: '9px 10px', textAlign: 'right', fontWeight: 700 }}>اسم البضاعة</th>
+                  <th style={{ padding: '9px 10px', textAlign: 'center', fontWeight: 700 }}>المصدر</th>
                   <th style={{ padding: '9px 10px', textAlign: 'center', fontWeight: 700 }}>الوجهة</th>
                   <th style={{ padding: '9px 10px', textAlign: 'center', fontWeight: 700 }}>الوزن (كغ)</th>
                   <th style={{ padding: '9px 10px', textAlign: 'center', fontWeight: 700 }}>الطرود</th>
@@ -323,6 +345,7 @@ export default function GoodsPricing() {
                   <tr key={r.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '8px 10px', textAlign: 'center', color: '#6b7280' }}>{rows.length - i}</td>
                     <td style={{ padding: '8px 10px' }}>{r.goods_name}</td>
+                    <td style={{ padding: '8px 10px', textAlign: 'center', color: '#6b7280' }}>{r.origin ?? '—'}</td>
                     <td style={{ padding: '8px 10px', textAlign: 'center' }}>{r.destination}</td>
                     <td style={{ padding: '8px 10px', textAlign: 'center' }}>{r.weight_kg ?? '—'}</td>
                     <td style={{ padding: '8px 10px', textAlign: 'center' }}>{r.parcel_count ?? '—'}</td>

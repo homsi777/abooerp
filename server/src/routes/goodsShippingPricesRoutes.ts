@@ -14,6 +14,7 @@ function userIdFrom(req: any): string | null {
 
 const createSchema = z.object({
   goodsName: z.string().min(1),
+  origin: z.string().min(1),
   destination: z.string().min(1),
   weightKg: z.coerce.number().nonnegative().nullable().optional(),
   parcelCount: z.coerce.number().int().nonnegative().nullable().optional(),
@@ -31,7 +32,7 @@ export function createGoodsShippingPricesRouter() {
       const limit = Math.min(Number(req.query.limit) || 200, 1000);
       const { rows } = await pool.query(
         `
-        select id, goods_name, destination, weight_kg, parcel_count, unit_price_usd, customer_name, created_at
+        select id, goods_name, origin, destination, weight_kg, parcel_count, unit_price_usd, customer_name, created_at
         from goods_shipping_prices
         order by created_at desc
         limit $1
@@ -50,15 +51,18 @@ export function createGoodsShippingPricesRouter() {
       const { rows } = await pool.query(
         `
         insert into goods_shipping_prices (
-          goods_name, goods_name_normalized, destination, destination_normalized,
+          goods_name, goods_name_normalized, origin, origin_normalized,
+          destination, destination_normalized,
           weight_kg, parcel_count, unit_price_usd, customer_name, created_by
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        returning id, goods_name, destination, weight_kg, parcel_count, unit_price_usd, customer_name, created_at
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        returning id, goods_name, origin, destination, weight_kg, parcel_count, unit_price_usd, customer_name, created_at
         `,
         [
           body.goodsName.trim(),
           normalizeName(body.goodsName).toLowerCase(),
+          body.origin.trim(),
+          normalizeName(body.origin).toLowerCase(),
           body.destination.trim(),
           normalizeName(body.destination).toLowerCase(),
           body.weightKg ?? null,
