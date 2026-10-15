@@ -12,7 +12,8 @@ interface AgentRow {
 
 /** الفرع الرئيسي (حلب) ليس له وكيل منفصل — يُدار عبر "صندوق رئيسي" مباشرة،
  * لذا يُضاف هنا يدوياً لأنه ليس له إشارة "وكيل نشط" مثل بقية الوجهات. */
-const ALWAYS_ACTIVE_DESTINATIONS = ['حلب'];
+const MAIN_BRANCH_LABEL = '🏢 الفرع الرئيسي';
+const ALWAYS_ACTIVE_DESTINATIONS = [MAIN_BRANCH_LABEL];
 
 const inputStyle: React.CSSProperties = {
   minHeight: '44px',
@@ -33,7 +34,7 @@ export default function GoodsPricing() {
   const { showToast } = useToast();
 
   const [goodsName, setGoodsName] = useState('');
-  const [origin, setOrigin] = useState('حلب');
+  const [origin, setOrigin] = useState(MAIN_BRANCH_LABEL);
   const [destination, setDestination] = useState('');
   const [weightKg, setWeightKg] = useState('');
   const [parcelCount, setParcelCount] = useState('');
@@ -82,7 +83,7 @@ export default function GoodsPricing() {
     setCustomerConfirmed(false);
     if (!keepFocusField) {
       setDestination('');
-      setOrigin('حلب');
+      setOrigin(MAIN_BRANCH_LABEL);
     }
   };
 
