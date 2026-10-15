@@ -24,8 +24,7 @@ const GROUPS: FinanceGroup[] = [
     cards: [
       { icon: '🧾', label: 'السندات', path: '/finance/vouchers', permission: 'finance.vouchers.view', built: true },
       { icon: '⏱️', label: 'الورديات والعهد', path: '/finance/custody', permission: 'finance.read', built: true },
-      { icon: '👥', label: 'العملاء', path: '/customers', permission: 'customers.view', built: true },
-      { icon: '👤', label: 'الأطراف (المرسلون/المستلمون)', path: '/senders-receivers', permission: 'parties.view', built: true },
+      { icon: '👤', label: 'الأطراف والعملاء', path: '/senders-receivers', permission: 'parties.view', built: true },
       { icon: '🚚', label: 'الموردون', path: '/finance/suppliers', permission: 'finance.read', built: false },
       { icon: '🔄', label: 'الحوالات', path: '/transfers', permission: 'transfers.read', built: true },
       { icon: '💵', label: 'الصناديق', path: '/finance/cashboxes', permission: 'finance.cashboxes.view', built: true },
