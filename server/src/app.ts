@@ -280,8 +280,10 @@ app.use('/api/v1/items', createItemRouter(itemService));
 app.use('/api/v1/customers', customerRouter);
 app.use('/api/v1/parties', partiesRouter);
 app.use('/api/v1/senders-receivers', referenceRouters.sendersReceivers);
-app.use('/api/v1/drivers', referenceRouters.drivers);
+// مُسجَّل قبل الراوتر العام (الذي يحوي GET /:id) حتى لا يلتقط المسار العام
+// "/report" بالخطأ معتبراً "report" قيمة لـ :id.
 app.use('/api/v1/drivers', createDriverAdvancesRouter(financeRepository));
+app.use('/api/v1/drivers', referenceRouters.drivers);
 app.use('/api/v1/vehicles', referenceRouters.vehicles);
 app.use('/api/v1/cities', referenceRouters.cities);
 app.use('/api/v1/goods-types', referenceRouters.goodsTypes);

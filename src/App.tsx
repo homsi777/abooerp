@@ -174,6 +174,14 @@ export default function App() {
                     }
                   />
                   <Route
+                    path="/finance/drivers"
+                    element={
+                      <RequirePermission permission="drivers.view">
+                        <Drivers />
+                      </RequirePermission>
+                    }
+                  />
+                  <Route
                     path="/vehicles"
                     element={
                       <RequirePermission permission="vehicles.view">

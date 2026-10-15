@@ -28,6 +28,7 @@ const GROUPS: FinanceGroup[] = [
       { icon: '🚚', label: 'الموردون', path: '/finance/suppliers', permission: 'finance.read', built: false },
       { icon: '🔄', label: 'الحوالات', path: '/transfers', permission: 'transfers.read', built: true },
       { icon: '💵', label: 'الصناديق', path: '/finance/cashboxes', permission: 'finance.cashboxes.view', built: true },
+      { icon: '🚚', label: 'السائقين', path: '/finance/drivers', permission: 'drivers.view', built: true },
     ],
   },
   {

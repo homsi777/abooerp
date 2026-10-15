@@ -21,6 +21,10 @@ const createAdvanceSchema = z.object({
   agentId: z.string().uuid().nullable().optional(),
   amountUsd: z.coerce.number().positive(),
   notes: z.string().nullable().optional(),
+  /** تاريخ الرحلة الأساسية — قد يختلف عن تاريخ استلام المبلغ فعلياً */
+  tripDate: z.string().nullable().optional(),
+  /** تاريخ استلام السائق للمبلغ فعلياً من الوكيل */
+  receivedDate: z.string().nullable().optional(),
 });
 
 /** صندوق/كشف السائق: يحسب المتبقي من أجرة السفرة، أو الذمة عليه إن تجاوز. */
@@ -34,7 +38,8 @@ async function buildDriverSummary(driverId: string) {
 
   const entriesResult = await pool.query(
     `
-    select a.id, a.agent_id, ag.name as agent_name, a.amount_usd, a.notes, a.created_at, a.payment_voucher_id
+    select a.id, a.agent_id, ag.name as agent_name, a.amount_usd, a.notes, a.created_at, a.payment_voucher_id,
+           a.trip_date, a.received_date
     from driver_trip_advances a
     left join agents ag on ag.id = a.agent_id
     where a.driver_id = $1 and a.settled_at is null
@@ -58,8 +63,62 @@ async function buildDriverSummary(driverId: string) {
   };
 }
 
+const reportQuerySchema = z.object({
+  driverId: z.string().uuid().optional(),
+  fromDate: z.string().optional(),
+  toDate: z.string().optional(),
+});
+
+/** تقرير عام أو حسب تاريخ رحلة — يشمل السجلات المسوّاة وغير المسوّاة. */
+async function buildDriverReport(filters: { driverId?: string; fromDate?: string; toDate?: string }) {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (filters.driverId) {
+    params.push(filters.driverId);
+    conditions.push(`a.driver_id = $${params.length}`);
+  }
+  if (filters.fromDate) {
+    params.push(filters.fromDate);
+    conditions.push(`coalesce(a.trip_date, a.created_at::date) >= $${params.length}`);
+  }
+  if (filters.toDate) {
+    params.push(filters.toDate);
+    conditions.push(`coalesce(a.trip_date, a.created_at::date) <= $${params.length}`);
+  }
+
+  const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
+
+  const result = await pool.query(
+    `
+    select
+      a.id, a.driver_id, d.full_name as driver_name, d.trip_wage_usd,
+      a.agent_id, ag.name as agent_name, a.amount_usd, a.notes,
+      a.trip_date, a.received_date, a.created_at, a.payment_voucher_id, a.settled_at
+    from driver_trip_advances a
+    join drivers d on d.id = a.driver_id
+    left join agents ag on ag.id = a.agent_id
+    ${where}
+    order by coalesce(a.trip_date, a.created_at::date) desc, a.created_at desc
+    `,
+    params,
+  );
+
+  return { entries: result.rows };
+}
+
 export function createDriverAdvancesRouter(financeRepository: FinanceRepository) {
   const router = Router();
+
+  router.get(
+    '/report',
+    requirePermissions(READ_PERMISSIONS),
+    asyncHandler(async (req, res) => {
+      const filters = reportQuerySchema.parse(req.query);
+      const report = await buildDriverReport(filters);
+      res.json({ success: true, data: report });
+    }),
+  );
 
   router.get(
     '/:driverId/advances',
@@ -118,11 +177,21 @@ export function createDriverAdvancesRouter(financeRepository: FinanceRepository)
 
         const inserted = await client.query(
           `
-          insert into driver_trip_advances (driver_id, agent_id, amount_usd, notes, payment_voucher_id, created_by)
-          values ($1, $2, $3, $4, $5, $6)
+          insert into driver_trip_advances
+            (driver_id, agent_id, amount_usd, notes, payment_voucher_id, created_by, trip_date, received_date)
+          values ($1, $2, $3, $4, $5, $6, $7, $8)
           returning id
           `,
-          [driverId, body.agentId ?? null, body.amountUsd, body.notes ?? null, paymentVoucherId, userId],
+          [
+            driverId,
+            body.agentId ?? null,
+            body.amountUsd,
+            body.notes ?? null,
+            paymentVoucherId,
+            userId,
+            body.tripDate ?? null,
+            body.receivedDate ?? null,
+          ],
         );
 
         await client.query('commit');

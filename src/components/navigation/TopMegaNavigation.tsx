@@ -41,10 +41,9 @@ const NAV_MODULES: NavModule[] = [
   { id: 'permissions', label: 'مركز الصلاحيات', icon: '🛡️', path: '/permissions', permission: 'permissions.view' },
   { id: 'admin-events', label: 'الأحداث', icon: '📜', path: '/admin/events', permission: 'admin.events.read' },
   {
-    id: 'vehicles', label: 'المركبات والسائقون', icon: '🚛',
+    id: 'vehicles', label: 'المركبات', icon: '🚛',
     children: [
       { label: 'المركبات', path: '/vehicles', icon: '🚚', permission: 'settings.system.read' },
-      { label: 'السائقون', path: '/drivers', icon: '👤', permission: 'settings.system.read' },
     ],
   },
   {
@@ -96,7 +95,6 @@ function buildNavDataEntry(): NavModule[] {
         ...mod,
         children: [
           { label: 'المركبات', path: '/vehicles', icon: '🚚', permission: 'vehicles.view' },
-          { label: 'السائقون', path: '/drivers', icon: '👤', permission: 'drivers.view' },
         ],
       };
     }

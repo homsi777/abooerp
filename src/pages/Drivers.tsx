@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { phase15Gateway, getBackendIdFromSynthetic } from '../lib/api/phase15Gateway';
 import { httpClient } from '../lib/api/httpClient';
 import { Driver } from '../types';
 import { useToast } from '../components/Toast';
-import { driverAdvancesGateway, type DriverAdvanceSummary } from '../lib/api/driverAdvancesGateway';
+import { driverAdvancesGateway, type DriverAdvanceSummary, type DriverReportEntry } from '../lib/api/driverAdvancesGateway';
 
 interface AgentOption {
   id: string;
@@ -52,6 +53,7 @@ export default function Drivers() {
   const [editingDriver, setEditingDriver] = useState<Driver | null>(null);
   const [isEditingForm, setIsEditingForm] = useState(false);
   const [advancesDriver, setAdvancesDriver] = useState<Driver | null>(null);
+  const [showReport, setShowReport] = useState(false);
   const { showToast } = useToast();
 
   const [formData, setFormData] = useState<Partial<Driver>>({
@@ -102,9 +104,13 @@ export default function Drivers() {
 
   return (
     <div className="h-full flex flex-col" style={{ gap: '16px' }}>
+      <Link to="/finance" style={{ fontSize: '13.5px', color: '#4f46e5', textDecoration: 'none', fontWeight: 600 }}>
+        ← الذمم والمالية
+      </Link>
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold">🚚 السائقين</h2>
         <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={() => setShowReport(true)} style={bigButtonStyle()}>📄 تقرير السائقين</button>
           <button onClick={handleNew} style={bigButtonStyle('primary')}>＋ سائق جديد</button>
           <button onClick={() => void loadDrivers()} style={bigButtonStyle()}>تحديث</button>
         </div>
@@ -209,6 +215,119 @@ export default function Drivers() {
           showToast={showToast}
         />
       )}
+
+      {showReport && <DriverReportPanel drivers={drivers} onClose={() => setShowReport(false)} showToast={showToast} />}
+    </div>
+  );
+}
+
+function DriverReportPanel({
+  drivers,
+  onClose,
+  showToast,
+}: {
+  drivers: Driver[];
+  onClose: () => void;
+  showToast: (msg: string, kind: 'success' | 'error') => void;
+}) {
+  const [driverId, setDriverId] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [entries, setEntries] = useState<DriverReportEntry[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const runReport = async () => {
+    setLoading(true);
+    try {
+      const backendDriverId = driverId ? getBackendIdFromSynthetic(Number(driverId)) ?? undefined : undefined;
+      const result = await driverAdvancesGateway.report({
+        driverId: backendDriverId,
+        fromDate: fromDate || undefined,
+        toDate: toDate || undefined,
+      });
+      setEntries(result.entries);
+    } catch {
+      showToast('تعذر تحميل التقرير', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void runReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const total = (entries ?? []).reduce((sum, e) => sum + Number(e.amount_usd), 0);
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 70 }}>
+      <div style={{ background: '#fff', borderRadius: '18px', padding: '24px', width: 'min(720px, 95vw)', maxHeight: '88vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h3 style={{ fontSize: '19px', fontWeight: 800 }}>📄 تقرير السائقين</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '22px', color: '#9ca3af', cursor: 'pointer' }}>×</button>
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+          <select style={{ ...inputStyle, width: '220px' }} value={driverId} onChange={(e) => setDriverId(e.target.value)}>
+            <option value="">— جميع السائقين —</option>
+            {drivers.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+          <div>
+            <label style={{ fontSize: '12px', color: '#6b7280' }}>من تاريخ رحلة</label>
+            <input type="date" style={{ ...inputStyle, width: '160px' }} value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+          </div>
+          <div>
+            <label style={{ fontSize: '12px', color: '#6b7280' }}>إلى تاريخ رحلة</label>
+            <input type="date" style={{ ...inputStyle, width: '160px' }} value={toDate} onChange={(e) => setToDate(e.target.value)} />
+          </div>
+          <button onClick={() => void runReport()} style={{ ...bigButtonStyle('primary'), alignSelf: 'flex-end' }}>
+            عرض التقرير
+          </button>
+        </div>
+
+        {loading || !entries ? (
+          <p style={{ textAlign: 'center', padding: '30px', color: '#6b7280' }}>جاري التحميل...</p>
+        ) : entries.length === 0 ? (
+          <p style={{ textAlign: 'center', padding: '30px', color: '#9ca3af' }}>لا توجد سجلات ضمن هذا الفلتر.</p>
+        ) : (
+          <>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', fontSize: '13px', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: '#f8fafc', textAlign: 'right' }}>
+                    <th style={{ padding: '8px' }}>السائق</th>
+                    <th style={{ padding: '8px' }}>الوكيل</th>
+                    <th style={{ padding: '8px' }}>المبلغ ($)</th>
+                    <th style={{ padding: '8px' }}>تاريخ الرحلة</th>
+                    <th style={{ padding: '8px' }}>تاريخ الاستلام</th>
+                    <th style={{ padding: '8px' }}>ملاحظات</th>
+                    <th style={{ padding: '8px' }}>الحالة</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entries.map((e) => (
+                    <tr key={e.id} style={{ borderTop: '1px solid #e5e7eb' }}>
+                      <td style={{ padding: '8px', fontWeight: 700 }}>{e.driver_name}</td>
+                      <td style={{ padding: '8px' }}>{e.agent_name ?? 'بدون وكيل'}</td>
+                      <td style={{ padding: '8px', color: '#b45309', fontWeight: 700 }}>{e.amount_usd}</td>
+                      <td style={{ padding: '8px' }}>{e.trip_date ?? '—'}</td>
+                      <td style={{ padding: '8px' }}>{e.received_date ?? '—'}</td>
+                      <td style={{ padding: '8px', color: '#6b7280' }}>{e.notes ?? ''}</td>
+                      <td style={{ padding: '8px' }}>{e.settled_at ? 'مسوّاة' : 'مفتوحة'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ marginTop: '14px', fontWeight: 800, fontSize: '15px', textAlign: 'left' }}>
+              الإجمالي: {Math.round(total * 100) / 100}$
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -229,6 +348,8 @@ function DriverAdvancesPanel({
   const [agentId, setAgentId] = useState('');
   const [amount, setAmount] = useState('');
   const [notes, setNotes] = useState('');
+  const [tripDate, setTripDate] = useState('');
+  const [receivedDate, setReceivedDate] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [confirmSettle, setConfirmSettle] = useState(false);
@@ -265,10 +386,14 @@ function DriverAdvancesPanel({
         agentId: agentId || null,
         amountUsd: Number(amount),
         notes: notes.trim() || null,
+        tripDate: tripDate || null,
+        receivedDate: receivedDate || null,
       });
       setSummary(next);
       setAmount('');
       setNotes('');
+      setTripDate('');
+      setReceivedDate('');
       showToast('تم تسجيل المبلغ', 'success');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'تعذر الحفظ');
@@ -341,6 +466,16 @@ function DriverAdvancesPanel({
                 ))}
               </select>
               <input style={inputStyle} placeholder="المبلغ ($)" value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '12px', color: '#6b7280' }}>تاريخ الرحلة الأساسية</label>
+                  <input type="date" style={inputStyle} value={tripDate} onChange={(e) => setTripDate(e.target.value)} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '12px', color: '#6b7280' }}>تاريخ استلام المبلغ</label>
+                  <input type="date" style={inputStyle} value={receivedDate} onChange={(e) => setReceivedDate(e.target.value)} />
+                </div>
+              </div>
               <input style={inputStyle} placeholder="ملاحظات (اختياري)" value={notes} onChange={(e) => setNotes(e.target.value)} />
               {error && <p style={{ color: '#dc2626', fontSize: '13.5px', margin: 0 }}>{error}</p>}
               <button onClick={() => void addAdvance()} disabled={saving} style={bigButtonStyle('primary')}>
@@ -374,7 +509,10 @@ function DriverAdvancesPanel({
                     <div>
                       <strong>{entry.agent_name ?? 'بدون وكيل'}</strong>
                       {entry.notes ? <span style={{ color: '#6b7280' }}> — {entry.notes}</span> : null}
-                      <div style={{ fontSize: '11px', color: '#9ca3af' }}>{entry.created_at.split('T')[0]}</div>
+                      <div style={{ fontSize: '11px', color: '#9ca3af' }}>
+                        {entry.trip_date ? `تاريخ الرحلة: ${entry.trip_date}` : `سُجِّل: ${entry.created_at.split('T')[0]}`}
+                        {entry.received_date ? ` · استلام: ${entry.received_date}` : ''}
+                      </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <span style={{ fontWeight: 700, color: '#b45309' }}>{entry.amount_usd}$</span>
