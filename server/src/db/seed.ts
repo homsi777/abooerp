@@ -484,7 +484,8 @@ export async function runSeed() {
       from (
         values
           ('BR-DAMASCUS',  'فرع دمشق',       'دمشق'),
-          ('BR-RIF',       'فرع ريف دمشق',   'ريف دمشق'),
+          -- BR-RIF (ريف دمشق) حُذف عمداً — دُمج في فرع دمشق بقرار إداري؛
+          -- لا يجوز لهذا السكربت إعادة إنشائه.
           ('BR-ALEPPO',    'فرع حلب',        'حلب'),
           ('BR-HOMS',      'فرع حمص',        'حمص'),
           ('BR-HAMA',      'فرع حماة',       'حماة'),
@@ -503,7 +504,6 @@ export async function runSeed() {
       on conflict (code) do update set
         name       = excluded.name,
         city       = excluded.city,
-        is_active  = true,
         company_id = excluded.company_id,
         updated_at = now()
     `);
@@ -517,7 +517,7 @@ export async function runSeed() {
       from (
         values
           ('AGT-DAMASCUS', 'وكيل دمشق',      'دمشق',       'BR-DAMASCUS'),
-          ('AGT-RIF',      'وكيل ريف دمشق',  'ريف دمشق',   'BR-RIF'),
+          -- AGT-RIF (وكيل ريف دمشق) حُذف عمداً مع BR-RIF أعلاه، لنفس السبب.
           ('AGT-ALEPPO',   'وكيل حلب',       'حلب',        'BR-ALEPPO'),
           ('AGT-HOMS',     'وكيل حمص',       'حمص',        'BR-HOMS'),
           ('AGT-HAMA',     'وكيل حماة',      'حماة',       'BR-HAMA'),
@@ -536,7 +536,6 @@ export async function runSeed() {
       on conflict (code) do update set
         name        = excluded.name,
         governorate = excluded.governorate,
-        is_active   = true,
         branch_id   = excluded.branch_id,
         updated_at  = now()
     `);
@@ -591,7 +590,6 @@ export async function runSeed() {
       from (
         values
           ('AGT-DAMASCUS', 'DAMASCUS'),
-          ('AGT-RIF',      'RIF'),
           ('AGT-ALEPPO',   'ALEPPO'),
           ('AGT-HOMS',     'HOMS'),
           ('AGT-HAMA',     'HAMA'),
