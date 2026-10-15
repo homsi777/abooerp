@@ -475,6 +475,17 @@ export async function runSeed() {
 
     // Tariffs: no default data seeded — customer defines their own pricing.
 
+    // ─── 9b-9e. SYRIAN DEFAULT BRANCHES/AGENTS/CASHBOXES — FIRST RUN ONLY ────
+    // These seed a starter roster for a brand-new company. They must NEVER
+    // run again after that: once the business renames/repurposes a code
+    // (e.g. the real main branch became code 'MAIN' instead of 'BR-ALEPPO',
+    // or an agent's code was changed to a real employee code like '24'),
+    // the original hardcoded code becomes "free" and re-running this insert
+    // on every restart silently creates a fresh phantom duplicate under the
+    // old code — this happened in production on 2026-10-15 (phantom "فرع
+    // حلب" / "وكيل دمشق" rows reappeared). Gating the whole block behind
+    // isFirstRun is the only fix that can't be defeated by a future rename.
+    if (isFirstRun) {
     // ─── 9b. SYRIAN DEFAULT BRANCHES ─────────────────────────────────────────
     // One default branch per Syrian governorate/operational destination.
     // Idempotent: ON CONFLICT (code) DO NOTHING.
@@ -636,6 +647,7 @@ export async function runSeed() {
       where b.code = 'BR-ALEPPO' and b.is_active = true
       on conflict (company_id, code) do nothing
     `);
+    } // end if (isFirstRun) — 9b-9e starter roster
 
     // ─── 10. SYSTEM SETTINGS ─────────────────────────────────────────────────
     await client.query(`

@@ -1,25 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useToast } from '../../components/Toast';
+import { httpClient } from '../../lib/api/httpClient';
+import SmartPartyInput, { type SelectedParty } from '../../components/SmartPartyInput';
 import { goodsShippingPricesGateway, type GoodsShippingPriceRow } from '../../lib/api/goodsShippingPricesGateway';
 
-const DESTINATIONS = [
-  'دمشق',
-  'ريف دمشق',
-  'حلب',
-  'حمص',
-  'حماة',
-  'اللاذقية',
-  'طرطوس',
-  'إدلب',
-  'دير الزور',
-  'الحسكة',
-  'الرقة',
-  'درعا',
-  'السويداء',
-  'القنيطرة',
-  'القامشلي',
-];
+interface BranchRow {
+  city: string | null;
+  is_active: boolean;
+}
 
 const inputStyle: React.CSSProperties = {
   minHeight: '44px',
@@ -34,6 +23,8 @@ const inputStyle: React.CSSProperties = {
 
 const labelStyle: React.CSSProperties = { fontSize: '13.5px', fontWeight: 700, color: '#374151', marginBottom: '6px', display: 'block' };
 
+const disabledInputStyle: React.CSSProperties = { background: '#f1f5f9', color: '#9ca3af', cursor: 'not-allowed' };
+
 export default function GoodsPricing() {
   const { showToast } = useToast();
 
@@ -43,11 +34,13 @@ export default function GoodsPricing() {
   const [parcelCount, setParcelCount] = useState('');
   const [unitPriceUsd, setUnitPriceUsd] = useState('');
   const [customerName, setCustomerName] = useState('');
+  const [customerConfirmed, setCustomerConfirmed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const [rows, setRows] = useState<GoodsShippingPriceRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [destinations, setDestinations] = useState<string[]>([]);
 
   const load = async () => {
     setLoading(true);
@@ -62,6 +55,16 @@ export default function GoodsPricing() {
 
   useEffect(() => {
     void load();
+    void httpClient.get<BranchRow[]>('/branches').then((branches) => {
+      const cities = Array.from(
+        new Set(
+          branches
+            .filter((b) => b.is_active && b.city && b.city.trim() && b.city.trim() !== 'غير محدد')
+            .map((b) => b.city!.trim()),
+        ),
+      ).sort((a, b) => a.localeCompare(b, 'ar'));
+      setDestinations(cities);
+    }).catch(() => setDestinations([]));
   }, []);
 
   const resetForm = (keepFocusField = true) => {
@@ -70,6 +73,7 @@ export default function GoodsPricing() {
     setParcelCount('');
     setUnitPriceUsd('');
     setCustomerName('');
+    setCustomerConfirmed(false);
     if (!keepFocusField) setDestination('');
   };
 
@@ -85,6 +89,10 @@ export default function GoodsPricing() {
     }
     if (!unitPriceUsd.trim() || Number.isNaN(Number(unitPriceUsd)) || Number(unitPriceUsd) < 0) {
       setError('أدخلي سعراً صحيحاً.');
+      return false;
+    }
+    if (customerName.trim() && !customerConfirmed) {
+      setError('اسم الزبون غير موجود في النظام — اختاريه من قائمة الاقتراحات أو اتركي الحقل فارغاً.');
       return false;
     }
     return true;
@@ -164,7 +172,7 @@ export default function GoodsPricing() {
               <label style={labelStyle}>الوجهة</label>
               <select style={inputStyle} value={destination} onChange={(e) => setDestination(e.target.value)}>
                 <option value="">— اختر —</option>
-                {DESTINATIONS.map((d) => (
+                {destinations.map((d) => (
                   <option key={d} value={d}>
                     {d}
                   </option>
@@ -174,12 +182,32 @@ export default function GoodsPricing() {
 
             <div>
               <label style={labelStyle}>الوزن (كغ)</label>
-              <input style={inputStyle} value={weightKg} onChange={(e) => setWeightKg(e.target.value)} inputMode="decimal" />
+              <input
+                style={{ ...inputStyle, ...(parcelCount.trim() ? disabledInputStyle : {}) }}
+                value={weightKg}
+                onChange={(e) => {
+                  setWeightKg(e.target.value);
+                  if (e.target.value.trim()) setParcelCount('');
+                }}
+                disabled={Boolean(parcelCount.trim())}
+                inputMode="decimal"
+                placeholder={parcelCount.trim() ? 'مُعطَّل — يوجد عدد طرود' : ''}
+              />
             </div>
 
             <div>
               <label style={labelStyle}>عدد الطرود</label>
-              <input style={inputStyle} value={parcelCount} onChange={(e) => setParcelCount(e.target.value)} inputMode="numeric" />
+              <input
+                style={{ ...inputStyle, ...(weightKg.trim() ? disabledInputStyle : {}) }}
+                value={parcelCount}
+                onChange={(e) => {
+                  setParcelCount(e.target.value);
+                  if (e.target.value.trim()) setWeightKg('');
+                }}
+                disabled={Boolean(weightKg.trim())}
+                inputMode="numeric"
+                placeholder={weightKg.trim() ? 'مُعطَّل — يوجد وزن' : ''}
+              />
             </div>
 
             <div>
@@ -197,7 +225,24 @@ export default function GoodsPricing() {
 
             <div>
               <label style={labelStyle}>الزبون/العميل (اختياري)</label>
-              <input style={inputStyle} value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+              <SmartPartyInput
+                value={customerName}
+                onChange={(v) => {
+                  setCustomerName(v);
+                  setCustomerConfirmed(false);
+                }}
+                onSelect={(party: SelectedParty) => {
+                  setCustomerName(party.name);
+                  setCustomerConfirmed(true);
+                }}
+                allowAddNew={false}
+                placeholder="اكتبي اسم الزبون..."
+                inputClassName={
+                  customerName.trim() && !customerConfirmed
+                    ? 'goods-pricing-input goods-pricing-input-error'
+                    : 'goods-pricing-input'
+                }
+              />
             </div>
 
             {error && <p style={{ color: '#dc2626', fontSize: '14px', margin: 0 }}>{error}</p>}
