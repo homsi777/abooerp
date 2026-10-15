@@ -477,6 +477,14 @@ export interface DailyLedgerUpsertInput {
   restrictToCreatedByUserId?: string;
   /** تعريف الإرسالية (النظام الجديد) — يُستخرج منه السائق/المركبة عند الحفظ */
   dispatchId?: string | null;
+  // ── تسعير البضائع (ميزة إضافية، كل الحقول اختيارية — الأسطر القديمة تبقى NULL) ──
+  pricingGroupId?: string | null;
+  pricingPartyId?: string | null;
+  pricingUnit?: string | null;
+  unitPriceUsd?: number | null;
+  lineTotalUsd?: number | null;
+  priceSource?: string | null;
+  suggestedUnitPriceUsd?: number | null;
 }
 
 export class DailyLedgerRepository {
@@ -626,6 +634,10 @@ export class DailyLedgerRepository {
         r.loaded_manifest_id,
         r.loaded_at,
         r.dispatch_id,
+        r.pricing_unit,
+        r.unit_price_usd,
+        r.line_total_usd,
+        r.price_source,
         r.created_by,
         r.updated_by,
         r.created_at,
@@ -1164,7 +1176,14 @@ export class DailyLedgerRepository {
             notes = $15,
             dispatch_id = $16,
             updated_by = $17,
-            updated_at = now()
+            updated_at = now(),
+            pricing_group_id = $20,
+            pricing_party_id = $21,
+            pricing_unit = $22,
+            unit_price_usd = $23,
+            line_total_usd = $24,
+            price_source = $25,
+            suggested_unit_price_usd = $26
           from daily_ledger_sessions s
           join branches b on b.id = s.branch_id
           where r.id = $1
@@ -1213,6 +1232,13 @@ export class DailyLedgerRepository {
             input.userId ?? scope.userId ?? null,
             input.branchId,
             input.restrictToCreatedByUserId ?? null,
+            input.pricingGroupId ?? null,
+            input.pricingPartyId ?? null,
+            input.pricingUnit ?? null,
+            input.unitPriceUsd ?? null,
+            input.lineTotalUsd ?? null,
+            input.priceSource ?? null,
+            input.suggestedUnitPriceUsd ?? null,
           ],
         );
         if (!updated.rows.length) {
@@ -1269,9 +1295,16 @@ export class DailyLedgerRepository {
           notes,
           dispatch_id,
           created_by,
-          updated_by
+          updated_by,
+          pricing_group_id,
+          pricing_party_id,
+          pricing_unit,
+          unit_price_usd,
+          line_total_usd,
+          price_source,
+          suggested_unit_price_usd
         )
-        values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17)
+        values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17,$27,$28,$29,$30,$31,$32,$33)
         returning
           daily_ledger_rows.*,
           $18::uuid as branch_id,
@@ -1317,6 +1350,13 @@ export class DailyLedgerRepository {
           session.driver_label,
           session.driver_id,
           session.vehicle_id,
+          input.pricingGroupId ?? null,
+          input.pricingPartyId ?? null,
+          input.pricingUnit ?? null,
+          input.unitPriceUsd ?? null,
+          input.lineTotalUsd ?? null,
+          input.priceSource ?? null,
+          input.suggestedUnitPriceUsd ?? null,
         ],
       );
 

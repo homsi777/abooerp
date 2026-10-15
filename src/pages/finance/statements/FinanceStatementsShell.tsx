@@ -23,70 +23,63 @@ export default function FinanceStatementsShell() {
       <div>
         <h2 className="text-xl font-bold">كشف</h2>
         <p className="text-sm text-gray-600 mt-1">
-          مركز موحّد لكل الكشوف — اختر القسم ثم نوع الكشف، ثم حدّد الفترة والطرف.
+          مركز موحّد لكل الكشوف — اختاري القسم ثم نوع الكشف، ثم حدّدي الفترة والطرف.
         </p>
-        {active && (
-          <p className="text-xs text-primary-700 font-medium mt-2">
-            {active.group.label} — {active.item.label}
-          </p>
-        )}
       </div>
 
-      <div
-        className="card p-3 border border-slate-200/80 bg-gradient-to-b from-slate-50/90 to-white shadow-sm"
-        dir="rtl"
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
-          {STATEMENT_NAV.map((group) => {
-            const value = groupActivePath(location.pathname, group);
-            const isGroupActive = Boolean(value);
-            const sole = group.items.length === 1 ? group.items[0] : null;
-
-            return (
+      {/* Same large, high-contrast card language as the Finance hub (/finance) —
+          replaces the previous tiny <select> dropdowns, which were the exact
+          hard-to-read pattern this whole redesign was meant to fix. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        {STATEMENT_NAV.map((group) => {
+          const activePath = groupActivePath(location.pathname, group);
+          return (
+            <div key={group.id}>
+              <h3 style={{ fontSize: '14px', fontWeight: 700, color: '#374151', margin: '0 0 8px' }}>
+                {group.label}
+              </h3>
               <div
-                key={group.id}
-                className={`block text-sm rounded-lg p-2 transition-colors ${
-                  isGroupActive ? 'bg-primary/5 ring-1 ring-primary/25' : 'bg-white/60'
-                }`}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
+                  gap: '10px',
+                }}
               >
-                <span className="block text-xs font-bold text-slate-500 mb-1.5">{group.label}</span>
-                {sole ? (
-                  <button
-                    type="button"
-                    className={`form-select w-full text-sm text-right cursor-pointer ${
-                      isGroupActive ? 'border-primary bg-primary/10 font-semibold text-primary-800' : ''
-                    }`}
-                    onClick={() => navigate(sole.path)}
-                  >
-                    {sole.label}
-                  </button>
-                ) : (
-                  <select
-                    className="form-select w-full text-sm"
-                    value={value}
-                    onChange={(e) => {
-                      const path = e.target.value;
-                      if (path) navigate(path);
-                    }}
-                    aria-label={group.label}
-                  >
-                    <option value="" disabled>
-                      اختر من {group.label}
-                    </option>
-                    {group.items.map((item) => (
-                      <option key={item.id} value={item.path}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                {group.items.map((item) => {
+                  const isActive = item.path === activePath;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => navigate(item.path)}
+                      style={{
+                        textAlign: 'right',
+                        padding: '14px 16px',
+                        fontSize: '14.5px',
+                        fontWeight: isActive ? 700 : 600,
+                        color: isActive ? '#1e40af' : '#111827',
+                        background: isActive ? '#eff6ff' : '#fff',
+                        border: `2px solid ${isActive ? '#1e40af' : '#e5e7eb'}`,
+                        borderRadius: '10px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
               </div>
-            );
-          })}
-        </div>
+            </div>
+          );
+        })}
       </div>
 
       <div className="flex-1 min-h-0 overflow-auto">
+        {active && (
+          <p className="text-xs text-primary-700 font-medium mb-2">
+            {active.group.label} — {active.item.label}
+          </p>
+        )}
         <Outlet />
       </div>
     </div>

@@ -340,6 +340,8 @@ export function buildVehicleTripReportPrintHtml(input: {
     { label: 'مسبق', value: input.totals.prepaidAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }) },
     { label: 'حوالات', value: input.totals.hawalaAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }) },
     { label: 'أجور حوالات', value: input.totals.transferServiceFee.toLocaleString('en-US', { maximumFractionDigits: 2 }) },
+    { label: 'عمولة الوكيل', value: (input.meta?.totalAgentCommission ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 }) },
+    { label: 'الصافي', value: (input.meta?.totalNetProfit ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 }) },
     { label: 'تاريخ الطباعة', value: formatLedgerDate(new Date().toISOString()) },
   ];
 
@@ -363,8 +365,8 @@ export function buildVehicleTripReportPrintHtml(input: {
   }
 
   sections.push({
-    heading: 'تفاصيل الشحنات (دفتر الإدخال السريع)',
-    headers: ['وصل', 'وجهة', 'وكيل', 'حالة', 'عدد', 'وزن', 'تحصيل', 'مسبق', 'حوالة', 'أجرة'],
+    heading: 'تفاصيل الشحنات (دفتر الإدخال السريع) — عمولة الوكيل = نسبة% × (دفع مسبق + تحصيل)',
+    headers: ['وصل', 'وجهة', 'وكيل', 'حالة', 'عدد', 'وزن', 'تحصيل', 'مسبق', 'حوالة', 'أجرة', 'نسبة%', 'عمولة', 'الصافي'],
     rows: input.rows.map((row) => [
       row.ledgerReceiptNo ?? row.shipmentNo,
       row.ledgerDestination ?? row.operationalCenter,
@@ -376,6 +378,9 @@ export function buildVehicleTripReportPrintHtml(input: {
       row.prepaidAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
       row.hawalaAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
       row.transferServiceFee.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+      row.agentCommissionPercentage ? `${row.agentCommissionPercentage}٪` : '—',
+      (row.agentCommissionAmount ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 }),
+      (row.netProfit ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 }),
     ]),
     footerRow: [
       'الإجمالي',
@@ -388,6 +393,9 @@ export function buildVehicleTripReportPrintHtml(input: {
       input.totals.prepaidAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
       input.totals.hawalaAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }),
       input.totals.transferServiceFee.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+      '',
+      (input.meta?.totalAgentCommission ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 }),
+      (input.meta?.totalNetProfit ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 }),
     ],
   });
 

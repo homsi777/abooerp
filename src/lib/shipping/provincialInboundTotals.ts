@@ -16,6 +16,10 @@ export type ProvincialAgentTotals = ProvincialTotals & {
   agentId: string | null;
   agentName: string;
   agentCommissionAmount: number;
+  /** عمولة الوكيل بالمعادلة المعتمدة (نسبة% × (دفع مسبق + تحصيل)) */
+  tripCommissionAmount: number;
+  /** صافي الربح بالمعادلة المعتمدة */
+  netProfit: number;
 };
 
 export type ProvincialCommissionSummary = {
@@ -28,8 +32,29 @@ export type ProvincialCommissionSummary = {
   missingRateCount: number;
 };
 
+/** مجاميع المعادلة المعتمدة (عمولة الوكيل + الصافي) — منفصلة عن
+ * ProvincialCommissionSummary القديمة كي لا تختلط بمعادلة أخرى قديمة
+ * تعتمد عليها شاشات أخرى (مثل كشوف تسوية الوكلاء). */
+export type ProvincialTripSummary = {
+  totalTripCommission: number;
+  totalNetProfit: number;
+};
+
+export function computeProvincialTripSummary(rows: ProvincialInboundRow[]): ProvincialTripSummary {
+  return {
+    totalTripCommission: roundMoney(sumNumeric(rows.map((r) => r.tripCommissionAmount))),
+    totalNetProfit: roundMoney(sumNumeric(rows.map((r) => r.netProfit))),
+  };
+}
+
 function sumNumeric(values: Array<number | null | undefined>): number {
   return values.reduce((sum, value) => sum + (Number(value) || 0), 0);
+}
+
+/** تقريب لرقمين عشريين عند العرض فقط — القيم المصدرية تبقى بدقتها الكاملة
+ * حتى لحظة الجمع، فلا يتراكم خطأ تقريب عبر عشرات الأسطر. */
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 export function rowLineTotal(row: ProvincialInboundRow): number {
@@ -86,7 +111,9 @@ export function groupProvincialByAgent(rows: ProvincialInboundRow[]): Provincial
         key,
         agentId: sample.agentId,
         agentName: agentDisplayName(sample),
-        agentCommissionAmount: sumNumeric(groupRows.map((r) => r.agentCommissionAmount)),
+        agentCommissionAmount: roundMoney(sumNumeric(groupRows.map((r) => r.agentCommissionAmount))),
+        tripCommissionAmount: roundMoney(sumNumeric(groupRows.map((r) => r.tripCommissionAmount))),
+        netProfit: roundMoney(sumNumeric(groupRows.map((r) => r.netProfit))),
         ...computeProvincialTotals(groupRows),
       };
     })

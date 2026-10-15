@@ -201,7 +201,10 @@ export class CenterReceiptRepository {
         ) as operational_center,
         (cr.id is not null) as center_received,
         cr.received_at::text as center_received_at,
-        cr.center_name as center_receipt_name
+        cr.center_name as center_receipt_name,
+        -- نفس منطق صافي الربح المعتمد في تقرير أرباح السيارة: إن لم تُربط
+        -- الشحنة بوكيل محدد، طابقي بالاسم مع تفضيل الوكيل صاحب أعلى نسبة.
+        coalesce(ag.commission_percentage, dest_agent.commission_percentage, 0) as resolved_trip_commission_percentage
       from shipments s
       left join daily_ledger_rows dlr
         on dlr.posted_shipment_id = s.id
@@ -221,6 +224,14 @@ export class CenterReceiptRepository {
         order by cr.received_at desc
         limit 1
       ) cr on true
+      left join lateral (
+        select a.commission_percentage
+        from agents a
+        where a.is_active = true
+          and trim(a.governorate) = trim(coalesce(s.destination_city, dlr.destination))
+        order by a.commission_percentage desc nulls last
+        limit 1
+      ) dest_agent on s.agent_id is null
       where ${conditions.join(' and ')}
       order by coalesce(dls.ledger_date, s.created_at::date) desc, s.created_at desc, s.shipment_no desc
       limit 3000
@@ -230,6 +241,21 @@ export class CenterReceiptRepository {
 
     return result.rows.map((row) => {
       const commission = resolveProvincialRowCommission(row);
+
+      // معادلة صافي الربح المعتمدة من المحاسب — نفس معادلة تقرير أرباح
+      // السيارة بالضبط، محسوبة هنا بشكل مستقل عن agentCommissionAmount
+      // القديم أعلاه (الذي يبقى كما هو لأي استخدام آخر يعتمد عليه، مثل
+      // كشوف تسوية الوكلاء) حتى لا يتغيّر رقم كان معتمَداً مسبقاً دون قصد.
+      const tripCollectAmount = Number(row.collect_amount_usd ?? 0);
+      const tripPrepaidAmount = Number(row.prepaid_amount_usd ?? 0);
+      const tripHawalaAmount = Number(row.hawala_amount_usd ?? 0);
+      const tripTransferFee = Number(row.transfer_service_fee_usd ?? 0);
+      const tripCommissionBase = tripPrepaidAmount + tripCollectAmount;
+      const tripCommissionPercentage = Number(row.resolved_trip_commission_percentage ?? 0);
+      const tripCommissionAmount = (tripCommissionBase * tripCommissionPercentage) / 100;
+      const netProfit =
+        tripCommissionBase - tripCommissionAmount - tripPrepaidAmount + tripTransferFee + tripHawalaAmount;
+
       return {
       shipmentId: String(row.shipment_id),
       shipmentNo: String(row.shipment_no ?? ''),
@@ -243,15 +269,11 @@ export class CenterReceiptRepository {
       weightKg: row.weight_kg == null ? null : Number(row.weight_kg),
       senderName: row.sender_name ? String(row.sender_name) : null,
       receiverName: row.receiver_name ? String(row.receiver_name) : null,
-      collectAmount: Number(row.collect_amount_usd ?? 0),
-      prepaidAmount: Number(row.prepaid_amount_usd ?? 0),
-      hawalaAmount: Number(row.hawala_amount_usd ?? 0),
-      transferServiceFee: Number(row.transfer_service_fee_usd ?? 0),
-      totalAmount:
-        Number(row.collect_amount_usd ?? 0) +
-        Number(row.prepaid_amount_usd ?? 0) +
-        Number(row.hawala_amount_usd ?? 0) +
-        Number(row.transfer_service_fee_usd ?? 0),
+      collectAmount: tripCollectAmount,
+      prepaidAmount: tripPrepaidAmount,
+      hawalaAmount: tripHawalaAmount,
+      transferServiceFee: tripTransferFee,
+      totalAmount: tripCollectAmount + tripPrepaidAmount + tripHawalaAmount + tripTransferFee,
       currencyCode: String(row.original_currency ?? 'USD'),
       agentId: row.agent_id ? String(row.agent_id) : null,
       agentName: row.agent_name ? String(row.agent_name) : null,
@@ -268,6 +290,9 @@ export class CenterReceiptRepository {
       agentCommissionPercentage: commission.agentCommissionPercentage,
       agentCommissionAmount: commission.agentCommissionAmount,
       commissionIssue: commission.commissionIssue,
+      tripCommissionPercentage,
+      tripCommissionAmount,
+      netProfit,
     };
     });
   }
@@ -356,13 +381,26 @@ export class CenterReceiptRepository {
         false as center_received,
         null::text as center_received_at,
         null::text as center_receipt_name,
-        (r.posted_shipment_id is not null) as is_posted
+        (r.posted_shipment_id is not null) as is_posted,
+        -- نسبة الوكيل الفعلية: إن كانت الشحنة مُرحّلة ومربوطة بوكيل محدد، تُستخدم
+        -- نسبته مباشرة؛ أما سطور الدفتر غير المُرحّلة (لا agent_id) فتُطابق
+        -- بالاسم (محافظة الوكيل) مع تفضيل الوكيل صاحب أعلى نسبة عند وجود أكثر
+        -- من سجل بنفس الاسم — تماماً كما اعتمد المحاسب.
+        coalesce(ag.commission_percentage, dest_agent.commission_percentage, 0) as resolved_commission_percentage
       from daily_ledger_rows r
       join daily_ledger_sessions dls on dls.id = r.session_id
       left join shipments s on s.id = r.posted_shipment_id and s.deleted_at is null
       left join agents ag on ag.id = s.agent_id
       left join senders_receivers sr_s on sr_s.id = s.sender_id
       left join senders_receivers sr_r on sr_r.id = s.receiver_id
+      left join lateral (
+        select a.commission_percentage
+        from agents a
+        where a.is_active = true
+          and trim(a.governorate) = trim(r.destination)
+        order by a.commission_percentage desc nulls last
+        limit 1
+      ) dest_agent on s.agent_id is null
       where ${conditions.join(' and ')}
       order by dls.line_label asc nulls last, r.row_no asc, r.receipt_no asc
       limit 5000
@@ -370,51 +408,76 @@ export class CenterReceiptRepository {
       values,
     );
 
-    const rows = result.rows.map((row) => ({
-      shipmentId: String(row.shipment_id),
-      shipmentNo: String(row.shipment_no ?? ''),
-      shipmentStatus: String(row.shipment_status ?? ''),
-      shipmentCreatedAt: String(row.shipment_created_at ?? ''),
-      ledgerDate: row.ledger_date ? String(row.ledger_date) : null,
-      ledgerReceiptNo: row.ledger_receipt_no ? String(row.ledger_receipt_no) : null,
-      ledgerDestination: row.ledger_destination ? String(row.ledger_destination) : null,
-      parcelType: row.parcel_type ? String(row.parcel_type) : null,
-      parcelCount: row.parcel_count == null ? null : Number(row.parcel_count),
-      weightKg: row.weight_kg == null ? null : Number(row.weight_kg),
-      senderName: row.sender_name ? String(row.sender_name) : null,
-      receiverName: row.receiver_name ? String(row.receiver_name) : null,
-      collectAmount: Number(row.collect_amount_usd ?? 0),
-      prepaidAmount: Number(row.prepaid_amount_usd ?? 0),
-      hawalaAmount: Number(row.hawala_amount_usd ?? 0),
-      transferServiceFee: Number(row.transfer_service_fee_usd ?? 0),
-      totalAmount:
-        Number(row.collect_amount_usd ?? 0) +
-        Number(row.prepaid_amount_usd ?? 0) +
-        Number(row.hawala_amount_usd ?? 0) +
-        Number(row.transfer_service_fee_usd ?? 0),
-      currencyCode: String(row.original_currency ?? 'USD'),
-      agentId: row.agent_id ? String(row.agent_id) : null,
-      agentName: row.agent_name ? String(row.agent_name) : null,
-      driverId: row.driver_id ? String(row.driver_id) : null,
-      driverLabel: row.driver_label ? String(row.driver_label) : null,
-      vehicleLabel: row.vehicle_label ? String(row.vehicle_label) : null,
-      tripNo: row.trip_no ? String(row.trip_no) : null,
-      operationalCenter: String(row.operational_center ?? 'غير محدد'),
-      centerReceived: false,
-      centerReceivedAt: null,
-      centerReceiptName: null,
-      fromQuickLedger: true,
-      isPosted: Boolean(row.is_posted),
-      lineLabel: row.line_label ? String(row.line_label) : null,
-    }));
+    const rows = result.rows.map((row) => {
+      const collectAmount = Number(row.collect_amount_usd ?? 0);
+      const prepaidAmount = Number(row.prepaid_amount_usd ?? 0);
+      const hawalaAmount = Number(row.hawala_amount_usd ?? 0);
+      const transferServiceFee = Number(row.transfer_service_fee_usd ?? 0);
+
+      // معادلة صافي الربح المعتمدة من المحاسب (تدقيق فرع حلب، ٣/١٠):
+      // عمولة الوكيل = نسبة% × (دفع مسبق + تحصيل) — وليس على التحصيل وحده.
+      // الصافي = (دفع مسبق + تحصيل) − عمولة الوكيل − دفع مسبق + أجور الشحن + حوالة
+      //        (تُختصر جبرياً إلى: تحصيل − عمولة الوكيل + أجور الشحن + حوالة،
+      //        لكنها تُحتسب هنا بنفس ترتيب خطوات المحاسب ليطابق التفصيل المعروض).
+      // ملاحظة مهمة: لا تُقرَّب القيم هنا — القيمة الكاملة بلا تقريب تُستخدم
+      // للجمع (في هذا السطر ولاحقاً في المجاميع)، والتقريب لرقمين عشريين
+      // يحدث فقط عند العرض. تقريب كل سطر على حدة قبل الجمع كان يُراكم فرقاً
+      // بسيطاً عبر عشرات الأسطر (مثال فعلي: 92.55 بدل 92.25 الصحيحة).
+      const commissionBase = prepaidAmount + collectAmount;
+      const agentCommissionPercentage = Number(row.resolved_commission_percentage ?? 0);
+      const agentCommissionAmount = (commissionBase * agentCommissionPercentage) / 100;
+      const netProfit = commissionBase - agentCommissionAmount - prepaidAmount + transferServiceFee + hawalaAmount;
+
+      return {
+        shipmentId: String(row.shipment_id),
+        shipmentNo: String(row.shipment_no ?? ''),
+        shipmentStatus: String(row.shipment_status ?? ''),
+        shipmentCreatedAt: String(row.shipment_created_at ?? ''),
+        ledgerDate: row.ledger_date ? String(row.ledger_date) : null,
+        ledgerReceiptNo: row.ledger_receipt_no ? String(row.ledger_receipt_no) : null,
+        ledgerDestination: row.ledger_destination ? String(row.ledger_destination) : null,
+        parcelType: row.parcel_type ? String(row.parcel_type) : null,
+        parcelCount: row.parcel_count == null ? null : Number(row.parcel_count),
+        weightKg: row.weight_kg == null ? null : Number(row.weight_kg),
+        senderName: row.sender_name ? String(row.sender_name) : null,
+        receiverName: row.receiver_name ? String(row.receiver_name) : null,
+        collectAmount,
+        prepaidAmount,
+        hawalaAmount,
+        transferServiceFee,
+        totalAmount: collectAmount + prepaidAmount + hawalaAmount + transferServiceFee,
+        currencyCode: String(row.original_currency ?? 'USD'),
+        agentId: row.agent_id ? String(row.agent_id) : null,
+        agentName: row.agent_name ? String(row.agent_name) : null,
+        driverId: row.driver_id ? String(row.driver_id) : null,
+        driverLabel: row.driver_label ? String(row.driver_label) : null,
+        vehicleLabel: row.vehicle_label ? String(row.vehicle_label) : null,
+        tripNo: row.trip_no ? String(row.trip_no) : null,
+        operationalCenter: String(row.operational_center ?? 'غير محدد'),
+        centerReceived: false,
+        centerReceivedAt: null,
+        centerReceiptName: null,
+        fromQuickLedger: true,
+        isPosted: Boolean(row.is_posted),
+        lineLabel: row.line_label ? String(row.line_label) : null,
+        agentCommissionPercentage,
+        agentCommissionAmount,
+        netProfit,
+      };
+    });
 
     const postedRows = rows.filter((row) => row.isPosted).length;
+    const totalNetProfit = Math.round(rows.reduce((sum, row) => sum + row.netProfit, 0) * 100) / 100;
+    const totalAgentCommission =
+      Math.round(rows.reduce((sum, row) => sum + row.agentCommissionAmount, 0) * 100) / 100;
     return {
       rows,
       meta: {
         totalRows: rows.length,
         postedRows,
         ledgerOnlyRows: rows.length - postedRows,
+        totalAgentCommission,
+        totalNetProfit,
       },
     };
   }

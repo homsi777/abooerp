@@ -43,6 +43,10 @@ export const MAHMOUD_RECEIPT_FIELD_LABELS: Record<string, string> = {
   prepaid: 'دفع حلب',
   amount: 'المبلغ',
   hawala: 'حوالة',
+  // لا يوجد مربع مطبوع مسبقاً لهذين الحقلين على الورقة — موضعهما الحالي
+  // تقدير، بانتظار تأكيد المحاذاة على الورق الفعلي.
+  transferServiceFee: 'أجور الحوالة',
+  total: 'المجموع',
 };
 
 /** ترتيب الحقول في لوحة المعايرة */
@@ -57,6 +61,8 @@ export const MAHMOUD_RECEIPT_FIELD_ORDER = [
   'prepaid',
   'amount',
   'hawala',
+  'transferServiceFee',
+  'total',
 ] as const;
 
 /** ارتفاع كل إيصال — 4 إيصالات متساوية على A4 */
@@ -107,6 +113,10 @@ export const MAHMOUD_RECEIPT_FIELD_LAYOUT: Record<string, FieldDef> = {
   prepaid: { top: 51, left: 152.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
   amount: { top: 50.5, left: 171, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
   hawala: { top: 50.5, left: 189.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+  // لا مربع مطبوع لهذا الحقل — موضع تقديري أول (أسفل «المبلغ») بانتظار
+  // تأكيدها على الورق الفعلي.
+  transferServiceFee: { top: 59.8, left: 176.5, width: 16, height: 3.5, fontSize: 8, align: 'center' },
+  total: { top: 65.3, left: 170, width: 16, height: 3.5, fontSize: 8, align: 'center' },
 };
 
 export type MahmoudReceiptSlotLayouts = Record<number, Record<string, FieldDef>>;
@@ -128,6 +138,8 @@ export const MAHMOUD_RECEIPT_SLOT_LAYOUTS: MahmoudReceiptSlotLayouts = {
     prepaid: { top: 51, left: 152.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
     amount: { top: 50.5, left: 171, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
     hawala: { top: 50.5, left: 189.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    transferServiceFee: { top: 59.8, left: 176.5, width: 16, height: 3.5, fontSize: 8, align: 'center' },
+    total: { top: 65.3, left: 170, width: 16, height: 3.5, fontSize: 8, align: 'center' },
   },
   1: {
     receiptNo: { top: 5, left: 85, width: 20, height: 4, fontSize: 10.5, align: 'center' },
@@ -140,6 +152,8 @@ export const MAHMOUD_RECEIPT_SLOT_LAYOUTS: MahmoudReceiptSlotLayouts = {
     prepaid: { top: 51, left: 152.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
     amount: { top: 50.5, left: 171, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
     hawala: { top: 50.5, left: 189.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    transferServiceFee: { top: 59.8, left: 176.5, width: 16, height: 3.5, fontSize: 8, align: 'center' },
+    total: { top: 65.3, left: 170, width: 16, height: 3.5, fontSize: 8, align: 'center' },
   },
   2: {
     receiptNo: { top: 5, left: 85, width: 20, height: 4, fontSize: 10.5, align: 'center' },
@@ -152,6 +166,8 @@ export const MAHMOUD_RECEIPT_SLOT_LAYOUTS: MahmoudReceiptSlotLayouts = {
     prepaid: { top: 51, left: 152.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
     amount: { top: 50.5, left: 171, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
     hawala: { top: 50.5, left: 189.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    transferServiceFee: { top: 59.8, left: 176.5, width: 16, height: 3.5, fontSize: 8, align: 'center' },
+    total: { top: 65.3, left: 170, width: 16, height: 3.5, fontSize: 8, align: 'center' },
   },
   3: {
     receiptNo: { top: 5, left: 85, width: 20, height: 4, fontSize: 10.5, align: 'center' },
@@ -164,6 +180,8 @@ export const MAHMOUD_RECEIPT_SLOT_LAYOUTS: MahmoudReceiptSlotLayouts = {
     prepaid: { top: 51, left: 152.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
     amount: { top: 50.5, left: 171, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
     hawala: { top: 50.5, left: 189.5, width: 10, height: 3.8, fontSize: 9.75, align: 'center' },
+    transferServiceFee: { top: 59.8, left: 176.5, width: 16, height: 3.5, fontSize: 8, align: 'center' },
+    total: { top: 65.3, left: 170, width: 16, height: 3.5, fontSize: 8, align: 'center' },
   },
 };
 
@@ -364,6 +382,19 @@ function renderReceiptSlot(
   const slotTop = visualIndex * MAHMOUD_RECEIPT_SLOT_HEIGHT_MM + MAHMOUD_RECEIPT_PAGE_OFFSET.topMm;
   const L = getSlotLayout(slotIndex, slotLayouts);
 
+  // لا مربع مطبوع لهذين الحقلين على الورقة — نضيف تسمية مصغّرة ضمن القيمة
+  // نفسها («أجور: ٢») ليبقيا مفهومين دون الاعتماد على تسمية مطبوعة مسبقاً.
+  const transferServiceFeeValue = String(row.transferServiceFee ?? '').trim();
+  const transferServiceFeeText = transferServiceFeeValue ? `أجور: ${transferServiceFeeValue}` : '';
+
+  const totalValue = formatReceiptMoneySum(
+    row.collectAmount,
+    row.hawalaAmount,
+    row.transferServiceFee,
+    row.prepaidAmount,
+  );
+  const totalText = totalValue ? `المجموع: ${totalValue}` : '';
+
   return `<div class="receipt-slot" data-slot-index="${slotIndex}" data-base-top="${slotTop}" style="top:${slotTop}mm;height:${MAHMOUD_RECEIPT_SLOT_HEIGHT_MM}mm">
   ${renderField(slotIndex, 'receiptNo', row.receiptNo, L.receiptNo, debug, transform)}
   ${renderField(slotIndex, 'date', row.date, L.date, debug, transform)}
@@ -375,6 +406,8 @@ function renderReceiptSlot(
   ${renderField(slotIndex, 'parcelCount', row.parcelCount, L.parcelCount, debug, transform)}
   ${renderField(slotIndex, 'parcelType', row.parcelType, L.parcelType, debug, transform)}
   ${renderField(slotIndex, 'sender', row.sender, L.sender, debug, transform)}
+  ${transferServiceFeeText ? renderField(slotIndex, 'transferServiceFee', transferServiceFeeText, L.transferServiceFee, debug, transform) : ''}
+  ${totalText ? renderField(slotIndex, 'total', totalText, L.total, debug, transform) : ''}
 </div>`;
 }
 

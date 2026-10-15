@@ -36,6 +36,11 @@ export type RemoteDailyLedgerRow = {
   session_reprint_reason?: string | null;
   dispatch_id?: string | null;
   dispatch_no?: number | null;
+  // ── تسعير البضائع (ميزة إضافية، كل الحقول اختيارية) ──
+  pricing_unit?: 'parcel' | 'kg' | null;
+  unit_price_usd?: string | null;
+  line_total_usd?: string | null;
+  price_source?: 'party' | 'general' | 'manual' | null;
 };
 
 export type DailyLedgerEditingScope = {

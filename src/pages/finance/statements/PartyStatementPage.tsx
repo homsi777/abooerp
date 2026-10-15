@@ -239,39 +239,85 @@ export default function PartyStatementPage({ partyType }: { partyType: PartyType
         />
       )}
 
-      <div className="card overflow-auto">
-        <table className="data-table w-full text-sm">
-          <thead>
-            <tr>
-              <th>التاريخ</th>
-              <th>البيان</th>
-              <th>مدين</th>
-              <th>دائن</th>
-              <th>الرصيد</th>
-              <th>المرجع</th>
-            </tr>
-          </thead>
-          <tbody>
-            {mappedLedger.length === 0 && !loading && (
-              <tr>
-                <td colSpan={6} className="text-center text-gray-500 py-6">
-                  اختر الطرف والفترة ثم اضغط «عرض الكشف».
-                </td>
+      <div style={{ border: '1px solid #9ca3af', borderRadius: '4px', overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ background: '#f3f4f6', borderBottom: '2px solid #9ca3af' }}>
+                <th style={thStyle('right')}>التاريخ</th>
+                <th style={thStyle('right')}>البيان</th>
+                <th style={thStyle('right')}>المرجع</th>
+                <th style={thStyle('left')}>مدين</th>
+                <th style={thStyle('left')}>دائن</th>
+                <th style={thStyle('left')}>الرصيد</th>
               </tr>
+            </thead>
+            <tbody>
+              {summary && (
+                <tr style={{ borderBottom: '1px solid #e5e7eb', background: '#fafafa' }}>
+                  <td style={tdStyle('right')} colSpan={5}>
+                    <strong>رصيد افتتاحي</strong>
+                  </td>
+                  <td style={{ ...tdStyle('left'), fontWeight: 700 }}>
+                    {formatWesternNumber(Number(summary.opening_balance_usd ?? 0), { minimumFractionDigits: 2 })}
+                  </td>
+                </tr>
+              )}
+              {mappedLedger.length === 0 && !loading && (
+                <tr>
+                  <td colSpan={6} style={{ padding: '32px', textAlign: 'center', color: '#9ca3af' }}>
+                    اختر الطرف والفترة ثم اضغط «عرض الكشف».
+                  </td>
+                </tr>
+              )}
+              {mappedLedger.map((row) => (
+                <tr key={row.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                  <td style={tdStyle('right')}>{formatWesternDateTime(row.date)}</td>
+                  <td style={tdStyle('right')}>{row.description}</td>
+                  <td style={{ ...tdStyle('right'), color: '#6b7280', fontFamily: 'monospace', fontSize: '12px' }}>
+                    {row.reference}
+                  </td>
+                  <td style={{ ...tdStyle('left'), color: '#166534' }}>
+                    {row.debit ? formatWesternNumber(row.debit, { minimumFractionDigits: 2 }) : ''}
+                  </td>
+                  <td style={{ ...tdStyle('left'), color: '#991b1b' }}>
+                    {row.credit ? formatWesternNumber(row.credit, { minimumFractionDigits: 2 }) : ''}
+                  </td>
+                  <td style={{ ...tdStyle('left'), fontWeight: 600 }}>
+                    {formatWesternNumber(row.running, { minimumFractionDigits: 2 })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            {summary && mappedLedger.length > 0 && (
+              <tfoot>
+                <tr style={{ borderTop: '2px solid #9ca3af', background: '#f3f4f6', fontWeight: 700 }}>
+                  <td style={tdStyle('right')} colSpan={3}>
+                    الإجمالي
+                  </td>
+                  <td style={{ ...tdStyle('left'), color: '#166534' }}>
+                    {formatWesternNumber(Number(summary.period_inflow_usd ?? 0), { minimumFractionDigits: 2 })}
+                  </td>
+                  <td style={{ ...tdStyle('left'), color: '#991b1b' }}>
+                    {formatWesternNumber(Number(summary.period_outflow_usd ?? 0), { minimumFractionDigits: 2 })}
+                  </td>
+                  <td style={tdStyle('left')}>
+                    {formatWesternNumber(Number(summary.closing_balance_usd ?? 0), { minimumFractionDigits: 2 })}
+                  </td>
+                </tr>
+              </tfoot>
             )}
-            {mappedLedger.map((row) => (
-              <tr key={row.id}>
-                <td>{formatWesternDateTime(row.date)}</td>
-                <td>{row.description}</td>
-                <td>{formatWesternNumber(row.debit, { minimumFractionDigits: 2 })}</td>
-                <td>{formatWesternNumber(row.credit, { minimumFractionDigits: 2 })}</td>
-                <td>{formatWesternNumber(row.running, { minimumFractionDigits: 2 })}</td>
-                <td>{row.reference}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </div>
   );
+}
+
+function thStyle(align: 'right' | 'left'): React.CSSProperties {
+  return { textAlign: align, padding: '9px 14px', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' };
+}
+
+function tdStyle(align: 'right' | 'left'): React.CSSProperties {
+  return { textAlign: align, padding: '8px 14px', whiteSpace: 'nowrap', color: '#1f2937' };
 }

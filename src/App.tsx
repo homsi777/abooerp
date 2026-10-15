@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './layouts/Layout';
 import Login from './pages/Login';
+import CustomerTracking from './pages/CustomerTracking';
 import Dashboard from './pages/Dashboard';
 import SendersReceivers from './pages/SendersReceivers';
 import Cities from './pages/Cities';
@@ -13,11 +14,17 @@ import ShipmentQuickLedger from './pages/ShipmentQuickLedger';
 import ShipmentList from './pages/ShipmentList';
 import Manifest from './pages/Manifest';
 import Delivery from './pages/Delivery';
-import Centers from './pages/Centers';
+import ProvincialReceiving from './pages/finance/ProvincialReceiving';
 import Reports from './pages/Reports';
 import PrintPreview from './pages/PrintPreview';
 import Settings from './pages/Settings';
 import TelegramSettings from './pages/settings/TelegramSettings';
+import FinanceHome from './pages/finance/FinanceHome';
+import FinanceSectionPending from './pages/finance/FinanceSectionPending';
+import Custody from './pages/finance/Custody';
+import VehicleTripProfitReport from './pages/finance/VehicleTripProfitReport';
+import CompanyMonthlyReport from './pages/finance/CompanyMonthlyReport';
+import GoodsPricing from './pages/finance/GoodsPricing';
 import FinanceExpenses from './pages/finance/Expenses';
 import FinanceSalaries from './pages/finance/Salaries';
 import FinanceCashBoxes from './pages/finance/CashBoxes';
@@ -86,6 +93,16 @@ export default function App() {
     <ToastProvider>
       <Routes>
         <Route
+          path="/"
+          element={
+            user ? (
+              <Navigate to={user.userType === 'agent' ? '/agent-portal' : '/dashboard'} replace />
+            ) : (
+              <CustomerTracking />
+            )
+          }
+        />
+        <Route
           path="/login"
           element={user ? <Navigate to={user.userType === 'agent' ? '/agent-portal' : '/dashboard'} replace /> : <Login />}
         />
@@ -103,7 +120,9 @@ export default function App() {
                 }}
               >
                 <Routes>
-                  <Route path="/" element={<Navigate to={user?.userType === 'agent' ? '/agent-portal' : '/dashboard'} replace />} />
+                  {/* "/" itself is claimed by the outer public-tracking route above
+                      (unauthenticated) or its own redirect to /dashboard
+                      (authenticated) — it never reaches this nested tree. */}
                   <Route path="/dashboard" element={user?.userType === 'agent' ? <Navigate to="/agent-portal" replace /> : <Dashboard />} />
                   <Route path="/access-denied" element={<AccessDenied />} />
                   <Route
@@ -203,14 +222,8 @@ export default function App() {
                     }
                   />
                   <Route path="/manifest" element={user?.userType === 'agent' ? <Navigate to="/agent-portal" replace /> : <Manifest />} />
-                  <Route
-                    path="/centers"
-                    element={
-                      <RequirePermission permission="deliveries.read">
-                        <Centers />
-                      </RequirePermission>
-                    }
-                  />
+                  {/* نُقلت إلى قسم المالية — إعادة توجيه كي لا تنكسر أي روابط/قوائم قديمة */}
+                  <Route path="/centers" element={<Navigate to="/finance/provincial-receiving" replace />} />
                   <Route
                     path="/delivery"
                     element={
@@ -299,6 +312,66 @@ export default function App() {
                     }
                   />
 
+                  <Route
+                    path="/finance"
+                    element={
+                      user?.userType === 'agent' ? (
+                        <Navigate to="/agent-portal" replace />
+                      ) : (
+                        <RequirePermission permission="finance.read">
+                          <FinanceHome />
+                        </RequirePermission>
+                      )
+                    }
+                  />
+                  <Route
+                    path="/finance/custody"
+                    element={
+                      <RequirePermission permission="finance.read">
+                        <Custody />
+                      </RequirePermission>
+                    }
+                  />
+                  <Route
+                    path="/finance/vehicle-trip-report"
+                    element={
+                      <RequirePermission permission="finance.read">
+                        <VehicleTripProfitReport />
+                      </RequirePermission>
+                    }
+                  />
+                  <Route
+                    path="/finance/company-monthly-report"
+                    element={
+                      <RequirePermission permission="finance.read">
+                        <CompanyMonthlyReport />
+                      </RequirePermission>
+                    }
+                  />
+                  <Route
+                    path="/finance/goods-pricing"
+                    element={
+                      <RequirePermission permission="finance.read">
+                        <GoodsPricing />
+                      </RequirePermission>
+                    }
+                  />
+                  <Route
+                    path="/finance/provincial-receiving"
+                    element={
+                      <RequirePermission permission="finance.read">
+                        <ProvincialReceiving />
+                      </RequirePermission>
+                    }
+                  />
+                  <Route
+                    path="/finance/suppliers"
+                    element={
+                      <RequirePermission permission="finance.read">
+                        <FinanceSectionPending label="الموردون" />
+                      </RequirePermission>
+                    }
+                  />
                   <Route
                     path="/finance/expenses"
                     element={

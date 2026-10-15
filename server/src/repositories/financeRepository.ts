@@ -294,12 +294,15 @@ export class FinanceRepository {
           else null
         end as party_display_name,
         cb.name as cashbox_name,
-        cb.code as cashbox_code
+        cb.code as cashbox_code,
+        u.username as created_by_username,
+        u.full_name as created_by_full_name
       from receipt_vouchers v
       left join customers c on c.id = v.customer_id
       left join senders_receivers sr on sr.id = v.sender_receiver_id
       left join agents a on a.id = v.agent_id
       left join cashboxes cb on cb.id = v.cashbox_id
+      left join users u on u.id = v.created_by_user_id
       ${whereClause}
       order by v.created_at desc
       `,
@@ -329,12 +332,15 @@ export class FinanceRepository {
           else null
         end as party_display_name,
         cb.name as cashbox_name,
-        cb.code as cashbox_code
+        cb.code as cashbox_code,
+        u.username as created_by_username,
+        u.full_name as created_by_full_name
       from payment_vouchers v
       left join customers c on c.id = v.customer_id
       left join senders_receivers sr on sr.id = v.sender_receiver_id
       left join agents a on a.id = v.agent_id
       left join cashboxes cb on cb.id = v.cashbox_id
+      left join users u on u.id = v.created_by_user_id
       ${whereClause}
       order by v.created_at desc
       `,
@@ -2513,5 +2519,378 @@ export class FinanceRepository {
     } finally {
       client.release();
     }
+  }
+
+  // ── Accounting foundation: chart of accounts + manual journal entries ──
+
+  async listChartOfAccounts(scope?: DataScope) {
+    const result = await pool.query(
+      `select id, account_code, account_name, account_type, normal_balance,
+              is_control_account, control_party_type
+       from chart_of_accounts
+       where is_active = true
+         and ($1::uuid is null or company_id = $1)
+       order by account_code`,
+      [scope?.companyId ?? null],
+    );
+    return result.rows;
+  }
+
+  async listJournalEntries(scope?: DataScope, filters?: { dateFrom?: string; dateTo?: string }) {
+    const result = await pool.query(
+      `select je.id, je.entry_no, je.entry_date, je.description, je.status, je.source_type,
+              je.created_at,
+              coalesce(sum(jel.debit_amount), 0) as total_debit,
+              coalesce(sum(jel.credit_amount), 0) as total_credit
+       from journal_entries je
+       left join journal_entry_lines jel on jel.journal_entry_id = je.id
+       where ($1::uuid is null or je.company_id = $1)
+         and ($2::date is null or je.entry_date >= $2)
+         and ($3::date is null or je.entry_date <= $3)
+       group by je.id
+       order by je.entry_date desc, je.created_at desc`,
+      [scope?.companyId ?? null, filters?.dateFrom ?? null, filters?.dateTo ?? null],
+    );
+    return result.rows;
+  }
+
+  async getJournalEntryLines(journalEntryId: string) {
+    const result = await pool.query(
+      `select jel.id, jel.line_no, jel.account_id, coa.account_code, coa.account_name,
+              jel.debit_amount, jel.credit_amount, jel.party_type, jel.party_id, jel.notes
+       from journal_entry_lines jel
+       join chart_of_accounts coa on coa.id = jel.account_id
+       where jel.journal_entry_id = $1
+       order by jel.line_no`,
+      [journalEntryId],
+    );
+    return result.rows;
+  }
+
+  async createJournalEntry(input: {
+    companyId: string;
+    branchId?: string | null;
+    description?: string;
+    createdByUserId?: string | null;
+    lines: Array<{
+      accountId: string;
+      debitAmount: number;
+      creditAmount: number;
+      partyType?: string | null;
+      partyId?: string | null;
+      notes?: string | null;
+    }>;
+  }) {
+    const totalDebit = input.lines.reduce((sum, l) => sum + l.debitAmount, 0);
+    const totalCredit = input.lines.reduce((sum, l) => sum + l.creditAmount, 0);
+    if (input.lines.length < 2) {
+      throw new HttpError(400, 'القيد يحتاج سطرين على الأقل.');
+    }
+    if (Math.round(totalDebit * 100) !== Math.round(totalCredit * 100)) {
+      throw new HttpError(400, `القيد غير متوازن: مدين ${totalDebit} ≠ دائن ${totalCredit}`);
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      const countResult = await client.query(
+        'select count(*)::int as n from journal_entries where company_id = $1',
+        [input.companyId],
+      );
+      const entryNo = `JE-${String(countResult.rows[0].n + 1).padStart(6, '0')}`;
+
+      const entryResult = await client.query(
+        `insert into journal_entries (company_id, branch_id, entry_no, description, source_type, created_by_user_id)
+         values ($1, $2, $3, $4, 'manual', $5)
+         returning *`,
+        [input.companyId, input.branchId ?? null, entryNo, input.description ?? null, input.createdByUserId ?? null],
+      );
+      const entry = entryResult.rows[0];
+
+      let lineNo = 1;
+      for (const line of input.lines) {
+        await client.query(
+          `insert into journal_entry_lines (
+             journal_entry_id, line_no, account_id, debit_amount, credit_amount,
+             base_amount_usd, party_type, party_id, notes
+           ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [
+            entry.id, lineNo, line.accountId, line.debitAmount, line.creditAmount,
+            line.debitAmount || line.creditAmount, line.partyType ?? null, line.partyId ?? null, line.notes ?? null,
+          ],
+        );
+        lineNo += 1;
+      }
+
+      // The deferred balance-check trigger fires here, at COMMIT — the
+      // database is the final authority, not the totals check above.
+      await client.query('commit');
+      return entry;
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async reverseJournalEntry(entryId: string, companyId: string, createdByUserId?: string | null) {
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      const originalResult = await client.query(
+        `select * from journal_entries where id = $1 and company_id = $2 for update`,
+        [entryId, companyId],
+      );
+      const original = originalResult.rows[0];
+      if (!original) throw new HttpError(404, 'القيد غير موجود.');
+      if (original.status !== 'posted') {
+        throw new HttpError(400, 'يمكن عكس القيود المرحَّلة فقط.');
+      }
+
+      const linesResult = await client.query(
+        `select account_id, debit_amount, credit_amount, original_currency,
+                exchange_rate_to_usd, base_amount_usd, party_type, party_id, notes
+         from journal_entry_lines where journal_entry_id = $1 order by line_no`,
+        [entryId],
+      );
+
+      const countResult = await client.query(
+        'select count(*)::int as n from journal_entries where company_id = $1',
+        [companyId],
+      );
+      const entryNo = `JE-${String(countResult.rows[0].n + 1).padStart(6, '0')}`;
+
+      const reversalResult = await client.query(
+        `insert into journal_entries (company_id, branch_id, entry_no, description, source_type, reversal_of_entry_id, created_by_user_id)
+         values ($1, $2, $3, $4, 'manual', $5, $6)
+         returning *`,
+        [companyId, original.branch_id, entryNo, `عكس القيد ${original.entry_no}`, original.id, createdByUserId ?? null],
+      );
+      const reversal = reversalResult.rows[0];
+
+      let lineNo = 1;
+      for (const line of linesResult.rows) {
+        await client.query(
+          `insert into journal_entry_lines (
+             journal_entry_id, line_no, account_id, debit_amount, credit_amount,
+             original_currency, exchange_rate_to_usd, base_amount_usd, party_type, party_id, notes
+           ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          [
+            reversal.id, lineNo, line.account_id,
+            line.credit_amount, line.debit_amount, // swapped — mirror entry
+            line.original_currency, line.exchange_rate_to_usd, line.base_amount_usd,
+            line.party_type, line.party_id, line.notes,
+          ],
+        );
+        lineNo += 1;
+      }
+
+      await client.query(`update journal_entries set status = 'reversed' where id = $1`, [entryId]);
+
+      await client.query('commit');
+      return reversal;
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // ── Custody (عهدة) — unified shift/advance holder, employee or driver ──
+
+  private async getAccountIdByCode(client: PoolClient, companyId: string, code: string): Promise<string> {
+    const result = await client.query(
+      'select id from chart_of_accounts where company_id = $1 and account_code = $2',
+      [companyId, code],
+    );
+    if (!result.rows[0]) throw new HttpError(500, `حساب ${code} غير موجود في دليل الحسابات.`);
+    return result.rows[0].id;
+  }
+
+  async listCustodyShifts(scope: DataScope | undefined, filters?: { status?: string }) {
+    const result = await pool.query(
+      `select cs.*,
+              coalesce(u.username, d.full_name) as holder_name,
+              b.name as branch_name,
+              coalesce(
+                (select json_agg(json_build_object('currencyCode', csb.currency_code, 'openingAmount', csb.opening_amount, 'currentAmount', csb.current_amount))
+                 from custody_shift_balances csb where csb.custody_shift_id = cs.id),
+                '[]'::json
+              ) as balances
+       from custody_shifts cs
+       left join users u on u.id = cs.holder_user_id
+       left join drivers d on d.id = cs.holder_driver_id
+       left join branches b on b.id = cs.branch_id
+       where ($1::uuid is null or cs.company_id = $1)
+         and ($2::text is null or cs.status = $2)
+       order by cs.opened_at desc`,
+      [scope?.companyId ?? null, filters?.status ?? null],
+    );
+    return result.rows;
+  }
+
+  async openCustodyShift(input: {
+    companyId: string;
+    branchId?: string | null;
+    holderType: 'data_entry_employee' | 'driver';
+    holderUserId?: string | null;
+    holderDriverId?: string | null;
+    holderLabel?: string | null;
+    openedByUserId?: string | null;
+    openingBalances: Array<{ currencyCode: string; amount: number }>;
+  }) {
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+
+      const usdOpening = input.openingBalances.find((b) => b.currencyCode === 'USD')?.amount ?? 0;
+      const nonUsdOpening = input.openingBalances.filter((b) => b.currencyCode !== 'USD' && b.amount > 0);
+      const notes = nonUsdOpening.length
+        ? `مبالغ افتتاحية بعملات أخرى (سجل نصي فقط، لا قيد محاسبي): ${nonUsdOpening.map((b) => `${b.amount} ${b.currencyCode}`).join('، ')}`
+        : null;
+
+      let openingJournalEntryId: string | null = null;
+      if (usdOpening > 0) {
+        const custodyAccountId = await this.getAccountIdByCode(client, input.companyId, '1300');
+        const cashAccountId = await this.getAccountIdByCode(client, input.companyId, '1100');
+        const countResult = await client.query('select count(*)::int as n from journal_entries where company_id = $1', [input.companyId]);
+        const entryNo = `JE-${String(countResult.rows[0].n + 1).padStart(6, '0')}`;
+        const entryResult = await client.query(
+          `insert into journal_entries (company_id, branch_id, entry_no, description, source_type, created_by_user_id)
+           values ($1,$2,$3,$4,'custody_shift',$5) returning id`,
+          [input.companyId, input.branchId ?? null, entryNo, `فتح عهدة — ${input.holderLabel ?? ''}`, input.openedByUserId ?? null],
+        );
+        openingJournalEntryId = entryResult.rows[0].id;
+        await client.query(
+          `insert into journal_entry_lines (journal_entry_id, line_no, account_id, debit_amount, credit_amount, base_amount_usd)
+           values ($1,1,$2,$3,0,$3)`,
+          [openingJournalEntryId, custodyAccountId, usdOpening],
+        );
+        await client.query(
+          `insert into journal_entry_lines (journal_entry_id, line_no, account_id, debit_amount, credit_amount, base_amount_usd)
+           values ($1,2,$2,0,$3,$3)`,
+          [openingJournalEntryId, cashAccountId, usdOpening],
+        );
+      }
+
+      const shiftResult = await client.query(
+        `insert into custody_shifts (
+           company_id, branch_id, holder_type, holder_user_id, holder_driver_id, holder_label,
+           opened_by_user_id, opening_journal_entry_id, notes
+         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         returning *`,
+        [
+          input.companyId, input.branchId ?? null, input.holderType,
+          input.holderType === 'data_entry_employee' ? input.holderUserId : null,
+          input.holderType === 'driver' ? input.holderDriverId : null,
+          input.holderLabel ?? null, input.openedByUserId ?? null, openingJournalEntryId, notes,
+        ],
+      );
+      const shift = shiftResult.rows[0];
+
+      for (const balance of input.openingBalances) {
+        await client.query(
+          `insert into custody_shift_balances (custody_shift_id, currency_code, opening_amount, current_amount)
+           values ($1,$2,$3,$3)`,
+          [shift.id, balance.currencyCode, balance.amount],
+        );
+      }
+
+      await client.query('commit');
+      return shift;
+    } catch (error: any) {
+      await client.query('rollback');
+      if (error?.code === '23505') {
+        throw new HttpError(409, 'هذا الحامل لديه عهدة مفتوحة أو بانتظار تأكيد المحاسب بالفعل — لا يمكن فتح عهدة جديدة.');
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async closeCustodyShift(id: string, companyId: string) {
+    const result = await pool.query(
+      `update custody_shifts set status = 'pending_confirmation', closed_at = now(), updated_at = now()
+       where id = $1 and company_id = $2 and status = 'open'
+       returning *`,
+      [id, companyId],
+    );
+    if (!result.rows[0]) throw new HttpError(400, 'لا يمكن إغلاق هذه العهدة (ربما أُغلقت بالفعل).');
+    return result.rows[0];
+  }
+
+  async confirmCustodyShift(id: string, companyId: string, confirmedByUserId?: string | null) {
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      const shiftResult = await client.query(
+        `select * from custody_shifts where id = $1 and company_id = $2 and status = 'pending_confirmation' for update`,
+        [id, companyId],
+      );
+      const shift = shiftResult.rows[0];
+      if (!shift) throw new HttpError(400, 'العهدة غير موجودة أو ليست بانتظار تأكيد.');
+
+      const balanceResult = await client.query(
+        `select currency_code, current_amount from custody_shift_balances where custody_shift_id = $1 and currency_code = 'USD'`,
+        [id],
+      );
+      const usdAmount = Number(balanceResult.rows[0]?.current_amount ?? 0);
+
+      let closingJournalEntryId: string | null = null;
+      if (usdAmount > 0) {
+        const custodyAccountId = await this.getAccountIdByCode(client, companyId, '1300');
+        const cashAccountId = await this.getAccountIdByCode(client, companyId, '1100');
+        const countResult = await client.query('select count(*)::int as n from journal_entries where company_id = $1', [companyId]);
+        const entryNo = `JE-${String(countResult.rows[0].n + 1).padStart(6, '0')}`;
+        const entryResult = await client.query(
+          `insert into journal_entries (company_id, branch_id, entry_no, description, source_type, created_by_user_id)
+           values ($1,$2,$3,'تصفية عهدة','custody_shift',$4) returning id`,
+          [companyId, shift.branch_id, entryNo, confirmedByUserId ?? null],
+        );
+        closingJournalEntryId = entryResult.rows[0].id;
+        await client.query(
+          `insert into journal_entry_lines (journal_entry_id, line_no, account_id, debit_amount, credit_amount, base_amount_usd)
+           values ($1,1,$2,$3,0,$3)`,
+          [closingJournalEntryId, cashAccountId, usdAmount],
+        );
+        await client.query(
+          `insert into journal_entry_lines (journal_entry_id, line_no, account_id, debit_amount, credit_amount, base_amount_usd)
+           values ($1,2,$2,0,$3,$3)`,
+          [closingJournalEntryId, custodyAccountId, usdAmount],
+        );
+      }
+
+      const updateResult = await client.query(
+        `update custody_shifts
+         set status = 'confirmed', confirmed_by_user_id = $2, confirmed_at = now(),
+             closing_journal_entry_id = $3, updated_at = now()
+         where id = $1
+         returning *`,
+        [id, confirmedByUserId ?? null, closingJournalEntryId],
+      );
+
+      await client.query('commit');
+      return updateResult.rows[0];
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async rejectCustodyShift(id: string, companyId: string, confirmedByUserId: string | null, reason: string) {
+    const result = await pool.query(
+      `update custody_shifts
+       set status = 'rejected', confirmed_by_user_id = $2, confirmed_at = now(), rejection_reason = $3, updated_at = now()
+       where id = $1 and company_id = $4 and status = 'pending_confirmation'
+       returning *`,
+      [id, confirmedByUserId, reason, companyId],
+    );
+    if (!result.rows[0]) throw new HttpError(400, 'العهدة غير موجودة أو ليست بانتظار تأكيد.');
+    return result.rows[0];
   }
 }

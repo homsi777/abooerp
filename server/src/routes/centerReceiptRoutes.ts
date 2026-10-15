@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { CenterReceiptService } from '../services/centerReceiptService.js';
-import { requirePermissions } from '../middleware/authorization.js';
+import { requirePermissions, requireAnyPermissions } from '../middleware/authorization.js';
 import { requireIdempotencyKey } from '../middleware/idempotency.js';
 import { asyncHandler } from '../utils/http.js';
 import { parseDataScope } from '../utils/scope.js';
@@ -55,7 +55,10 @@ export function createCenterReceiptRouter(service: CenterReceiptService) {
 
   router.get(
     '/vehicle-trip-report',
-    requirePermissions(['deliveries.read']),
+    // نُقلت الشاشة إلى قسم المالية حصراً — تقبل finance.read الآن أيضاً
+    // (بالإضافة إلى deliveries.read القديمة) كي لا ينكسر وصول أي حساب لوجستي
+    // لا يزال يستخدمها برمجياً.
+    requireAnyPermissions(['deliveries.read', 'finance.read']),
     asyncHandler(async (req, res) => {
       const scope = parseDataScope(req);
       const querySchema = z.object({

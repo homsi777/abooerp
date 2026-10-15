@@ -16,6 +16,7 @@ export default function CashBoxMovements() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [transactionType, setTransactionType] = useState<TransactionTypeFilter>('');
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const currency = (statement?.cashbox.currency_code ?? 'USD') as CurrencyCode;
@@ -66,7 +67,7 @@ export default function CashBoxMovements() {
   const exportCsv = () => {
     downloadCsv(
       `cashbox-statement-${id}-${new Date().toISOString().split('T')[0]}.csv`,
-      ['#', 'التاريخ', 'النوع', 'المصدر', 'الطرف/الجهة', 'المرجع', 'البيان', 'وارد', 'صادر', 'الرصيد', 'المستخدم', 'الحالة'],
+      ['#', 'التاريخ', 'النوع', 'المصدر', 'الطرف/الجهة', 'المرجع', 'البيان', 'مدين', 'دائن', 'الرصيد', 'المستخدم', 'الحالة'],
       rows.map((r, i) => [
         i + 1,
         r.created_at.split('T')[0],
@@ -90,20 +91,15 @@ export default function CashBoxMovements() {
       title: 'كشف الصندوق',
       subtitle: `${cashboxName || '-'} - ${currency}`,
       defaultFileName: `cashbox-statement-${id}-${new Date().toISOString().split('T')[0]}.pdf`,
-      headers: ['#', 'التاريخ', 'النوع', 'المصدر', 'الطرف/الجهة', 'المرجع', 'البيان', 'وارد', 'صادر', 'الرصيد', 'المستخدم', 'الحالة'],
+      headers: ['#', 'التاريخ', 'البيان', 'المرجع', 'مدين', 'دائن', 'الرصيد'],
       rows: rows.map((r, i) => [
         i + 1,
         r.created_at.split('T')[0],
-        r.transaction_type === 'inflow' ? 'وارد' : 'صادر',
-        sourceLabel(r),
-        r.party_display_name ?? '-',
-        referenceLabel(r),
         descriptionLabel(r),
+        referenceLabel(r),
         r.debit_in ? formatCurrency(r.debit_in, currency) : '-',
         r.credit_out ? formatCurrency(r.credit_out, currency) : '-',
         formatCurrency(r.running_balance ?? 0, currency),
-        r.created_by_username ?? '-',
-        r.status ?? '-',
       ]),
     });
 
@@ -112,106 +108,169 @@ export default function CashBoxMovements() {
   };
 
   if (!id) {
-    return <div className="p-4">معرف الصندوق غير صالح</div>;
+    return <div style={{ padding: '16px' }}>معرف الصندوق غير صالح</div>;
   }
 
+  const opening = statement?.summary.openingBalance ?? 0;
+  const totalIn = statement?.summary.totalIncoming ?? 0;
+  const totalOut = statement?.summary.totalOutgoing ?? 0;
+  const closing = statement?.summary.closingBalance ?? 0;
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', paddingBottom: '24px' }}>
+      {/* ───────── Header ───────── */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
         <div>
-          <h2 className="text-xl font-bold">كشف الصندوق</h2>
-          <p className="text-sm text-gray-600 mt-1">
-            {cashboxName || '-'} - {currency}
-          </p>
+          <Link to="/finance/cashboxes" style={{ fontSize: '13px', color: '#4f46e5', textDecoration: 'none', fontWeight: 600 }}>
+            ← رجوع للصناديق
+          </Link>
+          <h1 style={{ fontSize: '20px', fontWeight: 800, color: '#111827', margin: '6px 0 2px' }}>كشف حساب — {cashboxName || '-'}</h1>
+          <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>العملة: {currency}</p>
         </div>
-        <div className="flex gap-2">
-          <Link to="/finance/cashboxes" className="toolbar-btn">رجوع للصناديق</Link>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
           <button type="button" className="toolbar-btn" onClick={() => void load()}>تحديث</button>
-          <button type="button" className="toolbar-btn" onClick={exportCsv}>تصدير Excel (CSV)</button>
-          <button type="button" className="toolbar-btn" onClick={() => void exportPdf()}>تصدير PDF</button>
+          <button type="button" className="toolbar-btn" onClick={exportCsv}>CSV</button>
+          <button type="button" className="toolbar-btn" onClick={() => void exportPdf()}>PDF</button>
           <button type="button" className="toolbar-btn" onClick={() => window.print()}>طباعة</button>
         </div>
       </div>
 
-      <div className="card flex flex-wrap gap-3">
-        <div>
-          <label className="block text-xs text-gray-600 mb-1">من تاريخ</label>
-          <input type="date" className="form-input" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-600 mb-1">إلى تاريخ</label>
-          <input type="date" className="form-input" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-600 mb-1">النوع</label>
-          <select className="form-input" value={transactionType} onChange={(e) => setTransactionType(e.target.value as TransactionTypeFilter)}>
-            <option value="">كل الحركات</option>
-            <option value="inflow">وارد</option>
-            <option value="outflow">صادر</option>
-          </select>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="stat-card">
-          <div className="stat-value">{formatCurrency(statement?.summary.openingBalance ?? 0, currency)}</div>
-          <div className="stat-label">الرصيد الافتتاحي</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value text-green-700">{formatCurrency(statement?.summary.totalIncoming ?? 0, currency)}</div>
-          <div className="stat-label">إجمالي المقبوضات</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value text-red-700">{formatCurrency(statement?.summary.totalOutgoing ?? 0, currency)}</div>
-          <div className="stat-label">إجمالي المدفوعات</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{formatCurrency(statement?.summary.closingBalance ?? 0, currency)}</div>
-          <div className="stat-label">الرصيد الختامي</div>
-        </div>
-      </div>
-
-      <div className="card overflow-auto">
-        {loading ? (
-          <div className="p-6 text-center">جاري التحميل...</div>
-        ) : (
-          <table className="data-grid">
-            <thead>
-              <tr>
-                <th>التاريخ</th>
-                <th>النوع</th>
-                <th>المصدر</th>
-                <th>الطرف/الجهة</th>
-                <th>المرجع</th>
-                <th>البيان</th>
-                <th>وارد</th>
-                <th>صادر</th>
-                <th>الرصيد</th>
-                <th>المستخدم</th>
-                <th>الحالة</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.created_at.split('T')[0]}</td>
-                  <td>{r.transaction_type === 'inflow' ? 'وارد' : 'صادر'}</td>
-                  <td>{sourceLabel(r)}</td>
-                  <td>{r.party_display_name ?? '-'}</td>
-                  <td>{referenceLabel(r)}</td>
-                  <td>{descriptionLabel(r)}</td>
-                  <td className="text-left text-green-700">{r.debit_in ? formatCurrency(r.debit_in, currency) : '-'}</td>
-                  <td className="text-left text-red-700">{r.credit_out ? formatCurrency(r.credit_out, currency) : '-'}</td>
-                  <td className="text-left font-medium">{formatCurrency(r.running_balance ?? 0, currency)}</td>
-                  <td>{r.created_by_username ?? '-'}</td>
-                  <td>{r.status ?? '-'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* ───────── Filters (collapsible) ───────── */}
+      <div style={{ border: '1px solid #d1d5db', borderRadius: '6px', padding: '10px 14px' }}>
+        <button
+          type="button"
+          onClick={() => setFiltersOpen((v) => !v)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            width: '100%',
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: 0,
+            fontSize: '13px',
+            fontWeight: 700,
+            color: '#374151',
+          }}
+        >
+          <span>تصفية الحركات</span>
+          <span style={{ color: '#9ca3af', fontSize: '12px' }}>{filtersOpen ? '▲' : '▼'}</span>
+        </button>
+        {filtersOpen && (
+          <div className="flex flex-wrap gap-3" style={{ marginTop: '12px' }}>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">من تاريخ</label>
+              <input type="date" className="form-input" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">إلى تاريخ</label>
+              <input type="date" className="form-input" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">النوع</label>
+              <select className="form-input" value={transactionType} onChange={(e) => setTransactionType(e.target.value as TransactionTypeFilter)}>
+                <option value="">كل الحركات</option>
+                <option value="inflow">مدين (وارد)</option>
+                <option value="outflow">دائن (صادر)</option>
+              </select>
+            </div>
+            {(dateFrom || dateTo || transactionType) && (
+              <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                <button
+                  type="button"
+                  className="toolbar-btn text-sm"
+                  onClick={() => {
+                    setDateFrom('');
+                    setDateTo('');
+                    setTransactionType('');
+                  }}
+                >
+                  إعادة ضبط
+                </button>
+              </div>
+            )}
+          </div>
         )}
-        {!loading && rows.length === 0 && <p className="p-4 text-gray-500">لا توجد حركات ضمن الفلاتر المحددة.</p>}
       </div>
+
+      {/* ───────── Ledger table ───────── */}
+      {loading ? (
+        <div style={{ padding: '40px', textAlign: 'center', color: '#9ca3af' }}>جاري التحميل...</div>
+      ) : (
+        <div style={{ border: '1px solid #9ca3af', borderRadius: '4px', overflow: 'hidden' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ background: '#f3f4f6', borderBottom: '2px solid #9ca3af' }}>
+                  <th style={thStyle('right')}>التاريخ</th>
+                  <th style={thStyle('right')}>البيان</th>
+                  <th style={thStyle('right')}>المرجع</th>
+                  <th style={thStyle('left')}>مدين</th>
+                  <th style={thStyle('left')}>دائن</th>
+                  <th style={thStyle('left')}>الرصيد</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr style={{ borderBottom: '1px solid #e5e7eb', background: '#fafafa' }}>
+                  <td style={tdStyle('right')} colSpan={5}>
+                    <strong>رصيد افتتاحي</strong>
+                  </td>
+                  <td style={{ ...tdStyle('left'), fontWeight: 700 }}>{formatCurrency(opening, currency)}</td>
+                </tr>
+                {rows.map((r) => (
+                  <tr key={r.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                    <td style={tdStyle('right')}>{r.created_at.split('T')[0]}</td>
+                    <td style={tdStyle('right')}>{descriptionLabel(r)}</td>
+                    <td style={{ ...tdStyle('right'), color: '#6b7280', fontFamily: 'monospace', fontSize: '12px' }}>
+                      {referenceLabel(r)}
+                    </td>
+                    <td style={{ ...tdStyle('left'), color: '#166534' }}>{r.debit_in ? formatCurrency(r.debit_in, currency) : ''}</td>
+                    <td style={{ ...tdStyle('left'), color: '#991b1b' }}>{r.credit_out ? formatCurrency(r.credit_out, currency) : ''}</td>
+                    <td style={{ ...tdStyle('left'), fontWeight: 600 }}>{formatCurrency(r.running_balance ?? 0, currency)}</td>
+                  </tr>
+                ))}
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={6} style={{ padding: '32px', textAlign: 'center', color: '#9ca3af' }}>
+                      لا توجد حركات ضمن الفلاتر المحددة.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop: '2px solid #9ca3af', background: '#f3f4f6', fontWeight: 700 }}>
+                  <td style={tdStyle('right')} colSpan={3}>
+                    الإجمالي
+                  </td>
+                  <td style={{ ...tdStyle('left'), color: '#166534' }}>{formatCurrency(totalIn, currency)}</td>
+                  <td style={{ ...tdStyle('left'), color: '#991b1b' }}>{formatCurrency(totalOut, currency)}</td>
+                  <td style={tdStyle('left')}>{formatCurrency(closing, currency)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function thStyle(align: 'right' | 'left'): React.CSSProperties {
+  return {
+    textAlign: align,
+    padding: '9px 14px',
+    fontWeight: 700,
+    color: '#374151',
+    whiteSpace: 'nowrap',
+  };
+}
+
+function tdStyle(align: 'right' | 'left'): React.CSSProperties {
+  return {
+    textAlign: align,
+    padding: '8px 14px',
+    whiteSpace: 'nowrap',
+    color: '#1f2937',
+  };
 }

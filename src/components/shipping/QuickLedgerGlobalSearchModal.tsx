@@ -62,6 +62,8 @@ export default function QuickLedgerGlobalSearchModal({
   onSelectRow,
 }: Props) {
   const [query, setQuery] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(false);
   const [printing, setPrinting] = useState(false);
   const [rows, setRows] = useState<RemoteDailyLedgerRow[]>([]);
@@ -82,6 +84,8 @@ export default function QuickLedgerGlobalSearchModal({
   useEffect(() => {
     if (!open) return;
     setQuery(initialQuery.trim());
+    setDateFrom('');
+    setDateTo('');
     setRows([]);
     setSearched(false);
     setError(null);
@@ -96,13 +100,28 @@ export default function QuickLedgerGlobalSearchModal({
     wrap.scrollTop = 0;
   }, [rows, searched]);
 
-  const scopeLabel = allBranches ? 'كل الفروع — كل التواريخ' : 'الفرع الحالي — كل التواريخ';
+  const dateRangeSummary = useMemo(() => {
+    if (dateFrom && dateTo) return dateFrom === dateTo ? `بتاريخ ${dateFrom}` : `من ${dateFrom} إلى ${dateTo}`;
+    if (dateFrom) return `من ${dateFrom}`;
+    if (dateTo) return `حتى ${dateTo}`;
+    return 'كل التواريخ';
+  }, [dateFrom, dateTo]);
+
+  const scopeLabel = `${allBranches ? 'كل الفروع' : 'الفرع الحالي'} — ${dateRangeSummary}`;
 
   const runSearch = useCallback(async () => {
     const trimmed = query.trim();
-    const input: LedgerGlobalSearchInput = { q: trimmed };
+    const input: LedgerGlobalSearchInput = {
+      q: trimmed,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+    };
     if (!hasLedgerGlobalSearchCriteria(input)) {
-      setError('أدخل كلمة بحث واحدة على الأقل — اسم مرسل، مستلم، رقم إشعار/إيصال، أو نوع بضاعة.');
+      setError('أدخل كلمة بحث واحدة على الأقل، أو حدّد نطاق تاريخ — اسم مرسل، مستلم، رقم إشعار/إيصال، نوع بضاعة، أو تاريخ.');
+      return;
+    }
+    if (dateFrom && dateTo && dateFrom > dateTo) {
+      setError('تاريخ البداية يجب أن يسبق تاريخ النهاية.');
       return;
     }
     setLoading(true);
@@ -113,6 +132,8 @@ export default function QuickLedgerGlobalSearchModal({
         allBranches,
         includeLoaded,
         q: trimmed,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
         limit: 200,
       });
       setRows(results);
@@ -125,7 +146,7 @@ export default function QuickLedgerGlobalSearchModal({
     } finally {
       setLoading(false);
     }
-  }, [allBranches, branchId, includeLoaded, query]);
+  }, [allBranches, branchId, dateFrom, dateTo, includeLoaded, query]);
 
   const handlePrintResults = useCallback(async () => {
     if (rows.length === 0) return;
@@ -171,9 +192,9 @@ export default function QuickLedgerGlobalSearchModal({
         <header className="quick-ledger-dispatch-dialog-header">
           <div>
             <span className="quick-ledger-dispatch-dialog-eyebrow">دفتر الشحن اليومي</span>
-            <h3 id="global-search-title">بحث شامل — كل التواريخ</h3>
+            <h3 id="global-search-title">بحث شامل — {dateRangeSummary}</h3>
             <p className="quick-ledger-dispatch-dialog-sub">
-              ابحث باسم المرسل أو المستلم أو رقم الإشعار/الإيصال أو نوع البضاعة — خانة واحدة تكفي.
+              ابحث باسم المرسل أو المستلم أو رقم الإشعار/الإيصال أو نوع البضاعة، واختياريّاً ضمن نطاق تاريخ معيّن.
             </p>
           </div>
           <button type="button" className="quick-ledger-dispatch-dialog-close" onClick={onClose} aria-label="إغلاق">
@@ -196,6 +217,38 @@ export default function QuickLedgerGlobalSearchModal({
             </div>
           </label>
 
+          <div className="quick-ledger-global-search-daterange">
+            <label>
+              <span>من تاريخ</span>
+              <input
+                type="date"
+                value={dateFrom}
+                max={dateTo || undefined}
+                onChange={(e) => setDateFrom(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && void runSearch()}
+              />
+            </label>
+            <label>
+              <span>إلى تاريخ</span>
+              <input
+                type="date"
+                value={dateTo}
+                min={dateFrom || undefined}
+                onChange={(e) => setDateTo(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && void runSearch()}
+              />
+            </label>
+            {(dateFrom || dateTo) ? (
+              <button
+                type="button"
+                className="quick-ledger-global-search-daterange-clear"
+                onClick={() => { setDateFrom(''); setDateTo(''); }}
+              >
+                مسح التاريخ
+              </button>
+            ) : null}
+          </div>
+
           <div className="quick-ledger-global-search-actions">
             <button type="button" className="primary" onClick={() => void runSearch()} disabled={loading}>
               <Search size={16} />
@@ -204,9 +257,9 @@ export default function QuickLedgerGlobalSearchModal({
             <span className="quick-ledger-global-search-hint">
               {allBranches ? 'كل الفروع' : 'الفرع الحالي'}
               {' · '}
-              كل التواريخ
+              {dateRangeSummary}
               {' · '}
-              حرف واحد على الأقل
+              حرف واحد على الأقل أو تاريخ محدّد
             </span>
           </div>
 

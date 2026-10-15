@@ -36,12 +36,20 @@ export type ProvincialInboundRow = {
   agentCommissionPercentage?: number | null;
   agentCommissionAmount?: number;
   commissionIssue?: 'none' | 'missing_agent' | 'missing_rate';
+  /** نسبة/عمولة السطر بالمعادلة المعتمدة من المحاسب — منفصلة عن
+   * agentCommissionAmount القديمة (المعتمدة في كشوف أخرى) كي لا تتغيّر. */
+  tripCommissionPercentage?: number;
+  tripCommissionAmount?: number;
+  /** صافي ربح السطر بالمعادلة المعتمدة */
+  netProfit?: number;
 };
 
 export type VehicleTripReportMeta = {
   totalRows: number;
   postedRows: number;
   ledgerOnlyRows: number;
+  totalAgentCommission?: number;
+  totalNetProfit?: number;
 };
 
 export const centersGateway = {
@@ -76,7 +84,7 @@ export const centersGateway = {
     );
     return {
       rows: data.rows ?? [],
-      meta: data.meta ?? { totalRows: 0, postedRows: 0, ledgerOnlyRows: 0 },
+      meta: data.meta ?? { totalRows: 0, postedRows: 0, ledgerOnlyRows: 0, totalAgentCommission: 0, totalNetProfit: 0 },
     };
   },
 };

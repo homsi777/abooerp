@@ -28,6 +28,8 @@ import {
 import { env } from '../config/env.js';
 import { queuePostShipmentsAction } from '../sync/localDeferredActions.js';
 import { runLocalSyncCycle } from '../sync/localSyncWorker.js';
+import type { GoodsPricingService } from '../services/goodsPricing/service.js';
+import { normalizeName } from '../services/dailyLedgerShipmentPostingService.js';
 
 const uuid = z.string().uuid();
 
@@ -72,6 +74,7 @@ function canTransferLedger(roleCode: string, userType: string, permissions: stri
 export function createDailyLedgerRouter(
   service: DailyLedgerService,
   transferService?: DailyLedgerTransferService,
+  goodsPricingService?: GoodsPricingService,
 ) {
   const router = express.Router();
   const auditService = new AuditService();
@@ -270,8 +273,75 @@ export function createDailyLedgerRouter(
     rowId: uuid.optional(),
     dispatchId: uuid.nullable().optional(),
     operationId: uuid.optional(),
+    // ── تسعير البضائع (ميزة إضافية، اختيارية بالكامل) ──
+    unitPriceUsd: z.union([z.string(), z.number()]).nullable().optional(),
+    pricingUnit: z.enum(['parcel', 'kg']).nullable().optional(),
   });
   type UpsertRowBody = z.infer<typeof upsertRowBodySchema>;
+
+  /**
+   * تسعير البضائع (ميزة إضافية): يحسب لقطة السعر لحفظها مع السطر.
+   * إن لم تُمرَّر goodsPricingService (مثلاً بيئة لم تُفعَّل الميزة)، يعيد
+   * كائناً فاضياً — لا يغيّر أي سلوك قديم إطلاقاً.
+   */
+  async function computePriceSnapshotForUpsert(
+    previousRow: Record<string, unknown> | null,
+    input: UpsertRowBody,
+  ): Promise<Partial<{
+    pricingGroupId: string | null;
+    pricingPartyId: string | null;
+    pricingUnit: string | null;
+    unitPriceUsd: number | null;
+    lineTotalUsd: number | null;
+    priceSource: string | null;
+    suggestedUnitPriceUsd: number | null;
+  }>> {
+    if (!goodsPricingService) return {};
+    const keyFieldsChanged =
+      !previousRow ||
+      normalizeName(String(previousRow.parcel_type ?? '')) !== normalizeName(input.parcelType ?? '') ||
+      normalizeName(String(previousRow.sender_name ?? '')) !== normalizeName(input.senderName ?? '') ||
+      normalizeName(String(previousRow.receiver_name ?? '')) !== normalizeName(input.receiverName ?? '');
+
+    const existingSnapshot = previousRow
+      ? {
+          pricingGroupId: (previousRow.pricing_group_id as string | null) ?? null,
+          pricingPartyId: (previousRow.pricing_party_id as string | null) ?? null,
+          pricingUnit: (previousRow.pricing_unit as 'parcel' | 'kg' | null) ?? null,
+          unitPriceUsd: (previousRow.unit_price_usd as string | null) ?? null,
+          priceSource: (previousRow.price_source as string | null) ?? null,
+          suggestedUnitPriceUsd: (previousRow.suggested_unit_price_usd as string | null) ?? null,
+        }
+      : null;
+
+    try {
+      const snapshot = await goodsPricingService.computeSaveSnapshot({
+        parcelType: input.parcelType,
+        senderName: input.senderName,
+        receiverName: input.receiverName,
+        parcelCount: input.parcelCount ?? null,
+        weightKg: input.weightKg ?? null,
+        keyFieldsChanged,
+        existingSnapshot,
+        clientUnitPriceUsd: input.unitPriceUsd ?? undefined,
+        clientPricingUnit: input.pricingUnit ?? undefined,
+      });
+      return {
+        pricingGroupId: snapshot.pricingGroupId,
+        pricingPartyId: snapshot.pricingPartyId,
+        pricingUnit: snapshot.pricingUnit,
+        unitPriceUsd: snapshot.unitPriceUsd != null ? Number(snapshot.unitPriceUsd) : null,
+        lineTotalUsd: snapshot.lineTotalUsd != null ? Number(snapshot.lineTotalUsd) : null,
+        priceSource: snapshot.priceSource,
+        suggestedUnitPriceUsd: snapshot.suggestedUnitPriceUsd != null ? Number(snapshot.suggestedUnitPriceUsd) : null,
+      };
+    } catch (error) {
+      // Pricing must never block saving the row (task rule: "if the price
+      // lookup request fails... no error blocks saving").
+      console.warn('[daily-ledger] goods pricing snapshot failed, saving row without it', error instanceof Error ? error.message : error);
+      return {};
+    }
+  }
 
   /** ينفّذ upsert سطر واحد مع كل قواعد التحقق/الصلاحيات الحالية — يُستخدم من المسار الفردي والدفعي معاً */
   async function performRowUpsert(
@@ -300,8 +370,13 @@ export function createDailyLedgerRouter(
       input.rowId != null ? await service.fetchRowAuditSnapshots(ctx.scope, [input.rowId]) : [];
     const previousSnapshot =
       previousRows[0] != null ? dailyLedgerRowAuditSnapshot(previousRows[0]) : null;
+    const priceSnapshot = await computePriceSnapshotForUpsert(previousRows[0] ?? null, input);
+    // Strip the raw client-sent pricing fields (already consumed above) so
+    // only the server-computed snapshot reaches the DB layer.
+    const { unitPriceUsd: _clientUnitPriceUsd, pricingUnit: _clientPricingUnit, ...inputForUpsert } = input;
     const row = await service.upsertRow(ctx.scope, {
-      ...input,
+      ...inputForUpsert,
+      ...priceSnapshot,
       restrictToCreatedByUserId: ctx.ownerUserId ?? undefined,
     });
     const afterSnapshot = dailyLedgerRowAuditSnapshot(row);
@@ -345,6 +420,40 @@ export function createDailyLedgerRouter(
     });
     return row;
   }
+
+  /**
+   * تسعير البضائع (ميزة إضافية): نقطة قراءة فقط للدفتر — لا تُنشئ أي صف في
+   * goods_types أو senders_receivers (بعكس ensureGoodsType/ensureSenderReceiver
+   * المستخدمتين عند الترحيل)، ولا تُغيّر أي بيانات. تُستخدم لعرض السعر فوراً
+   * قبل الحفظ؛ السيرفر هو المرجع النهائي عند الحفظ الفعلي عبر rows/upsert.
+   */
+  router.post(
+    '/pricing/resolve',
+    requirePermissions(['shipments.write']),
+    async (req, res) => {
+      if (!goodsPricingService) {
+        res.json({ success: true, data: { status: 'no_group', conflict: false, senderAmbiguous: false, receiverAmbiguous: false } });
+        return;
+      }
+      const body = z
+        .object({
+          parcelType: z.string().optional(),
+          senderName: z.string().optional(),
+          receiverName: z.string().optional(),
+          parcelCount: z.coerce.number().int().nullable().optional(),
+          weightKg: z.union([z.string(), z.number()]).nullable().optional(),
+        })
+        .parse(req.body);
+      try {
+        const result = await goodsPricingService.resolveForLedger(body);
+        res.json({ success: true, data: result });
+      } catch (error) {
+        // Never block the ledger on a pricing lookup failure.
+        console.warn('[daily-ledger] pricing/resolve failed', error instanceof Error ? error.message : error);
+        res.json({ success: true, data: { status: 'no_group', conflict: false, senderAmbiguous: false, receiverAmbiguous: false } });
+      }
+    },
+  );
 
   router.post(
     '/rows/upsert',

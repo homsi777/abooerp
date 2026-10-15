@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { httpClient } from '../lib/api/httpClient';
 import { centersGateway, type ProvincialInboundRow } from '../lib/api/centersGateway';
-import VehicleTripReportDialog from '../components/shipping/VehicleTripReportDialog';
 import { downloadCsv } from '../lib/export/csvDownload';
 import { formatCurrency } from '../lib/currency/currency';
 import { normalizeShipmentStatus, shipmentStatusLabelAr } from '../lib/shipments/shipmentStatus';
@@ -67,7 +66,6 @@ export default function Centers() {
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [confirmRow, setConfirmRow] = useState<ProvincialInboundRow | null>(null);
-  const [vehicleReportOpen, setVehicleReportOpen] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -234,9 +232,6 @@ export default function Centers() {
           )}
         </div>
         <div className="flex gap-2 flex-wrap">
-          <button className="toolbar-btn primary" type="button" onClick={() => setVehicleReportOpen(true)}>
-            تقرير سيارة
-          </button>
           <button className="toolbar-btn" type="button" onClick={() => void loadData()} disabled={loading}>
             تحديث
           </button>
@@ -530,12 +525,6 @@ export default function Centers() {
           </div>
         </div>
       )}
-
-      <VehicleTripReportDialog
-        open={vehicleReportOpen}
-        defaultDate={dateTo}
-        onClose={() => setVehicleReportOpen(false)}
-      />
     </div>
   );
 }

@@ -42,7 +42,7 @@ function money(value: string | number | null | undefined): number {
   return Math.round(n * 100) / 100;
 }
 
-function normalizeName(value: string | null | undefined): string {
+export function normalizeName(value: string | null | undefined): string {
   return String(value ?? '').trim().replace(/\s+/g, ' ');
 }
 

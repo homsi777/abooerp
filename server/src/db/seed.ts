@@ -27,10 +27,16 @@ export async function runSeed() {
     await client.query('begin');
 
     // ─── 1. DETECT FIRST-RUN ──────────────────────────────────────────────────
-    // First run = MAIN branch does not yet exist → wipe operational data.
-    const mainBranchCheck = await client.query(
-      `select id from branches where code = 'MAIN' limit 1`,
-    );
+    // First run = the branches table is completely empty (a genuinely fresh
+    // database). NEVER key this off a specific branch *code* — a code is
+    // live, mutable business data (renamed, reassigned) and checking for one
+    // literal value caused a real production data wipe on 2026-10-14 when
+    // the main branch's code was changed away from 'MAIN' for an unrelated
+    // fix, which made this check wrongly read as "first run" on the next
+    // server restart and truncated all operational tables. Checking for the
+    // table being empty is the only check that can't be defeated by a normal
+    // business edit.
+    const mainBranchCheck = await client.query(`select id from branches limit 1`);
     const isFirstRun = mainBranchCheck.rowCount === 0;
 
     if (isFirstRun) {

@@ -49,6 +49,8 @@ import { isElectronRuntime } from '../lib/runtime/runtimeMode';
 import { useAuth } from '../context/AuthProvider';
 import SmartPartyInput from '../components/SmartPartyInput';
 import AutocompleteInput from '../components/AutocompleteInput';
+import GoodsPriceCell, { type GoodsPriceCellResult } from '../components/shipping/GoodsPriceCell';
+import { computeLineTotal as computeGoodsLineTotal } from '../lib/shipping/goodsPricingTotal';
 import {
   dedupeAgentsForDestination,
   pickPreferredAgentForGovernorate,
@@ -159,7 +161,20 @@ type LedgerRow = {
   /** تعريف الإرسالية (النظام الجديد) */
   dispatchId?: string;
   dispatchNo?: string;
+  // ── تسعير البضائع (ميزة إضافية) ──
+  unitPriceUsd?: string;
+  pricingUnit?: 'parcel' | 'kg';
+  lineTotalUsd?: string;
+  priceSource?: 'party' | 'general' | 'manual';
+  /** عند true لا يُستبدل سعر الوحدة تلقائياً من التسعير — نفس فكرة collectManual */
+  priceManual?: boolean;
 };
+
+/** يُرسل حقلي السعر مع الحفظ فقط عند وجود سعر فعلي — لا يغيّر أي حقل آخر */
+function goodsPricingSavePayload(row: LedgerRow): { unitPriceUsd?: string; pricingUnit?: 'parcel' | 'kg' } {
+  if (!row.unitPriceUsd || !row.pricingUnit) return {};
+  return { unitPriceUsd: row.unitPriceUsd, pricingUnit: row.pricingUnit };
+}
 
 const LEDGER_ENTRY_SLOTS = 1;
 const LEDGER_ROWS_ADD_INCREMENT = 1;
@@ -1000,7 +1015,8 @@ export default function ShipmentQuickLedger() {
           normalizeName(row.sender ?? '').includes(needle) ||
           normalizeName(row.receiver ?? '').includes(needle) ||
           normalizeName(row.receiptNo ?? '').includes(needle) ||
-          normalizeName(row.notes ?? '').includes(needle)
+          normalizeName(row.notes ?? '').includes(needle) ||
+          normalizeName(row.parcelType ?? '').includes(needle)
         );
       });
     }
@@ -1031,7 +1047,7 @@ export default function ShipmentQuickLedger() {
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
   /** حد أعلى آمن لعدد الأعمدة — يُستخدم فقط لـ colSpan على أسطر الحشو غير المرئية (لا حدود/بلا محتوى) */
-  const columnCount = 14;
+  const columnCount = 16;
 
   const deletableVisibleRows = useMemo(
     () => visibleRows.filter(isRowDeletable),
@@ -1146,7 +1162,8 @@ export default function ShipmentQuickLedger() {
             normalizeName(row.sender_name ?? '').includes(needle) ||
             normalizeName(row.receiver_name ?? '').includes(needle) ||
             normalizeName(row.receipt_no ?? '').includes(needle) ||
-            normalizeName(row.notes ?? '').includes(needle),
+            normalizeName(row.notes ?? '').includes(needle) ||
+            normalizeName(row.parcel_type ?? '').includes(needle),
         )
       : printable;
     const totals = computeTotalsFromRemoteRows(filteredRemote);
@@ -1421,6 +1438,11 @@ export default function ShipmentQuickLedger() {
     sessionLineLabel: remote.line_label,
     dispatchId: remote.dispatch_id ?? undefined,
     dispatchNo: remote.dispatch_no != null ? String(remote.dispatch_no) : undefined,
+    unitPriceUsd: remote.unit_price_usd ?? undefined,
+    pricingUnit: remote.pricing_unit ?? undefined,
+    lineTotalUsd: remote.line_total_usd ?? undefined,
+    priceSource: remote.price_source ?? undefined,
+    priceManual: remote.price_source === 'manual',
   });
 
   /** Keep the top stats bar and print hub in sync immediately after a successful upsert. */
@@ -1543,6 +1565,7 @@ export default function ShipmentQuickLedger() {
           feesAmountUsd: 0,
           transferServiceFeeUsd: parseUsd(latestRow.transferServiceFee),
           notes: latestRow.notes || null,
+          ...goodsPricingSavePayload(latestRow),
         },
       });
     }
@@ -2213,6 +2236,20 @@ export default function ShipmentQuickLedger() {
             userBranchId: userRef.current?.branchId ?? userRef.current?.allowedBranchIds?.[0] ?? null,
           });
         }
+        if (field === 'unitPriceUsd') {
+          const unit = row.pricingUnit ?? 'parcel';
+          const total = computeGoodsLineTotal(unit, row.parcelCount ? Number(row.parcelCount) : null, row.weightKg || null, value || null);
+          const hasValue = value.trim() !== '';
+          const next: LedgerRow = {
+            ...row,
+            unitPriceUsd: value,
+            pricingUnit: unit,
+            priceManual: hasValue,
+            priceSource: hasValue ? 'manual' : undefined,
+            lineTotalUsd: total ?? undefined,
+          };
+          return next;
+        }
         if (field === 'prepaidAmount') {
           const prepaid = parseUsd(value);
           let next: LedgerRow = { ...row, prepaidAmount: value };
@@ -2251,6 +2288,24 @@ export default function ShipmentQuickLedger() {
     if (field !== 'receiptNo' && !FINANCIAL_ROW_FIELDS.has(field)) {
       queueRowSave(id);
     }
+  };
+
+  /** يُستدعى من GoodsPriceCell عند نتيجة بحث تلقائي (ليس تعديلاً يدوياً) — لا يُعلّم priceManual */
+  const applyResolvedGoodsPricing = (rowId: number, result: GoodsPriceCellResult) => {
+    setRows((prev) =>
+      prev.map((row) =>
+        row.id === rowId
+          ? {
+              ...row,
+              unitPriceUsd: result.unitPriceUsd ?? undefined,
+              pricingUnit: result.pricingUnit ?? undefined,
+              lineTotalUsd: result.lineTotalUsd ?? undefined,
+              priceSource: result.source ?? undefined,
+            }
+          : row,
+      ),
+    );
+    if (result.unitPriceUsd) queueRowSave(rowId);
   };
 
   const validateReceiptNoCommit = (rowId: number): boolean => {
@@ -2510,6 +2565,7 @@ export default function ShipmentQuickLedger() {
           feesAmountUsd: 0,
           transferServiceFeeUsd: parseUsd(latestRow.transferServiceFee),
           notes: latestRow.notes || null,
+          ...goodsPricingSavePayload(latestRow),
         });
         setRows((prev) => {
           const mapped = prev.map((r) => {
@@ -2540,6 +2596,11 @@ export default function ShipmentQuickLedger() {
               sessionLineLabel: saved.line_label ?? r.sessionLineLabel,
               dispatchId: saved.dispatch_id ?? r.dispatchId,
               dispatchNo: saved.dispatch_no != null ? String(saved.dispatch_no) : r.dispatchNo,
+              unitPriceUsd: saved.unit_price_usd ?? r.unitPriceUsd,
+              pricingUnit: saved.pricing_unit ?? r.pricingUnit,
+              lineTotalUsd: saved.line_total_usd ?? r.lineTotalUsd,
+              priceSource: saved.price_source ?? r.priceSource,
+              priceManual: saved.price_source === 'manual',
             };
           });
           const savedRow = mapped.find((r) => r.id === displayRowId);
@@ -3818,6 +3879,7 @@ export default function ShipmentQuickLedger() {
             notes: row.notes || null,
             dispatchId: dispatchIdForSave,
             ...(saveOperationId ? { operationId: saveOperationId } : {}),
+            ...goodsPricingSavePayload(row),
           });
           upsertedRowIds.push(saved.id);
           savedDbIdByDisplayId.set(row.id, saved.id);
@@ -4593,7 +4655,7 @@ export default function ShipmentQuickLedger() {
               <input
                 value={pageSearchQuery}
                 onChange={(e) => setPageSearchQuery(e.target.value)}
-                placeholder="جهة، مرسل، مستلم، رقم إيصال، ملاحظات — أسطر هذه الصفحة فقط..."
+                placeholder="جهة، مرسل، مستلم، رقم إيصال، نوع بضاعة، ملاحظات — أسطر هذه الصفحة فقط..."
                 title="يبحث فقط ضمن الأسطر المعروضة حالياً في هذه الصفحة"
               />
               {pageSearchQuery.trim() ? (
@@ -4761,6 +4823,8 @@ export default function ShipmentQuickLedger() {
               )}
               <th className="col-receipt">رقم الإيصال</th>
               <th className="notes col-notes">ملاحظات</th>
+              <th className="col-goods-price" title="يُحسب تلقائياً من تسعير البضائع (المالية ← تسعير البضائع)؛ يمكن تعديله يدوياً">سعر الوحدة</th>
+              <th className="col-goods-total">الإجمالي</th>
             </tr>
           </thead>
           <tbody>
@@ -5024,6 +5088,25 @@ export default function ShipmentQuickLedger() {
                       onBlur={() => flushRowSave(row.id)}
                       onChange={(e) => updateRow(row.id, 'notes', e.target.value)}
                     />
+                  </td>
+                  <td className="col-goods-price">
+                    <GoodsPriceCell
+                      parcelType={row.parcelType}
+                      senderName={row.sender}
+                      receiverName={row.receiver}
+                      parcelCount={row.parcelCount}
+                      weightKg={row.weightKg}
+                      unitPriceUsd={row.unitPriceUsd ?? ''}
+                      pricingUnit={row.pricingUnit}
+                      priceSource={row.priceSource}
+                      priceManual={row.priceManual}
+                      disabled={locked}
+                      onManualChange={(value) => updateRow(row.id, 'unitPriceUsd', value)}
+                      onResolved={(result) => applyResolvedGoodsPricing(row.id, result)}
+                    />
+                  </td>
+                  <td className="col-goods-total">
+                    <span style={{ fontSize: '12px', fontWeight: 700 }}>{row.lineTotalUsd ?? '—'}</span>
                   </td>
                 </tr>
               );

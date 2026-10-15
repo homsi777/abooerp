@@ -1127,4 +1127,105 @@ export class FinanceService {
   ) {
     return this.bilateralService().markDisputed(companyId, id, disputeNote);
   }
+
+  // ── Accounting foundation: chart of accounts + manual journal entries ──
+
+  listChartOfAccounts(scope?: DataScope) {
+    return this.repository.listChartOfAccounts(scope);
+  }
+
+  listJournalEntries(scope?: DataScope, filters?: { dateFrom?: string; dateTo?: string }) {
+    return this.repository.listJournalEntries(scope, filters);
+  }
+
+  getJournalEntryLines(journalEntryId: string) {
+    return this.repository.getJournalEntryLines(journalEntryId);
+  }
+
+  async createJournalEntry(
+    input: {
+      branchId?: string | null;
+      description?: string;
+      lines: Array<{
+        accountId: string;
+        debitAmount: number;
+        creditAmount: number;
+        partyType?: string | null;
+        partyId?: string | null;
+        notes?: string | null;
+      }>;
+    },
+    scope: DataScope | undefined,
+    createdByUserId?: string,
+  ) {
+    if (!scope?.companyId) {
+      throw new HttpError(400, 'تعذر تحديد الشركة لإنشاء القيد.');
+    }
+    return this.repository.createJournalEntry({
+      companyId: scope.companyId,
+      branchId: input.branchId ?? scope.branchId ?? null,
+      description: input.description,
+      createdByUserId,
+      lines: input.lines,
+    });
+  }
+
+  async reverseJournalEntry(id: string, scope: DataScope | undefined, createdByUserId?: string) {
+    if (!scope?.companyId) {
+      throw new HttpError(400, 'تعذر تحديد الشركة لعكس القيد.');
+    }
+    return this.repository.reverseJournalEntry(id, scope.companyId, createdByUserId);
+  }
+
+  // ── Custody (عهدة) ──
+
+  listCustodyShifts(scope?: DataScope, filters?: { status?: string }) {
+    return this.repository.listCustodyShifts(scope, filters);
+  }
+
+  async openCustodyShift(
+    input: {
+      branchId?: string | null;
+      holderType: 'data_entry_employee' | 'driver';
+      holderUserId?: string | null;
+      holderDriverId?: string | null;
+      holderLabel?: string | null;
+      openingBalances: Array<{ currencyCode: string; amount: number }>;
+    },
+    scope: DataScope | undefined,
+    openedByUserId?: string,
+  ) {
+    if (!scope?.companyId) throw new HttpError(400, 'تعذر تحديد الشركة لفتح العهدة.');
+    if (input.holderType === 'data_entry_employee' && !input.holderUserId) {
+      throw new HttpError(400, 'يجب تحديد الموظف.');
+    }
+    if (input.holderType === 'driver' && !input.holderDriverId) {
+      throw new HttpError(400, 'يجب تحديد السائق.');
+    }
+    return this.repository.openCustodyShift({
+      companyId: scope.companyId,
+      branchId: input.branchId ?? scope.branchId ?? null,
+      holderType: input.holderType,
+      holderUserId: input.holderUserId,
+      holderDriverId: input.holderDriverId,
+      holderLabel: input.holderLabel,
+      openedByUserId,
+      openingBalances: input.openingBalances,
+    });
+  }
+
+  closeCustodyShift(id: string, scope?: DataScope) {
+    if (!scope?.companyId) throw new HttpError(400, 'تعذر تحديد الشركة.');
+    return this.repository.closeCustodyShift(id, scope.companyId);
+  }
+
+  confirmCustodyShift(id: string, scope: DataScope | undefined, confirmedByUserId?: string) {
+    if (!scope?.companyId) throw new HttpError(400, 'تعذر تحديد الشركة.');
+    return this.repository.confirmCustodyShift(id, scope.companyId, confirmedByUserId);
+  }
+
+  rejectCustodyShift(id: string, scope: DataScope | undefined, confirmedByUserId: string | undefined, reason: string) {
+    if (!scope?.companyId) throw new HttpError(400, 'تعذر تحديد الشركة.');
+    return this.repository.rejectCustodyShift(id, scope.companyId, confirmedByUserId ?? null, reason);
+  }
 }

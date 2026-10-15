@@ -2336,5 +2336,165 @@ export function createFinanceRouter(service: FinanceService) {
     }),
   );
 
+  // ── Accounting foundation: chart of accounts + manual journal entries ──
+
+  router.get(
+    '/chart-of-accounts',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    asyncHandler(async (req, res) => {
+      const data = await service.listChartOfAccounts(parseDataScope(req));
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/journal-entries',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    asyncHandler(async (req, res) => {
+      const dateFrom = typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined;
+      const dateTo = typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined;
+      const data = await service.listJournalEntries(parseDataScope(req), { dateFrom, dateTo });
+      res.json({ success: true, data });
+    }),
+  );
+
+  router.get(
+    '/journal-entries/:id/lines',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    asyncHandler(async (req, res) => {
+      const data = await service.getJournalEntryLines(String(req.params.id));
+      res.json({ success: true, data });
+    }),
+  );
+
+  const journalLineSchema = z.object({
+    accountId: z.string().uuid(),
+    debitAmount: z.coerce.number().min(0).default(0),
+    creditAmount: z.coerce.number().min(0).default(0),
+    partyType: z.enum(['customer', 'agent', 'sender_receiver', 'supplier', 'driver', 'employee']).optional(),
+    partyId: z.string().uuid().optional(),
+    notes: z.string().optional(),
+  });
+  const journalEntryCreateSchema = z.object({
+    branchId: z.string().uuid().optional(),
+    description: z.string().optional(),
+    lines: z.array(journalLineSchema).min(2),
+  });
+
+  router.post(
+    '/journal-entries',
+    requireAnyPermissions(['finance.write']),
+    requireIdempotencyKey('finance.journal.create'),
+    asyncHandler(async (req, res) => {
+      const payload = journalEntryCreateSchema.parse(req.body);
+      const userContext = (req as any).requestUserContext;
+      const entry = await service.createJournalEntry(payload, parseDataScope(req), userContext?.userId);
+      auditService.logAsync({
+        req,
+        action: 'JOURNAL_ENTRY_CREATED',
+        entityType: 'journal_entry',
+        entityId: entry.id,
+        metadata: { entryNo: entry.entry_no, lineCount: payload.lines.length },
+      });
+      res.status(201).json({ success: true, data: entry });
+    }),
+  );
+
+  router.post(
+    '/journal-entries/:id/reverse',
+    requireAnyPermissions(['finance.write']),
+    requireIdempotencyKey('finance.journal.reverse'),
+    asyncHandler(async (req, res) => {
+      const userContext = (req as any).requestUserContext;
+      const reversal = await service.reverseJournalEntry(String(req.params.id), parseDataScope(req), userContext?.userId);
+      auditService.logAsync({
+        req,
+        action: 'JOURNAL_ENTRY_REVERSED',
+        entityType: 'journal_entry',
+        entityId: String(req.params.id),
+        metadata: { reversalEntryNo: reversal.entry_no },
+      });
+      res.status(201).json({ success: true, data: reversal });
+    }),
+  );
+
+  // ── Custody (عهدة) ──
+
+  router.get(
+    '/custody-shifts',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    asyncHandler(async (req, res) => {
+      const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+      const data = await service.listCustodyShifts(parseDataScope(req), { status });
+      res.json({ success: true, data });
+    }),
+  );
+
+  const custodyOpenSchema = z.object({
+    branchId: z.string().uuid().optional(),
+    holderType: z.enum(['data_entry_employee', 'driver']),
+    holderUserId: z.string().uuid().optional(),
+    holderDriverId: z.string().uuid().optional(),
+    holderLabel: z.string().optional(),
+    openingBalances: z.array(z.object({
+      currencyCode: currencyCodeSchema,
+      amount: z.coerce.number().min(0),
+    })).min(1),
+  });
+
+  router.post(
+    '/custody-shifts',
+    requireAnyPermissions(['finance.write']),
+    requireIdempotencyKey('finance.custody.open'),
+    asyncHandler(async (req, res) => {
+      const payload = custodyOpenSchema.parse(req.body);
+      const userContext = (req as any).requestUserContext;
+      const shift = await service.openCustodyShift(payload, parseDataScope(req), userContext?.userId);
+      auditService.logAsync({
+        req, action: 'CUSTODY_SHIFT_OPENED', entityType: 'custody_shift', entityId: shift.id,
+        metadata: { holderType: shift.holder_type },
+      });
+      res.status(201).json({ success: true, data: shift });
+    }),
+  );
+
+  router.post(
+    '/custody-shifts/:id/close',
+    requireAnyPermissions(['finance.write']),
+    requireIdempotencyKey('finance.custody.close'),
+    asyncHandler(async (req, res) => {
+      const shift = await service.closeCustodyShift(String(req.params.id), parseDataScope(req));
+      auditService.logAsync({ req, action: 'CUSTODY_SHIFT_CLOSED', entityType: 'custody_shift', entityId: shift.id, metadata: {} });
+      res.json({ success: true, data: shift });
+    }),
+  );
+
+  router.post(
+    '/custody-shifts/:id/confirm',
+    requireAnyPermissions(['finance.write']),
+    requireIdempotencyKey('finance.custody.confirm'),
+    asyncHandler(async (req, res) => {
+      const userContext = (req as any).requestUserContext;
+      const shift = await service.confirmCustodyShift(String(req.params.id), parseDataScope(req), userContext?.userId);
+      auditService.logAsync({ req, action: 'CUSTODY_SHIFT_CONFIRMED', entityType: 'custody_shift', entityId: shift.id, metadata: {} });
+      res.json({ success: true, data: shift });
+    }),
+  );
+
+  const custodyRejectSchema = z.object({ reason: z.string().min(1) });
+
+  router.post(
+    '/custody-shifts/:id/reject',
+    requireAnyPermissions(['finance.write']),
+    requireIdempotencyKey('finance.custody.reject'),
+    asyncHandler(async (req, res) => {
+      const payload = custodyRejectSchema.parse(req.body);
+      const userContext = (req as any).requestUserContext;
+      const shift = await service.rejectCustodyShift(String(req.params.id), parseDataScope(req), userContext?.userId, payload.reason);
+      auditService.logAsync({ req, action: 'CUSTODY_SHIFT_REJECTED', entityType: 'custody_shift', entityId: shift.id, metadata: { reason: payload.reason } });
+      res.json({ success: true, data: shift });
+    }),
+  );
+
   return router;
 }

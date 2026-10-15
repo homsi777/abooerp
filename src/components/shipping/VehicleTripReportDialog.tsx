@@ -91,6 +91,9 @@ export default function VehicleTripReportDialog({ open, defaultDate, onClose }: 
         'مسبق',
         'حوالة',
         'أجرة حوالة',
+        'نسبة الوكيل',
+        'عمولة الوكيل',
+        'الصافي',
         'الحالة',
         'السيارة',
       ],
@@ -108,6 +111,9 @@ export default function VehicleTripReportDialog({ open, defaultDate, onClose }: 
           row.prepaidAmount,
           row.hawalaAmount,
           row.transferServiceFee,
+          row.agentCommissionPercentage ?? 0,
+          row.agentCommissionAmount ?? 0,
+          row.netProfit ?? 0,
           shipmentStatusLabelAr(normalizeShipmentStatus(row.shipmentStatus)),
           row.vehicleLabel ?? '—',
         ])
@@ -125,6 +131,9 @@ export default function VehicleTripReportDialog({ open, defaultDate, onClose }: 
             totals.prepaidAmount,
             totals.hawalaAmount,
             totals.transferServiceFee,
+            '',
+            meta?.totalAgentCommission ?? 0,
+            meta?.totalNetProfit ?? 0,
             '',
             '',
           ],
@@ -161,6 +170,11 @@ export default function VehicleTripReportDialog({ open, defaultDate, onClose }: 
         <p className="vehicle-report-intro">
           يقرأ مباشرة من <strong>دفتر الإدخال السريع</strong> (كل الأسطر المحفوظة للسائق في اليوم) — وليس فقط الشحنات
           المفتوحة في «استلام المحافظات»، لذلك يطابق عدد الدفتر بدقة أكبر.
+        </p>
+
+        <p className="vehicle-report-formula">
+          <strong>معادلة الصافي المعتمدة:</strong> عمولة الوكيل = نسبة% × (دفع مسبق + تحصيل) — الصافي = (دفع مسبق +
+          تحصيل) − عمولة الوكيل − دفع مسبق + أجور الشحن + حوالة
         </p>
 
         <div className="vehicle-report-filters">
@@ -213,6 +227,8 @@ export default function VehicleTripReportDialog({ open, defaultDate, onClose }: 
               <div><span>مسبق</span><strong>{totals.prepaidAmount.toLocaleString()}</strong></div>
               <div><span>حوالات</span><strong>{totals.hawalaAmount.toLocaleString()}</strong></div>
               <div><span>أجور حوالات</span><strong>{totals.transferServiceFee.toLocaleString()}</strong></div>
+              <div className="centers-summary-commission"><span>عمولة الوكيل</span><strong>{(meta?.totalAgentCommission ?? 0).toLocaleString()}</strong></div>
+              <div className="centers-summary-company"><span>الصافي</span><strong>{(meta?.totalNetProfit ?? 0).toLocaleString()}</strong></div>
             </section>
 
             {agentTotals.length > 0 && (
@@ -267,6 +283,9 @@ export default function VehicleTripReportDialog({ open, defaultDate, onClose }: 
                       <th>مسبق</th>
                       <th>حوالة</th>
                       <th>أجرة</th>
+                      <th>نسبة الوكيل</th>
+                      <th>عمولة الوكيل</th>
+                      <th>الصافي</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -282,9 +301,24 @@ export default function VehicleTripReportDialog({ open, defaultDate, onClose }: 
                         <td>{row.prepaidAmount.toLocaleString()}</td>
                         <td>{row.hawalaAmount.toLocaleString()}</td>
                         <td>{row.transferServiceFee.toLocaleString()}</td>
+                        <td>{row.agentCommissionPercentage ? `${row.agentCommissionPercentage}٪` : '—'}</td>
+                        <td>{(row.agentCommissionAmount ?? 0).toLocaleString()}</td>
+                        <td><strong>{(row.netProfit ?? 0).toLocaleString()}</strong></td>
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot>
+                    <tr className="vehicle-report-totals-row">
+                      <td colSpan={6}>المجاميع</td>
+                      <td>{totals.collectAmount.toLocaleString()}</td>
+                      <td>{totals.prepaidAmount.toLocaleString()}</td>
+                      <td>{totals.hawalaAmount.toLocaleString()}</td>
+                      <td>{totals.transferServiceFee.toLocaleString()}</td>
+                      <td>—</td>
+                      <td>{(meta?.totalAgentCommission ?? 0).toLocaleString()}</td>
+                      <td><strong>{(meta?.totalNetProfit ?? 0).toLocaleString()}</strong></td>
+                    </tr>
+                  </tfoot>
                 </table>
               )}
             </div>

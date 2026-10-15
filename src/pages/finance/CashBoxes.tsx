@@ -16,6 +16,18 @@ const TYPE_LABEL: Record<string, string> = {
   AGENT: 'صندوق الوكيل',
 };
 
+const TYPE_ICON: Record<string, string> = {
+  COMPANY: '🏛️',
+  BRANCH: '🏢',
+  AGENT: '🧑‍💼',
+};
+
+const TYPE_STYLE: Record<string, { accent: string; chipBg: string; chipText: string }> = {
+  COMPANY: { accent: '#7c3aed', chipBg: '#f3e8ff', chipText: '#6b21a8' },
+  BRANCH: { accent: '#4f46e5', chipBg: '#e0e7ff', chipText: '#3730a3' },
+  AGENT: { accent: '#0d9488', chipBg: '#ccfbf1', chipText: '#0f766e' },
+};
+
 type BranchOpt = { id: string; name: string };
 type AgentOpt = { id: string; name: string };
 
@@ -31,6 +43,7 @@ export default function FinanceCashBoxes() {
   const [syncing, setSyncing] = useState(false);
   const [branches, setBranches] = useState<BranchOpt[]>([]);
   const [agents, setAgents] = useState<AgentOpt[]>([]);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const [search, setSearch] = useState('');
   const [appliedSearch, setAppliedSearch] = useState('');
@@ -96,6 +109,21 @@ export default function FinanceCashBoxes() {
   }, [isAgent]);
 
   const filteredStatic = useMemo(() => rows, [rows]);
+
+  const summary = useMemo(() => {
+    const active = filteredStatic.filter((r) => r.is_active);
+    const byCurrency = new Map<string, number>();
+    for (const r of active) {
+      const cur = r.currency_code;
+      byCurrency.set(cur, (byCurrency.get(cur) ?? 0) + Number(r.current_balance));
+    }
+    return {
+      total: filteredStatic.length,
+      activeCount: active.length,
+      inactiveCount: filteredStatic.length - active.length,
+      byCurrency: Array.from(byCurrency.entries()),
+    };
+  }, [filteredStatic]);
 
   const resetForm = () => {
     setEditingId(null);
@@ -258,35 +286,34 @@ export default function FinanceCashBoxes() {
     : 'لا توجد صناديق بعد. ابدأ بإضافة صندوق جديد.';
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', paddingBottom: '24px' }}>
+      {/* ───────── Header ───────── */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
         <div>
-          <h2 className="text-xl font-bold">الصناديق</h2>
-          <p className="text-sm text-gray-600 mt-1">
-            النموذج المعتمد: <strong>الصندوق العام</strong>، و<strong>صندوق لكل وكيل</strong>، و<strong>صندوق فرع حلب</strong> (BR-ALEPPO) فقط.
-            صناديق الوكلاء وفرع حلب مرتبطة بالصندوق العام. الرصيد النقدي يتحرك عبر السندات المؤكدة؛
-            عمود «ذمة تشغيلية» يعرض صافي الحركات المالية من الشحنات والذمم (قبل التحصيل النقدي).
+          <h1 style={{ fontSize: '22px', fontWeight: 800, color: '#111827', margin: '0 0 4px' }}>💵 الصناديق</h1>
+          <p style={{ fontSize: '13px', color: '#6b7280', margin: 0, maxWidth: '560px', lineHeight: 1.6 }}>
+            النموذج المعتمد: الصندوق العام، وصندوق لكل وكيل، وصندوق واحد لفرع حلب الرئيسي — جميعها مرتبطة بالصندوق العام.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
           {canManage && !isAgent && (
             <button type="button" className="toolbar-btn" onClick={() => void runSync()} disabled={syncing}>
-              {syncing ? 'مزامنة...' : 'مزامنة وربط الصناديق'}
+              {syncing ? '⏳ مزامنة...' : '🔄 مزامنة وربط'}
             </button>
           )}
           {canManage && !isAgent && (
             <button type="button" className="toolbar-btn primary" onClick={openAdd}>
-              إضافة صندوق
+              ＋ إضافة صندوق
             </button>
           )}
           <button type="button" className="toolbar-btn" onClick={() => void load()}>
             تحديث
           </button>
           <button type="button" className="toolbar-btn" onClick={exportCsv}>
-            تصدير CSV
+            CSV
           </button>
           <button type="button" className="toolbar-btn" onClick={() => void exportPdf()}>
-            تصدير PDF
+            PDF
           </button>
           <button type="button" className="toolbar-btn" onClick={() => window.print()}>
             طباعة
@@ -294,82 +321,128 @@ export default function FinanceCashBoxes() {
         </div>
       </div>
 
-      <div className="card">
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          <input
-            className="form-input"
-            placeholder="بحث عام (كود / اسم)..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          {!isAgent && (
-            <select className="form-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-              <option value="">نوع الصندوق — الكل</option>
-              <option value="COMPANY">صندوق الشركة</option>
-              <option value="BRANCH">صندوق الفرع</option>
-              <option value="AGENT">صندوق الوكيل</option>
-            </select>
-          )}
-          {!isAgent && (
-            <select className="form-select" value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)}>
-              <option value="">الفرع — الكل</option>
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-          )}
-          {!isAgent && (
-            <select className="form-select" value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
-              <option value="">الوكيل — الكل</option>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          )}
-          <select className="form-select" value={currencyFilter} onChange={(e) => setCurrencyFilter(e.target.value)}>
-            <option value="">العملة — الكل</option>
-            <option value="USD">USD</option>
-            <option value="SYP">SYP</option>
-            <option value="TRY">TRY</option>
-          </select>
-          <select className="form-select" value={activeFilter} onChange={(e) => setActiveFilter(e.target.value)}>
-            <option value="">الحالة — الكل</option>
-            <option value="true">نشط</option>
-            <option value="false">موقوف</option>
-          </select>
-          <div className="flex gap-2 items-center">
-            <button
-              type="button"
-              className="toolbar-btn primary text-sm"
-              onClick={() => {
-                setAppliedSearch(search.trim());
-              }}
-            >
-              تطبيق
-            </button>
-            <button
-              type="button"
-              className="toolbar-btn text-sm"
-              onClick={() => {
-                setSearch('');
-                setAppliedSearch('');
-                setTypeFilter('');
-                setBranchFilter('');
-                setAgentFilter('');
-                setCurrencyFilter('');
-                setActiveFilter('');
-              }}
-            >
-              إعادة ضبط
-            </button>
-          </div>
+      {/* ───────── Summary strip ───────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
+        <div style={summaryCardStyle('#4f46e5')}>
+          <div style={summaryLabelStyle}>إجمالي الصناديق</div>
+          <div style={summaryValueStyle('#312e81')}>{formatWesternNumber(summary.total)}</div>
         </div>
+        <div style={summaryCardStyle('#16a34a')}>
+          <div style={summaryLabelStyle}>نشطة</div>
+          <div style={summaryValueStyle('#166534')}>{formatWesternNumber(summary.activeCount)}</div>
+        </div>
+        <div style={summaryCardStyle('#9ca3af')}>
+          <div style={summaryLabelStyle}>موقوفة</div>
+          <div style={summaryValueStyle('#374151')}>{formatWesternNumber(summary.inactiveCount)}</div>
+        </div>
+        {summary.byCurrency.map(([cur, total]) => (
+          <div key={cur} style={summaryCardStyle(total >= 0 ? '#16a34a' : '#dc2626')}>
+            <div style={summaryLabelStyle}>إجمالي الرصيد ({cur})</div>
+            <div style={summaryValueStyle(total >= 0 ? '#166534' : '#991b1b')}>
+              {formatCurrency(total, cur as CurrencyCode)}
+            </div>
+          </div>
+        ))}
       </div>
 
+      {/* ───────── Filters (collapsible) ───────── */}
+      <div className="card">
+        <button
+          type="button"
+          onClick={() => setFiltersOpen((v) => !v)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            width: '100%',
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: 0,
+            fontSize: '14px',
+            fontWeight: 700,
+            color: '#374151',
+          }}
+        >
+          <span>🔍 بحث وتصفية</span>
+          <span style={{ color: '#9ca3af', fontSize: '12px' }}>{filtersOpen ? 'إخفاء ▲' : 'إظهار ▼'}</span>
+        </button>
+        {filtersOpen && (
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3" style={{ marginTop: '14px' }}>
+            <input
+              className="form-input"
+              placeholder="بحث عام (كود / اسم)..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {!isAgent && (
+              <select className="form-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+                <option value="">نوع الصندوق — الكل</option>
+                <option value="COMPANY">صندوق الشركة</option>
+                <option value="BRANCH">صندوق الفرع</option>
+                <option value="AGENT">صندوق الوكيل</option>
+              </select>
+            )}
+            {!isAgent && (
+              <select className="form-select" value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)}>
+                <option value="">الفرع — الكل</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            {!isAgent && (
+              <select className="form-select" value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
+                <option value="">الوكيل — الكل</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            <select className="form-select" value={currencyFilter} onChange={(e) => setCurrencyFilter(e.target.value)}>
+              <option value="">العملة — الكل</option>
+              <option value="USD">USD</option>
+              <option value="SYP">SYP</option>
+              <option value="TRY">TRY</option>
+            </select>
+            <select className="form-select" value={activeFilter} onChange={(e) => setActiveFilter(e.target.value)}>
+              <option value="">الحالة — الكل</option>
+              <option value="true">نشط</option>
+              <option value="false">موقوف</option>
+            </select>
+            <div className="flex gap-2 items-center">
+              <button
+                type="button"
+                className="toolbar-btn primary text-sm"
+                onClick={() => setAppliedSearch(search.trim())}
+              >
+                تطبيق
+              </button>
+              <button
+                type="button"
+                className="toolbar-btn text-sm"
+                onClick={() => {
+                  setSearch('');
+                  setAppliedSearch('');
+                  setTypeFilter('');
+                  setBranchFilter('');
+                  setAgentFilter('');
+                  setCurrencyFilter('');
+                  setActiveFilter('');
+                }}
+              >
+                إعادة ضبط
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ───────── Add/Edit form ───────── */}
       {showForm && canManage && !isAgent && (
         <div className="card print:hidden">
           <div className="card-header">{editingId ? 'تعديل صندوق' : 'صندوق جديد'}</div>
@@ -485,117 +558,210 @@ export default function FinanceCashBoxes() {
         </div>
       )}
 
-      <div className="card text-sm text-gray-700 leading-relaxed border border-indigo-100 bg-indigo-50/60">
-        <strong className="text-indigo-900">ربط الصناديق بالصندوق العام:</strong>{' '}
-        عند إنشاء وكيل جديد يُنشأ له صندوق USD تلقائياً ويُربَط بالصندوق العام.
-        صندوق فرع إضافي مسموح فقط لفرع حلب الرئيسي. لعرض حركات الصندوق العام والفرعية استخدم «حركات» لكل صندوق.
-      </div>
+      {/* ───────── Cards grid ───────── */}
+      {loading ? (
+        <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>جاري التحميل...</div>
+      ) : filteredStatic.length === 0 ? (
+        <div style={{ padding: '48px', textAlign: 'center', color: '#6b7280' }}>{emptyMessage}</div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+          {filteredStatic.map((r) => {
+            const style = TYPE_STYLE[r.type] ?? TYPE_STYLE.COMPANY;
+            const balance = Number(r.current_balance);
+            const balanceColor = !r.is_active ? '#9ca3af' : balance >= 0 ? '#166534' : '#991b1b';
 
-      <div className="card overflow-auto">
-        {loading ? (
-          <div className="p-6 text-center text-gray-500">جاري التحميل...</div>
-        ) : filteredStatic.length === 0 ? (
-          <div className="p-8 text-center text-gray-600">{emptyMessage}</div>
-        ) : (
-          <table className="data-grid">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>كود الصندوق</th>
-                <th>اسم الصندوق</th>
-                <th>نوع الصندوق</th>
-                <th>التجميع (الأب)</th>
-                <th>الفرع</th>
-                <th>الوكيل</th>
-                <th>العملة</th>
-                <th>الرصيد الافتتاحي</th>
-                <th>رصيد نقدي</th>
-                <th>حركات نقدية</th>
-                <th>ذمة تشغيلية (USD)</th>
-                <th>شحنات</th>
-                <th>الحالة</th>
-                <th>آخر تحديث</th>
-                <th>إجراءات</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredStatic.map((r, idx) => (
-                <tr key={r.id}>
-                  <td>{idx + 1}</td>
-                  <td>{r.code}</td>
-                  <td>{r.name}</td>
-                  <td>{TYPE_LABEL[r.type] ?? r.type}</td>
-                  <td className="text-xs text-gray-700 max-w-[180px]">
-                    {r.parent_cashbox_name ? (
-                      <span title={r.parent_cashbox_code ?? ''}>{r.parent_cashbox_name}</span>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td>{r.branch_name ?? '—'}</td>
-                  <td>
-                    {r.agent_name ?? '—'}
-                    {r.agent_governorate ? (
-                      <span className="block text-xs text-gray-500">{r.agent_governorate}</span>
-                    ) : null}
-                  </td>
-                  <td>{r.currency_code}</td>
-                  <td className="text-left">{formatCurrency(Number(r.opening_balance), r.currency_code as CurrencyCode)}</td>
-                  <td className="text-left">{formatCurrency(Number(r.current_balance), r.currency_code as CurrencyCode)}</td>
-                  <td>{formatWesternNumber(Number(r.transaction_count ?? 0))}</td>
-                  <td className="text-left">
-                    {r.type === 'AGENT' && r.agent_operational_net_usd != null
-                      ? formatCurrency(Number(r.agent_operational_net_usd), 'USD')
-                      : '—'}
-                  </td>
-                  <td>
-                    {r.type === 'AGENT' && r.agent_shipment_count != null
-                      ? formatWesternNumber(Number(r.agent_shipment_count))
-                      : '—'}
-                  </td>
-                  <td>
-                    <span className={r.is_active ? 'status-badge bg-green-100 text-green-800' : 'status-badge bg-gray-100 text-gray-800'}>
-                      {r.is_active ? 'نشط' : 'موقوف'}
-                    </span>
-                  </td>
-                  <td>{r.updated_at?.split('T')[0] ?? '—'}</td>
-                  <td>
-                    <div className="flex flex-wrap gap-1">
-                      <button type="button" className="toolbar-btn text-xs py-1" onClick={() => navigate(`/finance/cashboxes/${r.id}/movements`)}>
-                        كشف
+            return (
+              <div
+                key={r.id}
+                style={{
+                  background: '#fff',
+                  borderRadius: '16px',
+                  border: '1px solid #e5e7eb',
+                  borderInlineStart: `5px solid ${r.is_active ? style.accent : '#d1d5db'}`,
+                  boxShadow: '0 1px 3px rgba(15,23,42,0.06)',
+                  padding: '18px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px',
+                  opacity: r.is_active ? 1 : 0.72,
+                  transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 8px 20px rgba(15,23,42,0.1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'none';
+                  e.currentTarget.style.boxShadow = '0 1px 3px rgba(15,23,42,0.06)';
+                }}
+              >
+                {/* top row */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      padding: '3px 10px',
+                      borderRadius: '999px',
+                      background: style.chipBg,
+                      color: style.chipText,
+                    }}
+                  >
+                    {TYPE_ICON[r.type] ?? '💵'} {TYPE_LABEL[r.type] ?? r.type}
+                  </span>
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      fontSize: '11.5px',
+                      fontWeight: 700,
+                      color: r.is_active ? '#166534' : '#6b7280',
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: '7px',
+                        height: '7px',
+                        borderRadius: '50%',
+                        background: r.is_active ? '#22c55e' : '#9ca3af',
+                        display: 'inline-block',
+                      }}
+                    />
+                    {r.is_active ? 'نشط' : 'موقوف'}
+                  </span>
+                </div>
+
+                {/* name + code */}
+                <div>
+                  <div style={{ fontSize: '16.5px', fontWeight: 800, color: '#111827' }}>{r.name}</div>
+                  <div style={{ fontSize: '11.5px', color: '#9ca3af', fontFamily: 'monospace', marginTop: '2px' }}>
+                    {r.code}
+                  </div>
+                </div>
+
+                {/* balance */}
+                <div
+                  style={{
+                    background: '#f9fafb',
+                    borderRadius: '10px',
+                    padding: '10px 14px',
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <span style={{ fontSize: '11.5px', color: '#6b7280', fontWeight: 600 }}>الرصيد الحالي</span>
+                  <span style={{ fontSize: '19px', fontWeight: 800, color: balanceColor }}>
+                    {formatCurrency(balance, r.currency_code as CurrencyCode)}
+                  </span>
+                </div>
+
+                {/* mini stats */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px' }}>
+                  <MiniStat label="افتتاحي" value={formatCurrency(Number(r.opening_balance), r.currency_code as CurrencyCode)} />
+                  <MiniStat label="حركات نقدية" value={formatWesternNumber(Number(r.transaction_count ?? 0))} />
+                  {r.type === 'AGENT' && r.agent_operational_net_usd != null && (
+                    <MiniStat label="ذمة تشغيلية" value={formatCurrency(Number(r.agent_operational_net_usd), 'USD')} />
+                  )}
+                  {r.type === 'AGENT' && r.agent_shipment_count != null && (
+                    <MiniStat label="شحنات" value={formatWesternNumber(Number(r.agent_shipment_count))} />
+                  )}
+                </div>
+
+                {/* relations */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', fontSize: '11.5px', color: '#4b5563' }}>
+                  {r.branch_name && <Tag>🏢 {r.branch_name}</Tag>}
+                  {r.agent_name && (
+                    <Tag>
+                      🧑‍💼 {r.agent_name}
+                      {r.agent_governorate ? ` — ${r.agent_governorate}` : ''}
+                    </Tag>
+                  )}
+                  {r.parent_cashbox_name && <Tag>⬆ {r.parent_cashbox_name}</Tag>}
+                </div>
+
+                <div style={{ fontSize: '11px', color: '#9ca3af' }}>آخر تحديث: {r.updated_at?.split('T')[0] ?? '—'}</div>
+
+                {/* actions */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: 'auto', paddingTop: '6px', borderTop: '1px solid #f1f5f9' }}>
+                  <button type="button" className="toolbar-btn text-xs py-1" onClick={() => navigate(`/finance/cashboxes/${r.id}/movements`)}>
+                    كشف
+                  </button>
+                  <button
+                    type="button"
+                    className="toolbar-btn text-xs py-1"
+                    onClick={() => navigate(`/finance/vouchers?cashboxId=${encodeURIComponent(r.id)}`)}
+                  >
+                    سند قبض
+                  </button>
+                  <button
+                    type="button"
+                    className="toolbar-btn text-xs py-1"
+                    onClick={() => navigate(`/finance/vouchers?cashboxId=${encodeURIComponent(r.id)}&kind=payment`)}
+                  >
+                    سند دفع
+                  </button>
+                  {canManage && !isAgent && (
+                    <>
+                      <button type="button" className="toolbar-btn text-xs py-1" onClick={() => openEdit(r)}>
+                        تعديل
                       </button>
-                      <button
-                        type="button"
-                        className="toolbar-btn text-xs py-1"
-                        onClick={() => navigate(`/finance/vouchers?cashboxId=${encodeURIComponent(r.id)}`)}
-                      >
-                        سند قبض
+                      <button type="button" className="toolbar-btn text-xs py-1" onClick={() => void toggleActive(r)}>
+                        {r.is_active ? 'تعطيل' : 'تفعيل'}
                       </button>
-                      <button
-                        type="button"
-                        className="toolbar-btn text-xs py-1"
-                        onClick={() => navigate(`/finance/vouchers?cashboxId=${encodeURIComponent(r.id)}&kind=payment`)}
-                      >
-                        سند دفع
-                      </button>
-                      {canManage && !isAgent && (
-                        <>
-                          <button type="button" className="toolbar-btn text-xs py-1" onClick={() => openEdit(r)}>
-                            تعديل
-                          </button>
-                          <button type="button" className="toolbar-btn text-xs py-1" onClick={() => void toggleActive(r)}>
-                            {r.is_active ? 'تعطيل' : 'تفعيل'}
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ background: '#f9fafb', borderRadius: '8px', padding: '6px 10px' }}>
+      <div style={{ color: '#9ca3af', fontSize: '10.5px', fontWeight: 600 }}>{label}</div>
+      <div style={{ color: '#1f2937', fontWeight: 700, marginTop: '2px' }}>{value}</div>
+    </div>
+  );
+}
+
+function Tag({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        background: '#f3f4f6',
+        borderRadius: '999px',
+        padding: '3px 9px',
+        display: 'inline-flex',
+        alignItems: 'center',
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function summaryCardStyle(accent: string): React.CSSProperties {
+  return {
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderInlineStart: `4px solid ${accent}`,
+    borderRadius: '12px',
+    padding: '12px 16px',
+  };
+}
+
+const summaryLabelStyle: React.CSSProperties = { fontSize: '11.5px', color: '#6b7280', fontWeight: 600, marginBottom: '4px' };
+
+function summaryValueStyle(color: string): React.CSSProperties {
+  return { fontSize: '18px', fontWeight: 800, color };
 }
