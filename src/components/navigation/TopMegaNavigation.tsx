@@ -24,7 +24,6 @@ interface NavModule {
 
 const NAV_MODULES: NavModule[] = [
   { id: 'home', label: 'الرئيسية', icon: '🏠', path: '/dashboard' },
-  { id: 'transfers', label: 'الحوالات', icon: '🔄', path: '/transfers', permission: 'transfers.read' },
   {
     id: 'shipping', label: 'الشحن', icon: '📦',
     children: [
@@ -32,18 +31,15 @@ const NAV_MODULES: NavModule[] = [
       { label: 'التوثيق', path: '/daily-ledger/documentation', icon: '📋', permissionsAny: ['daily_ledger.documentation.read', 'shipments.read'] },
       { label: 'قائمة الشحنات', path: '/shipments', icon: '📋', permission: 'shipments.read' },
       { label: 'تحميل الشحنات', path: '/manifest', icon: '🚚', permission: 'manifests.read' },
-      { label: 'المراكز', path: '/centers', icon: '◎', permission: 'deliveries.read' },
       { label: 'لصاقات الشحن', path: '/print-preview', icon: '🖨️', permission: 'shipping.label.read' },
     ],
   },
   { id: 'delivery', label: 'التسليم', icon: '📤', path: '/delivery', permission: 'deliveries.read' },
   { id: 'agents', label: 'الوكلاء', icon: '🤝', path: '/agents', permission: 'settings.agents.read' },
   { id: 'branches', label: 'الفروع', icon: '🏢', path: '/branches', permission: 'settings.branches.read' },
-  { id: 'customers', label: 'العملاء', icon: '👥', path: '/customers', permission: 'customers.view' },
   { id: 'agent-portal', label: 'بوابة الوكيل', icon: '📦', path: '/agent-portal', permission: 'agent_portal.view' },
   { id: 'permissions', label: 'مركز الصلاحيات', icon: '🛡️', path: '/permissions', permission: 'permissions.view' },
   { id: 'admin-events', label: 'الأحداث', icon: '📜', path: '/admin/events', permission: 'admin.events.read' },
-  { id: 'parties', label: 'الأطراف والعملاء', icon: '◇', path: '/senders-receivers', permission: 'parties.view' },
   {
     id: 'vehicles', label: 'المركبات والسائقون', icon: '🚛',
     children: [
@@ -52,7 +48,12 @@ const NAV_MODULES: NavModule[] = [
     ],
   },
   {
-    id: 'finance', label: 'المالية', icon: '💰',
+    // path set so clicking navigates straight to the new full-page Finance
+    // hub instead of opening the old dropdown (handleModuleClick checks
+    // mod.path first); children is kept only so the existing
+    // permission-based visibility check (a module with children is shown
+    // if the user can see at least one child) keeps working unchanged.
+    id: 'finance', label: 'المالية', icon: '💰', path: '/finance',
     children: [
       { label: 'كشف — مركز الكشوف', path: '/finance/statements', icon: '📑', permission: 'finance.read' },
       { label: 'مطابقة ثنائية', path: '/finance/bilateral-reconciliation', icon: '⚖️', permission: 'finance.read' },
@@ -120,6 +121,7 @@ const NAV_FINANCE_ACCOUNTANT: NavModule = {
   id: 'finance',
   label: 'الذمم والمالية',
   icon: '💰',
+  path: '/finance',
   children: [
     { label: 'كشف — مركز الكشوف', path: '/finance/statements', icon: '📑', permission: 'finance.read' },
     { label: 'مطابقة ثنائية', path: '/finance/bilateral-reconciliation', icon: '⚖️', permission: 'finance.read' },
@@ -139,24 +141,18 @@ const NAV_FINANCE_ACCOUNTANT: NavModule = {
   ],
 };
 
-/** محاسب: مالية + حوالات + وكلاء + مراكز الشحن (عرض) + تقارير + العملاء */
-const NAV_SHIPPING_ACCOUNTANT: NavModule = {
-  id: 'shipping-centers',
-  label: 'شحن المراكز',
-  icon: '◎',
-  children: [
-    { label: 'المراكز', path: '/centers', icon: '◎', permission: 'deliveries.read' },
-  ],
-};
-
 const NAV_ACCOUNTANT: NavModule[] = [
   { id: 'home', label: 'الرئيسية', icon: '🏠', path: '/dashboard' },
-  ...(NAV_MODULES.filter((m) => m.id === 'transfers')),
-  ...(NAV_MODULES.filter((m) => m.id === 'customers')),
+  // الحوالات والعملاء ومراكز المحافظات نُقلوا إلى بطاقات ضمن مركز "الذمم
+  // والمالية" بدل زر مستقل هنا
   ...(NAV_MODULES.filter((m) => m.id === 'agents')),
-  NAV_SHIPPING_ACCOUNTANT,
   NAV_FINANCE_ACCOUNTANT,
   ...(NAV_MODULES.filter((m) => m.id === 'reports')),
+  // المحاسب لديه الآن صلاحية ضيّقة (settings.users.manage_data_entry) لإنشاء
+  // حسابات "مدخل بيانات" فقط ضمن فرعه — هذا الزر يظهر له فقط لأن
+  // permission يُفلتر الوصول أصلاً؛ الصفحة نفسها تُخفي عنه كل شيء عدا تبويب
+  // المستخدمين.
+  ...(NAV_MODULES.filter((m) => m.id === 'permissions')),
 ];
 
 /** Mini-ERP navigation for logged-in agent users (scoped operational modules only). */
@@ -356,7 +352,7 @@ export default function TopMegaNavigation() {
             >
               <span style={{ fontSize: '14px' }}>{mod.icon}</span>
               <span>{mod.label}</span>
-              {mod.children && (
+              {mod.children && !mod.path && (
                 <span style={{
                   fontSize: '9px', opacity: 0.5,
                   transform: open ? 'rotate(180deg)' : 'none',
