@@ -61,7 +61,6 @@ const NAV_MODULES: NavModule[] = [
       { label: 'الصناديق', path: '/finance/cashboxes', icon: '💵', permission: 'finance.cashboxes.view' },
       { label: 'المصاريف', path: '/finance/expenses', icon: '💳', permission: 'finance.read' },
       { label: 'الرواتب والسلف', path: '/finance/salaries', icon: '👨‍💼', permission: 'finance.read' },
-      { label: 'تعريف الأسعار', path: '/finance/tariffs', icon: '💲', permission: 'finance.read' },
       { label: 'دفتر الأستاذ', path: '/finance/general-ledger', icon: '📒', permission: 'finance.read' },
       { label: 'دفتر اليومية', path: '/finance/daily-journal', icon: '📓', permission: 'finance.read' },
       { label: 'ميزان المراجعة', path: '/finance/trial-balance', icon: '⚖️', permission: 'finance.read' },
@@ -101,15 +100,6 @@ function buildNavDataEntry(): NavModule[] {
         ],
       };
     }
-    if (mod.id === 'shipping' && mod.children) {
-      return {
-        ...mod,
-        children: [
-          ...mod.children,
-          { label: 'تعريف الأسعار', path: '/finance/tariffs', icon: '💲', permission: 'finance.read' },
-        ],
-      };
-    }
     return mod;
   });
 }
@@ -132,8 +122,7 @@ const NAV_FINANCE_ACCOUNTANT: NavModule = {
     { label: 'التقارير المالية', path: '/finance/reports', icon: '📈', permission: 'finance.read' },
     { label: 'أرباح وخسائر', path: '/finance/reports/profit-loss', icon: '📊', permission: 'finance.read' },
     { label: 'الجرد الشهري', path: '/finance/monthly-inventory', icon: '🗓️', permission: 'finance.read' },
-    { label: 'تعريف الأسعار', path: '/finance/tariffs', icon: '💲', permission: 'finance.read', divider: true },
-    { label: 'السندات (قبض/دفع)', path: '/finance/vouchers', icon: '📜', permission: 'finance.vouchers.view' },
+    { label: 'السندات (قبض/دفع)', path: '/finance/vouchers', icon: '📜', permission: 'finance.vouchers.view', divider: true },
     { label: 'الصناديق', path: '/finance/cashboxes', icon: '💵', permission: 'finance.cashboxes.view' },
     { label: 'المصاريف', path: '/finance/expenses', icon: '💳', permission: 'finance.read' },
     { label: 'الرواتب والسلف', path: '/finance/salaries', icon: '👨‍💼', permission: 'finance.read' },

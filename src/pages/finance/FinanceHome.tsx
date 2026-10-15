@@ -38,7 +38,6 @@ const GROUPS: FinanceGroup[] = [
       { icon: '🤝', label: 'مطابقة ثنائية', path: '/finance/bilateral-reconciliation', permission: 'finance.read', built: true },
       { icon: '💸', label: 'المصاريف', path: '/finance/expenses', permission: 'finance.read', built: true },
       { icon: '🧑‍💼', label: 'الرواتب والسلف', path: '/finance/salaries', permission: 'finance.read', built: true },
-      { icon: '🏷️', label: 'تعريف الأسعار', path: '/finance/tariffs', permission: 'finance.read', built: true },
     ],
   },
   {
