@@ -94,6 +94,7 @@ import { createDailyLedgerRouter } from './routes/dailyLedgerRoutes.js';
 import { createGoodsPricingRouter } from './routes/goodsPricingRoutes.js';
 import { createGoodsShippingPricesRouter } from './routes/goodsShippingPricesRoutes.js';
 import { createDriverAdvancesRouter } from './routes/driverAdvancesRoutes.js';
+import { createShipmentDiscountRouter } from './routes/shipmentDiscountRoutes.js';
 import { GoodsPricingRepository } from './repositories/goodsPricingRepository.js';
 import { GoodsPricingService } from './services/goodsPricing/service.js';
 import { createSyncRouter } from './routes/syncRoutes.js';
@@ -284,6 +285,7 @@ app.use('/api/v1/senders-receivers', referenceRouters.sendersReceivers);
 // "/report" بالخطأ معتبراً "report" قيمة لـ :id.
 app.use('/api/v1/drivers', createDriverAdvancesRouter(financeRepository));
 app.use('/api/v1/drivers', referenceRouters.drivers);
+app.use('/api/v1/shipment-discounts', createShipmentDiscountRouter(financeRepository, shipmentRepository));
 app.use('/api/v1/vehicles', referenceRouters.vehicles);
 app.use('/api/v1/cities', referenceRouters.cities);
 app.use('/api/v1/goods-types', referenceRouters.goodsTypes);

@@ -2116,6 +2116,93 @@ export class FinanceRepository {
     }
   }
 
+  /** صافي المدين على الوكيل لهذه الشحنة بالدولار (موجب = مطلوب منه، بعد خصم أي حسومات سابقة). */
+  async getShipmentAgentNetUsd(shipmentId: string): Promise<number> {
+    const result = await pool.query(
+      `
+      select coalesce(sum(
+        case
+          when direction in ('inflow', 'debit') then base_amount_usd
+          when direction in ('outflow', 'credit') then -base_amount_usd
+          else 0
+        end
+      ), 0)::numeric as net_usd
+      from party_financial_movements
+      where shipment_id = $1 and party_type = 'agent'
+      `,
+      [shipmentId],
+    );
+    return Number(result.rows[0]?.net_usd ?? 0);
+  }
+
+  async insertShipmentDiscountMovement(
+    client: PoolClient,
+    input: {
+      shipmentId: string;
+      shipmentNo: string;
+      agentId: string;
+      branchId: string | null;
+      notes: string | null;
+      amountUsd: number;
+      createdByUserId: string | null;
+    },
+  ): Promise<string> {
+    const result = await client.query(
+      `
+      insert into party_financial_movements(
+        party_type, party_id, movement_type, voucher_type, voucher_id, shipment_id,
+        branch_id, agent_id, direction, notes, original_amount, original_currency,
+        exchange_rate_to_usd, base_amount_usd, created_by_user_id,
+        reference_type, reference_id, reference_no,
+        debit_amount, credit_amount, currency_code, exchange_rate, posted_at
+      ) values (
+        'agent', $1, 'shipment_discount', null, null, $2,
+        $3, $1, 'credit', $4, $5, 'USD',
+        1, $5, $6,
+        'SHIPMENT', $2, $7,
+        0, $5, 'USD', 1, now()
+      )
+      returning id
+      `,
+      [input.agentId, input.shipmentId, input.branchId, input.notes, input.amountUsd, input.createdByUserId, input.shipmentNo],
+    );
+    return result.rows[0].id as string;
+  }
+
+  async insertShipmentDiscountReversalMovement(
+    client: PoolClient,
+    input: {
+      shipmentId: string;
+      shipmentNo: string;
+      agentId: string;
+      branchId: string | null;
+      notes: string | null;
+      amountUsd: number;
+      createdByUserId: string | null;
+    },
+  ): Promise<string> {
+    const result = await client.query(
+      `
+      insert into party_financial_movements(
+        party_type, party_id, movement_type, voucher_type, voucher_id, shipment_id,
+        branch_id, agent_id, direction, notes, original_amount, original_currency,
+        exchange_rate_to_usd, base_amount_usd, created_by_user_id,
+        reference_type, reference_id, reference_no,
+        debit_amount, credit_amount, currency_code, exchange_rate, posted_at, is_reversal
+      ) values (
+        'agent', $1, 'shipment_discount', null, null, $2,
+        $3, $1, 'debit', $4, $5, 'USD',
+        1, $5, $6,
+        'SHIPMENT', $2, $7,
+        $5, 0, 'USD', 1, now(), true
+      )
+      returning id
+      `,
+      [input.agentId, input.shipmentId, input.branchId, input.notes, input.amountUsd, input.createdByUserId, input.shipmentNo],
+    );
+    return result.rows[0].id as string;
+  }
+
   async listPartyMovementsForShipment(shipmentId: string, scope?: DataScope) {
     const scoped = buildScopeWhere(scope, 2, 'pfm', true);
     const values: unknown[] = [shipmentId, ...scoped.values];

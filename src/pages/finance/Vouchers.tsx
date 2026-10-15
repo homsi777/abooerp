@@ -23,7 +23,7 @@ import { formatWesternDateTime, formatWesternNumber } from '../../lib/format/wes
 // /receipt-vouchers and /payment-vouchers endpoints are called directly via
 // httpClient instead of going through that mapper.
 
-type VoucherKind = 'receipt' | 'payment' | 'journal';
+type VoucherKind = 'receipt' | 'payment' | 'journal' | 'discount';
 type PartyType = 'agent' | 'customer' | 'sender_receiver';
 type VoucherStatus = 'draft' | 'confirmed' | 'cancelled';
 
@@ -131,6 +131,44 @@ interface PartyOption {
   name: string;
 }
 
+interface RawDiscountVoucher {
+  id: string;
+  voucher_no: string;
+  shipment_id: string;
+  shipment_no: string;
+  agent_id: string | null;
+  agent_name: string | null;
+  amount_usd: number | string;
+  notes: string | null;
+  reversed_at: string | null;
+  created_at: string;
+  created_by_username?: string | null;
+  created_by_full_name?: string | null;
+}
+
+function toDiscountVoucherRow(row: RawDiscountVoucher): VoucherRow {
+  return {
+    id: row.id,
+    voucherNo: row.voucher_no,
+    createdAt: row.created_at,
+    kind: 'discount',
+    partyType: 'agent',
+    partyName: row.agent_name || '—',
+    amount: Number(row.amount_usd),
+    currency: 'USD',
+    cashboxName: null,
+    status: row.reversed_at ? 'cancelled' : 'confirmed',
+    displayNo: '',
+    partyId: row.agent_id,
+    cashboxId: null,
+    exchangeRateToUsd: 1,
+    notes: `شحنة رقم ${row.shipment_no}${row.notes ? ' — ' + row.notes : ''}`,
+    baseAmountUsd: Number(row.amount_usd),
+    createdByUsername: row.created_by_username ?? null,
+    createdByFullName: row.created_by_full_name ?? null,
+  };
+}
+
 function resolvePartyType(row: RawVoucher): PartyType | null {
   if (row.agent_id) return 'agent';
   if (row.customer_id) return 'customer';
@@ -183,13 +221,14 @@ const STATUS_CHIP_COLORS: Record<VoucherStatus, { bg: string; text: string }> = 
   cancelled: { bg: '#fee2e2', text: '#b91c1c' },
 };
 
-type TabKey = 'all' | 'receipt' | 'payment' | 'journal';
+type TabKey = 'all' | 'receipt' | 'payment' | 'journal' | 'discount';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'all', label: 'الكل' },
   { key: 'receipt', label: 'قبض' },
   { key: 'payment', label: 'دفع' },
   { key: 'journal', label: 'قيد يدوي' },
+  { key: 'discount', label: 'حسم شحنة' },
 ];
 
 // Stroke-based inline icons (not emoji), matching the app's newer screens.
@@ -269,7 +308,7 @@ function StatusChip({ status }: { status: VoucherStatus }) {
   );
 }
 
-const KIND_LABEL: Record<VoucherKind, string> = { receipt: 'سند قبض', payment: 'سند دفع', journal: 'قيد يدوي' };
+const KIND_LABEL: Record<VoucherKind, string> = { receipt: 'سند قبض', payment: 'سند دفع', journal: 'قيد يدوي', discount: 'سند حسم شحنة' };
 
 // Uses the app's existing plain print CSS classes (.print-header/.print-title/
 // .print-table, defined in src/index.css) — the same ones used by the
@@ -302,6 +341,7 @@ export default function FinanceVouchers() {
   const [receipts, setReceipts] = useState<VoucherRow[]>([]);
   const [payments, setPayments] = useState<VoucherRow[]>([]);
   const [journalEntries, setJournalEntries] = useState<VoucherRow[]>([]);
+  const [discounts, setDiscounts] = useState<VoucherRow[]>([]);
   const [accounts, setAccounts] = useState<ChartOfAccount[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -315,6 +355,7 @@ export default function FinanceVouchers() {
 
   const [showCreate, setShowCreate] = useState(false);
   const [showCreateJournal, setShowCreateJournal] = useState(false);
+  const [showCreateDiscount, setShowCreateDiscount] = useState(false);
   const [createKind, setCreateKind] = useState<VoucherKind>('receipt');
   const [editingRow, setEditingRow] = useState<VoucherRow | null>(null);
   const [detailsRow, setDetailsRow] = useState<VoucherRow | null>(null);
@@ -323,14 +364,16 @@ export default function FinanceVouchers() {
   const load = async () => {
     setLoading(true);
     try {
-      const [receiptRows, paymentRows, journalRows] = await Promise.all([
+      const [receiptRows, paymentRows, journalRows, discountRows] = await Promise.all([
         httpClient.get<RawVoucher[]>('/receipt-vouchers'),
         httpClient.get<RawVoucher[]>('/payment-vouchers'),
         httpClient.get<RawJournalEntry[]>('/journal-entries').catch(() => []),
+        httpClient.get<RawDiscountVoucher[]>('/shipment-discounts').catch(() => []),
       ]);
       setReceipts(receiptRows.map((r) => toVoucherRow(r, 'receipt')));
       setPayments(paymentRows.map((r) => toVoucherRow(r, 'payment')));
       setJournalEntries(journalRows.map(toJournalVoucherRow));
+      setDiscounts(discountRows.map(toDiscountVoucherRow));
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'تعذر تحميل السندات', 'error');
     } finally {
@@ -348,16 +391,17 @@ export default function FinanceVouchers() {
     // Numbered by creation order (oldest = 000001), independent of the
     // table's own display sort — so a voucher's number never shifts once
     // assigned, even as new vouchers are added later.
-    const byCreationAsc = [...receipts, ...payments, ...journalEntries].sort((a, b) => (a.createdAt > b.createdAt ? 1 : -1));
+    const byCreationAsc = [...receipts, ...payments, ...journalEntries, ...discounts].sort((a, b) => (a.createdAt > b.createdAt ? 1 : -1));
     const numbered = byCreationAsc.map((row, idx) => ({ ...row, displayNo: String(idx + 1).padStart(6, '0') }));
     return numbered.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-  }, [receipts, payments, journalEntries]);
+  }, [receipts, payments, journalEntries, discounts]);
 
   const filteredRows = useMemo(() => {
     return allRows.filter((row) => {
       if (activeTab === 'receipt' && row.kind !== 'receipt') return false;
       if (activeTab === 'payment' && row.kind !== 'payment') return false;
       if (activeTab === 'journal' && row.kind !== 'journal') return false;
+      if (activeTab === 'discount' && row.kind !== 'discount') return false;
       if (filters.dateFrom && row.createdAt.split('T')[0] < filters.dateFrom) return false;
       if (filters.dateTo && row.createdAt.split('T')[0] > filters.dateTo) return false;
       if (filters.partyType && row.partyType !== filters.partyType) return false;
@@ -370,6 +414,10 @@ export default function FinanceVouchers() {
   const openCreate = () => {
     if (activeTab === 'journal') {
       setShowCreateJournal(true);
+      return;
+    }
+    if (activeTab === 'discount') {
+      setShowCreateDiscount(true);
       return;
     }
     setCreateKind(activeTab === 'payment' ? 'payment' : 'receipt');
@@ -392,6 +440,8 @@ export default function FinanceVouchers() {
     try {
       if (row.kind === 'journal') {
         await httpClient.post(`/journal-entries/${row.id}/reverse`, {});
+      } else if (row.kind === 'discount') {
+        await httpClient.post(`/shipment-discounts/${row.id}/reverse`, {});
       } else {
         await httpClient.put(row.kind === 'receipt' ? `/receipt-vouchers/${row.id}` : `/payment-vouchers/${row.id}`, {
           status: 'cancelled',
@@ -521,17 +571,18 @@ export default function FinanceVouchers() {
                       {row.kind === 'receipt' && <ReceiptIcon />}
                       {row.kind === 'payment' && <PaymentIcon />}
                       {row.kind === 'journal' && <JournalIcon />}
-                      {row.kind === 'receipt' ? 'قبض' : row.kind === 'payment' ? 'دفع' : 'قيد'}
+                      {row.kind === 'discount' && <PaymentIcon />}
+                      {row.kind === 'receipt' ? 'قبض' : row.kind === 'payment' ? 'دفع' : row.kind === 'discount' ? 'حسم' : 'قيد'}
                     </span>
                   </td>
-                  <td style={{ ...voucherTdStyle('left'), direction: 'ltr', fontWeight: 600, color: row.kind === 'payment' ? '#991b1b' : '#166534' }}>
+                  <td style={{ ...voucherTdStyle('left'), direction: 'ltr', fontWeight: 600, color: row.kind === 'payment' || row.kind === 'discount' ? '#991b1b' : '#166534' }}>
                     {row.amount.toLocaleString('en-US')} {row.currency}
                   </td>
                   <td style={voucherTdStyle('right')}>{row.cashboxName ?? '—'}</td>
                   <td style={voucherTdStyle('right')}><StatusChip status={row.status} /></td>
                   <td style={voucherTdStyle('right')} onClick={(e) => e.stopPropagation()}>
                     <div style={{ display: 'flex', gap: '4px' }}>
-                      {row.kind !== 'journal' && row.status !== 'cancelled' && (
+                      {row.kind !== 'journal' && row.kind !== 'discount' && row.status !== 'cancelled' && (
                         <IconButton title="تعديل" color="#1e40af" onClick={() => setEditingRow(row)}>
                           <EditGlyph />
                         </IconButton>
@@ -551,7 +602,11 @@ export default function FinanceVouchers() {
               {!loading && filteredRows.length === 0 && (
                 <tr>
                   <td colSpan={8} style={{ textAlign: 'center', padding: '28px', color: '#9ca3af' }}>
-                    {activeTab === 'journal' ? 'لا توجد قيود يدوية بعد — اضغطي "+ سند جديد" لإضافة أول قيد.' : 'لا توجد سندات مطابقة للفلاتر الحالية.'}
+                    {activeTab === 'journal'
+                      ? 'لا توجد قيود يدوية بعد — اضغطي "+ سند جديد" لإضافة أول قيد.'
+                      : activeTab === 'discount'
+                        ? 'لا توجد سندات حسم بعد — اضغطي "+ سند جديد" لتسجيل أول حسم على شحنة.'
+                        : 'لا توجد سندات مطابقة للفلاتر الحالية.'}
                   </td>
                 </tr>
               )}
@@ -596,6 +651,16 @@ export default function FinanceVouchers() {
           onClose={() => setShowCreateJournal(false)}
           onCreated={() => {
             setShowCreateJournal(false);
+            void load();
+          }}
+        />
+      )}
+
+      {showCreateDiscount && (
+        <CreateDiscountModal
+          onClose={() => setShowCreateDiscount(false)}
+          onCreated={() => {
+            setShowCreateDiscount(false);
             void load();
           }}
         />
@@ -1043,6 +1108,136 @@ function CreateJournalModal({
           <button type="button" className="toolbar-btn" onClick={onClose}>إلغاء</button>
           <button type="button" className="toolbar-btn primary" onClick={() => void save()} disabled={saving || !totals.balanced}>
             {saving ? 'جارٍ الحفظ...' : 'حفظ القيد'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Create shipment-discount voucher — عند استلام الشحنة قد يطلب المستلم حسماً
+// يوافق عليه الوكيل. يُدخَل رقم إيصال الشحنة فيُعرَض المطالَب به حالياً على
+// الوكيل لهذه الشحنة، ثم يُسجَّل مبلغ الحسم فيُنقَص من هذا المطالَب تلقائياً
+// (سطر دائن في party_financial_movements) — فلا يُطالَب الوكيل بالمبلغ
+// المحسوم لاحقاً، ويظهر الحسم في كشف العميل/الوكيل بجانب المبلغ الأصلي.
+// ─────────────────────────────────────────────────────────────────────────
+
+interface ShipmentLookupResult {
+  shipmentId: string;
+  shipmentNo: string;
+  agentId: string;
+  agentName: string | null;
+  amountOwedUsd: number;
+}
+
+function CreateDiscountModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const { showToast } = useToast();
+  const [shipmentNo, setShipmentNo] = useState('');
+  const [looking, setLooking] = useState(false);
+  const [lookupError, setLookupError] = useState('');
+  const [shipment, setShipment] = useState<ShipmentLookupResult | null>(null);
+  const [amount, setAmount] = useState('');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const lookup = async () => {
+    const no = shipmentNo.trim();
+    if (!no) return;
+    setLooking(true);
+    setLookupError('');
+    setShipment(null);
+    try {
+      const result = await httpClient.get<ShipmentLookupResult>(`/shipment-discounts/lookup?shipmentNo=${encodeURIComponent(no)}`);
+      setShipment(result);
+    } catch (e) {
+      setLookupError(e instanceof Error ? e.message : 'تعذر العثور على الشحنة');
+    } finally {
+      setLooking(false);
+    }
+  };
+
+  const save = async () => {
+    if (!shipment) return;
+    const amountNum = Number(amount);
+    if (!amount.trim() || Number.isNaN(amountNum) || amountNum <= 0) {
+      showToast('أدخلي مبلغ حسم صحيحاً أكبر من صفر', 'error');
+      return;
+    }
+    if (amountNum > shipment.amountOwedUsd + 0.0001) {
+      showToast(`مبلغ الحسم أكبر من المطالَب به حالياً (${shipment.amountOwedUsd}$)`, 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      await httpClient.post('/shipment-discounts', {
+        shipmentNo: shipment.shipmentNo,
+        amountUsd: amountNum,
+        notes: notes.trim() || undefined,
+      });
+      showToast('تم تسجيل الحسم', 'success');
+      onCreated();
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'تعذر حفظ الحسم', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, zIndex: 10100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.5)' }}
+      onClick={onClose}
+    >
+      <div className="card" style={{ width: 'min(460px, calc(100vw - 32px))', maxHeight: '85vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+        <h2 style={{ fontSize: '17px', fontWeight: 800, margin: '0 0 14px' }}>حسم على شحنة واصلة</h2>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div className="form-group">
+            <label className="form-label">رقم إيصال الشحنة</label>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <input
+                type="text"
+                className="form-input"
+                value={shipmentNo}
+                onChange={(e) => {
+                  setShipmentNo(e.target.value);
+                  setShipment(null);
+                  setLookupError('');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void lookup();
+                }}
+              />
+              <button type="button" className="toolbar-btn" onClick={() => void lookup()} disabled={looking || !shipmentNo.trim()}>
+                {looking ? '...' : 'بحث'}
+              </button>
+            </div>
+            {lookupError && <p style={{ color: '#dc2626', fontSize: '13px', margin: '6px 0 0' }}>{lookupError}</p>}
+          </div>
+
+          {shipment && (
+            <>
+              <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '10px 12px', fontSize: '13.5px' }}>
+                <div>الوكيل: <strong>{shipment.agentName ?? '—'}</strong></div>
+                <div>المطالَب به حالياً على هذه الشحنة: <strong style={{ color: '#b45309' }}>{shipment.amountOwedUsd}$</strong></div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">مبلغ الحسم ($)</label>
+                <input type="number" className="form-input" value={amount} onChange={(e) => setAmount(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">ملاحظات</label>
+                <textarea className="form-textarea" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
+              </div>
+            </>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
+          <button type="button" className="toolbar-btn" onClick={onClose}>إلغاء</button>
+          <button type="button" className="toolbar-btn primary" onClick={() => void save()} disabled={saving || !shipment}>
+            {saving ? 'جارٍ الحفظ...' : 'حفظ الحسم'}
           </button>
         </div>
       </div>

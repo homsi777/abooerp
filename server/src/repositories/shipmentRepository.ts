@@ -187,6 +187,23 @@ export class ShipmentRepository {
     return result.rows[0] ?? null;
   }
 
+  async getByShipmentNo(shipmentNo: string, scope?: DataScope) {
+    const conditions = ['s.shipment_no = $1', 's.deleted_at is null'];
+    const values: unknown[] = [shipmentNo];
+    this.applyScope(conditions, values, scope, 's');
+
+    const result = await pool.query(
+      `
+      select s.*, agents.name as agent_name
+      from shipments s
+      left join agents on agents.id = s.agent_id
+      where ${conditions.join(' and ')}
+      `,
+      values,
+    );
+    return result.rows[0] ?? null;
+  }
+
   async existsInCompany(id: string, companyId?: string): Promise<boolean> {
     const values: unknown[] = [id];
     const conditions = ['id = $1', 'deleted_at is null'];
