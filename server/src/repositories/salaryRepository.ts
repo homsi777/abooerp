@@ -179,7 +179,8 @@ export class SalaryRepository {
         payment_status, paid_at, notes, created_by
       ) values(
         $1, $2, $3, $4, $5,
-        $6, coalesce($7, 0), coalesce($8, 0), coalesce($14, coalesce($8, 0)), coalesce($15, 0), coalesce($9, 'USD'),
+        $6, coalesce($7::numeric, 0), coalesce($8::numeric, 0),
+        coalesce($14::numeric, coalesce($8::numeric, 0)), coalesce($15::numeric, 0), coalesce($9, 'USD'),
         coalesce($10, 'pending'), $11, $12, $13
       )
       returning *
@@ -629,9 +630,9 @@ export class SalaryRepository {
       const updated = await client.query(
         `
         update salary_records
-        set manual_deductions = $3,
-            advance_deductions = $4,
-            deductions = $3 + $4,
+        set manual_deductions = $3::numeric,
+            advance_deductions = $4::numeric,
+            deductions = $3::numeric + $4::numeric,
             paid_amount = $5,
             payment_status = 'paid',
             paid_at = now(),
