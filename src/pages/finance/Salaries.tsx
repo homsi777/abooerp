@@ -111,6 +111,8 @@ function startOfMonthIso(year: number, month: number): string {
   return `${year}-${String(month).padStart(2, '0')}-01`;
 }
 
+const MAIN_CASHBOX_NAME = 'صندوق رئيسي';
+
 /** كل أيام الخميس (أساس أجرة الأسبوعي) من أول الشهر الحالي حتى اليوم ضمناً. */
 function thursdaysThisMonthUpToToday(year: number, month: number): string[] {
   const now = new Date();
@@ -706,6 +708,15 @@ function SalaryPayPanel({
   const currencyMismatchFallback = sameCurrencyCashboxes.length === 0 && activeCashboxes.length > 0;
   const totalOpenAdvancesUsd = openAdvances.reduce((sum, a) => sum + Number(a.outstanding_usd_equivalent ?? 0), 0);
 
+  // صندوق افتراضي: "صندوق رئيسي" إن وُجد ضمن الصناديق المؤهَّلة، ليوفّر على
+  // المحاسب اختياره يدوياً كل مرة — تبقى بقية الصناديق متاحة للاختيار.
+  useEffect(() => {
+    if (cashboxId) return;
+    const main = eligibleCashboxes.find((c) => c.name?.trim() === MAIN_CASHBOX_NAME);
+    if (main) setCashboxId(main.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eligibleCashboxes.length, payInUsd]);
+
   const usdRateNum = Number(usdRate) || 0;
   const convertedUsdAmount = usdRateNum > 0 ? Number(((parseFloat(employee.basic_salary) || 0) / usdRateNum).toFixed(2)) : 0;
 
@@ -780,7 +791,7 @@ function SalaryPayPanel({
         {isForeignCurrency && (
           <div style={{ background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '8px', padding: '10px' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
-              <input type="checkbox" checked={payInUsd} onChange={(e) => setPayInUsd(e.target.checked)} />
+              <input type="checkbox" checked={payInUsd} onChange={(e) => { setPayInUsd(e.target.checked); setCashboxId(''); }} />
               تحويل الراتب إلى دولار والدفع من صندوق دولار
             </label>
             {payInUsd && (
@@ -912,6 +923,14 @@ function WeeklySalaryPayModal({
   const eligibleCashboxes = sameCurrencyCashboxes.length > 0 ? sameCurrencyCashboxes : activeCashboxes;
   const currencyMismatchFallback = sameCurrencyCashboxes.length === 0 && activeCashboxes.length > 0;
   const totalOpenAdvancesUsd = openAdvances.reduce((sum, a) => sum + Number(a.outstanding_usd_equivalent ?? 0), 0);
+
+  useEffect(() => {
+    if (cashboxId) return;
+    const main = eligibleCashboxes.find((c) => c.name?.trim() === MAIN_CASHBOX_NAME);
+    if (main) setCashboxId(main.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eligibleCashboxes.length, payInUsd]);
+
   const usdRateNum = Number(usdRate) || 0;
   const convertedUsdAmount = usdRateNum > 0 ? Number(((parseFloat(employee.basic_salary) || 0) / usdRateNum).toFixed(2)) : 0;
 
@@ -1007,7 +1026,7 @@ function WeeklySalaryPayModal({
         {isForeignCurrency && (
           <div style={{ background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '8px', padding: '10px' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
-              <input type="checkbox" checked={payInUsd} onChange={(e) => setPayInUsd(e.target.checked)} />
+              <input type="checkbox" checked={payInUsd} onChange={(e) => { setPayInUsd(e.target.checked); setCashboxId(''); }} />
               تحويل الراتب إلى دولار والدفع من صندوق دولار
             </label>
             {payInUsd && (
