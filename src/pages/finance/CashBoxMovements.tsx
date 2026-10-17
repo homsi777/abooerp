@@ -8,12 +8,21 @@ import { exportPdfTable } from '../../lib/export/pdfExport';
 
 type TransactionTypeFilter = '' | 'inflow' | 'outflow';
 
+// بدون فلتر افتراضي كانت الشاشة تعرض كامل تاريخ الصندوق منذ إنشائه، فتظهر
+// حركات قديمة جداً لا أهمية لها يومياً وسط الحركات الحديثة. لا نحذف أو
+// "نؤرشف" أي سند فعلياً (يبقى كاملاً في السجل المحاسبي ويظهر فوراً عند
+// توسيع الفلتر) — فقط نفتح الشاشة افتراضياً على الشهر الحالي.
+function startOfCurrentMonthIso(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+}
+
 export default function CashBoxMovements() {
   const { id } = useParams<{ id: string }>();
   const { showToast } = useToast();
   const [statement, setStatement] = useState<BackendCashboxStatement | null>(null);
   const [rows, setRows] = useState<BackendCashboxMovementRow[]>([]);
-  const [dateFrom, setDateFrom] = useState('');
+  const [dateFrom, setDateFrom] = useState(startOfCurrentMonthIso());
   const [dateTo, setDateTo] = useState('');
   const [transactionType, setTransactionType] = useState<TransactionTypeFilter>('');
   const [filtersOpen, setFiltersOpen] = useState(false);
