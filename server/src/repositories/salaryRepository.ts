@@ -10,6 +10,8 @@ export interface SalaryRecordInput {
   employeeId: string;
   periodYear: number;
   periodMonth: number;
+  /** تاريخ الدفعة الفعلي — أول الشهر للراتب الشهري، تاريخ الأسبوع للأسبوعي. */
+  payDate: string;
   basicAmount: number;
   bonuses?: number;
   deductions?: number;
@@ -29,6 +31,7 @@ export interface SalaryRecord {
   employee_id: string;
   period_year: number;
   period_month: number;
+  pay_date: string;
   basic_amount: string;
   bonuses: string;
   deductions: string;
@@ -174,11 +177,11 @@ export class SalaryRepository {
     const result = await pool.query<SalaryRecord>(
       `
       insert into salary_records(
-        company_id, branch_id, employee_id, period_year, period_month,
+        company_id, branch_id, employee_id, period_year, period_month, pay_date,
         basic_amount, bonuses, deductions, manual_deductions, advance_deductions, currency,
         payment_status, paid_at, notes, created_by
       ) values(
-        $1, $2, $3, $4, $5,
+        $1, $2, $3, $4, $5, $16,
         $6, coalesce($7::numeric, 0), coalesce($8::numeric, 0),
         coalesce($14::numeric, coalesce($8::numeric, 0)), coalesce($15::numeric, 0), coalesce($9, 'USD'),
         coalesce($10, 'pending'), $11, $12, $13
@@ -201,6 +204,7 @@ export class SalaryRepository {
         input.createdBy ?? null,
         input.manualDeductions ?? null,
         input.advanceDeductions ?? null,
+        input.payDate,
       ],
     );
     return result.rows[0];
@@ -217,14 +221,15 @@ export class SalaryRepository {
     employeeId: string,
     periodYear: number,
     periodMonth: number,
+    payDate: string,
   ): Promise<SalaryRecord | null> {
     const result = await pool.query<SalaryRecord>(
       `
       select * from salary_records
-      where company_id = $1 and employee_id = $2 and period_year = $3 and period_month = $4
+      where company_id = $1 and employee_id = $2 and period_year = $3 and period_month = $4 and pay_date = $5::date
       limit 1
       `,
-      [companyId, employeeId, periodYear, periodMonth],
+      [companyId, employeeId, periodYear, periodMonth, payDate],
     );
     return result.rows[0] ?? null;
   }

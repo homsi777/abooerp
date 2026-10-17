@@ -37,6 +37,7 @@ interface SalaryRecord {
   employee_code: string;
   period_year: number;
   period_month: number;
+  pay_date: string;
   basic_amount: string;
   bonuses: string;
   deductions: string;
@@ -100,6 +101,29 @@ function fmt(n: string | number | undefined | null): string {
 
 function today(): string {
   return new Date().toISOString().split('T')[0]!;
+}
+
+function toIsoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function startOfMonthIso(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, '0')}-01`;
+}
+
+/** كل أيام الخميس (أساس أجرة الأسبوعي) من أول الشهر الحالي حتى اليوم ضمناً. */
+function thursdaysThisMonthUpToToday(year: number, month: number): string[] {
+  const now = new Date();
+  const lastDay = year === now.getFullYear() && month === now.getMonth() + 1 ? now : new Date(year, month, 0);
+  const dates: string[] = [];
+  const cursor = new Date(year, month - 1, 1);
+  while (cursor.getMonth() === month - 1) {
+    if (cursor.getDay() === 4 && cursor <= lastDay) {
+      dates.push(toIsoDate(cursor));
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
 }
 
 type EmpForm = {
@@ -238,6 +262,7 @@ export default function FinanceSalaries() {
   const [savingEmp, setSavingEmp] = useState(false);
 
   const [payEmployee, setPayEmployee] = useState<Employee | null>(null);
+  const [weeklyPayEmployee, setWeeklyPayEmployee] = useState<Employee | null>(null);
   const [advanceEmployee, setAdvanceEmployee] = useState<Employee | null>(null);
   const [actionsFor, setActionsFor] = useState<string | null>(null);
 
@@ -268,15 +293,35 @@ export default function FinanceSalaries() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // allSalaries مرتّبة من الخادم تنازلياً حسب الفترة (الأحدث أولاً)، فأول عنصر
-  // مطابق لكل موظف هو سجله الأحدث/المدفوع الأحدث على التتابع.
-  const currentRecordFor = (employeeId: string): SalaryRecord | null =>
+  // سجل راتب موظف لتاريخ دفعة محدَّد هذا الشهر (ثابت = أول الشهر للراتب
+  // الشهري، أو تاريخ الأسبوع نفسه للراتب الأسبوعي — فقد يوجد أكثر من سجل
+  // واحد للموظف الأسبوعي ضمن الشهر نفسه، واحد لكل أسبوع).
+  const recordForPayDate = (employeeId: string, payDate: string): SalaryRecord | null =>
     allSalaries.find(
-      (s) => s.employee_id === employeeId && s.period_year === periodYear && s.period_month === periodMonth && s.payment_status !== 'cancelled',
+      (s) =>
+        s.employee_id === employeeId &&
+        s.period_year === periodYear &&
+        s.period_month === periodMonth &&
+        s.pay_date?.split('T')[0] === payDate &&
+        s.payment_status !== 'cancelled',
     ) ?? null;
 
-  const lastPaidRecordFor = (employeeId: string): SalaryRecord | null =>
-    allSalaries.find((s) => s.employee_id === employeeId && s.payment_status === 'paid') ?? null;
+  const weekDatesThisMonth = thursdaysThisMonthUpToToday(periodYear, periodMonth);
+
+  const currentRecordFor = (employee: Employee): SalaryRecord | null =>
+    employee.salary_type === 'weekly'
+      ? recordForPayDate(employee.id, weekDatesThisMonth[weekDatesThisMonth.length - 1] ?? startOfMonthIso(periodYear, periodMonth))
+      : recordForPayDate(employee.id, startOfMonthIso(periodYear, periodMonth));
+
+  /** عدد أسابيع الشهر (حتى اليوم) التي دُفعت فعلياً — للراتب الأسبوعي فقط. */
+  const weeksPaidCountFor = (employeeId: string): number =>
+    weekDatesThisMonth.filter((d) => recordForPayDate(employeeId, d)?.payment_status === 'paid').length;
+
+  const lastPaidRecordFor = (employeeId: string): SalaryRecord | null => {
+    const paid = allSalaries.filter((s) => s.employee_id === employeeId && s.payment_status === 'paid');
+    if (!paid.length) return null;
+    return paid.reduce((latest, s) => (s.pay_date > latest.pay_date ? s : latest), paid[0]!);
+  };
 
   const openCreateEmp = () => { setEmpForm(emptyEmp); setEmpModal('create'); };
   const openEditEmp = (e: Employee) => {
@@ -322,9 +367,8 @@ export default function FinanceSalaries() {
   };
 
   const printReceipt = async (employee: Employee) => {
-    const record = currentRecordFor(employee.id)?.payment_status === 'paid'
-      ? currentRecordFor(employee.id)
-      : lastPaidRecordFor(employee.id);
+    const current = currentRecordFor(employee);
+    const record = current?.payment_status === 'paid' ? current : lastPaidRecordFor(employee.id);
     if (!record) {
       showToast('لا يوجد راتب مدفوع لهذا الموظف بعد', 'error');
       return;
@@ -382,9 +426,13 @@ export default function FinanceSalaries() {
               </thead>
               <tbody>
                 {employees.map((e) => {
-                  const current = currentRecordFor(e.id);
+                  const isWeekly = e.salary_type === 'weekly';
+                  const current = currentRecordFor(e);
                   const paidThisMonth = current?.payment_status === 'paid';
                   const canPrint = paidThisMonth || !!lastPaidRecordFor(e.id);
+                  const weeksPaid = isWeekly ? weeksPaidCountFor(e.id) : 0;
+                  const weeksExpected = isWeekly ? weekDatesThisMonth.length : 0;
+                  const weeksBehind = isWeekly && weeksPaid < weeksExpected;
                   return (
                     <tr key={e.id} style={{ borderBottom: '1px solid #e5e7eb', opacity: e.is_active ? 1 : 0.55 }}>
                       <td style={tdStyle('right')}>
@@ -393,9 +441,22 @@ export default function FinanceSalaries() {
                           {e.code}{e.position ? ` · ${e.position}` : ''}{!e.is_active ? ' · غير نشط' : ''}
                         </div>
                       </td>
-                      <td style={tdStyle('right')}>{fmt(e.basic_salary)} {e.currency}</td>
                       <td style={tdStyle('right')}>
-                        {paidThisMonth ? (
+                        {fmt(e.basic_salary)} {e.currency}
+                        {isWeekly && <span style={{ fontSize: '11px', color: '#6b7280' }}> / أسبوع</span>}
+                      </td>
+                      <td style={tdStyle('right')}>
+                        {isWeekly ? (
+                          <span
+                            style={{
+                              background: weeksBehind ? '#fef3c7' : '#dcfce7',
+                              color: weeksBehind ? '#b45309' : '#15803d',
+                              padding: '3px 10px', borderRadius: '999px', fontSize: '11.5px', fontWeight: 700,
+                            }}
+                          >
+                            {weeksPaid}/{weeksExpected} أسابيع مدفوعة
+                          </span>
+                        ) : paidThisMonth ? (
                           <span className="chip" style={{ background: '#dcfce7', color: '#15803d', padding: '3px 10px', borderRadius: '999px', fontSize: '11.5px', fontWeight: 700 }}>
                             مدفوع {current?.paid_at?.split('T')[0]}
                           </span>
@@ -416,8 +477,8 @@ export default function FinanceSalaries() {
                               type="button"
                               className="toolbar-btn primary"
                               style={{ fontSize: '12px', padding: '5px 10px' }}
-                              disabled={paidThisMonth}
-                              onClick={() => setPayEmployee(e)}
+                              disabled={isWeekly ? !weeksBehind : paidThisMonth}
+                              onClick={() => (isWeekly ? setWeeklyPayEmployee(e) : setPayEmployee(e))}
                             >
                               تسليم راتب
                             </button>
@@ -542,12 +603,25 @@ export default function FinanceSalaries() {
       {payEmployee && (
         <SalaryPayPanel
           employee={payEmployee}
-          currentRecord={currentRecordFor(payEmployee.id)}
+          currentRecord={currentRecordFor(payEmployee)}
           cashboxes={cashboxes}
           periodYear={periodYear}
           periodMonth={periodMonth}
+          payDate={startOfMonthIso(periodYear, periodMonth)}
           onClose={() => setPayEmployee(null)}
           onPaid={() => { setPayEmployee(null); void load(); }}
+        />
+      )}
+
+      {weeklyPayEmployee && (
+        <WeeklySalaryPayModal
+          employee={weeklyPayEmployee}
+          weekDates={weekDatesThisMonth}
+          cashboxes={cashboxes}
+          periodYear={periodYear}
+          periodMonth={periodMonth}
+          onClose={() => setWeeklyPayEmployee(null)}
+          onChanged={() => void load()}
         />
       )}
 
@@ -581,13 +655,14 @@ const dropdownItemStyle: React.CSSProperties = {
 // سند دفع حقيقي من الصندوق المختار.
 
 function SalaryPayPanel({
-  employee, currentRecord, cashboxes, periodYear, periodMonth, onClose, onPaid,
+  employee, currentRecord, cashboxes, periodYear, periodMonth, payDate, onClose, onPaid,
 }: {
   employee: Employee;
   currentRecord: SalaryRecord | null;
   cashboxes: BackendCashboxRecord[];
   periodYear: number;
   periodMonth: number;
+  payDate: string;
   onClose: () => void;
   onPaid: () => void;
 }) {
@@ -661,6 +736,7 @@ function SalaryPayPanel({
           employeeId: employee.id,
           periodYear,
           periodMonth,
+          payDate,
           basicAmount: payBasicAmount,
           bonuses: 0,
           deductions: manualNum,
@@ -762,6 +838,244 @@ function SalaryPayPanel({
           <button type="button" className="toolbar-btn primary" onClick={() => void confirmPay()} disabled={saving || !cashboxId}>
             {saving ? 'جارٍ التسليم...' : 'تأكيد استلام'}
           </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── "تسليم راتب" للموظف الأسبوعي — عدة أسابيع ضمن الشهر نفسه ──────────────────
+// كل خميس من الشهر الحالي حتى اليوم له سطر مستقل: إن لم يُدفَع بعد يظهر زر
+// "تسليم" خاص به (نفس منطق SalaryPayPanel لكن لتاريخ محدَّد)، مع زر إجمالي
+// "دفع كل الأسابيع المتأخرة" يُسدِّد كل الأسابيع غير المدفوعة بالتتابع
+// (الأقدم أولاً) بنفس الصندوق والخصم — ليُستخدَم للتعويض عن أسابيع فائتة.
+
+function WeeklySalaryPayModal({
+  employee, weekDates, cashboxes, periodYear, periodMonth, onClose, onChanged,
+}: {
+  employee: Employee;
+  weekDates: string[];
+  cashboxes: BackendCashboxRecord[];
+  periodYear: number;
+  periodMonth: number;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const { showToast } = useToast();
+  const [records, setRecords] = useState<SalaryRecord[]>([]);
+  const [loadingRecords, setLoadingRecords] = useState(true);
+  const [openAdvances, setOpenAdvances] = useState<Advance[]>([]);
+  const [manualDeduction, setManualDeduction] = useState('0');
+  const [cashboxId, setCashboxId] = useState('');
+  const [payingDate, setPayingDate] = useState<string | null>(null);
+  const [bulkPaying, setBulkPaying] = useState(false);
+
+  const isForeignCurrency = employee.currency?.trim().toUpperCase() !== 'USD';
+  const [payInUsd, setPayInUsd] = useState(false);
+  const [usdRate, setUsdRate] = useState('');
+
+  const loadRecords = async () => {
+    setLoadingRecords(true);
+    try {
+      const rows = await httpClient.get<SalaryRecord[]>(
+        `/salary-records?employeeId=${employee.id}&year=${periodYear}&month=${periodMonth}`,
+      );
+      setRecords(rows);
+    } catch {
+      setRecords([]);
+    } finally {
+      setLoadingRecords(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadRecords();
+    httpClient
+      .get<Advance[]>(`/employee-advances?employeeId=${employee.id}`)
+      .then((rows) => setOpenAdvances(rows.filter((a) => a.status === 'pending' || a.status === 'partially_repaid')))
+      .catch(() => setOpenAdvances([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employee.id]);
+
+  useEffect(() => {
+    if (!isForeignCurrency) return;
+    httpClient
+      .get<{ rate: number }>(`/advance-usd-quote?amount=1&currency=${employee.currency}&date=${today()}`)
+      .then((q) => { if (q.rate > 0) setUsdRate(String(Number((1 / q.rate).toFixed(2)))); })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const activeCashboxes = cashboxes.filter((c) => c.is_active);
+  const targetCurrency = payInUsd ? 'USD' : employee.currency?.trim().toUpperCase();
+  const sameCurrencyCashboxes = activeCashboxes.filter((c) => c.currency_code?.trim().toUpperCase() === targetCurrency);
+  const eligibleCashboxes = sameCurrencyCashboxes.length > 0 ? sameCurrencyCashboxes : activeCashboxes;
+  const currencyMismatchFallback = sameCurrencyCashboxes.length === 0 && activeCashboxes.length > 0;
+  const totalOpenAdvancesUsd = openAdvances.reduce((sum, a) => sum + Number(a.outstanding_usd_equivalent ?? 0), 0);
+  const usdRateNum = Number(usdRate) || 0;
+  const convertedUsdAmount = usdRateNum > 0 ? Number(((parseFloat(employee.basic_salary) || 0) / usdRateNum).toFixed(2)) : 0;
+
+  const recordFor = (date: string) => records.find((r) => r.pay_date?.split('T')[0] === date && r.payment_status !== 'cancelled') ?? null;
+
+  const payWeek = async (date: string) => {
+    const existing = recordFor(date);
+    const payCurrency = payInUsd ? 'USD' : employee.currency;
+    const payBasicAmount = payInUsd ? convertedUsdAmount : (parseFloat(employee.basic_salary) || 0);
+    const manualNum = Number(manualDeduction) || 0;
+
+    let recordId = existing?.id;
+    if (recordId && (existing!.currency !== payCurrency || Math.abs(parseFloat(existing!.basic_amount) - payBasicAmount) > 0.004)) {
+      await httpClient.delete(`/salary-records/${recordId}`);
+      recordId = undefined;
+    }
+    if (!recordId) {
+      const created = await httpClient.post<SalaryRecord>('/salary-records', {
+        employeeId: employee.id,
+        periodYear,
+        periodMonth,
+        payDate: date,
+        basicAmount: payBasicAmount,
+        bonuses: 0,
+        deductions: manualNum,
+        currency: payCurrency,
+      });
+      recordId = created.id;
+    } else if (manualNum !== Number(existing?.manual_deductions ?? existing?.deductions ?? 0)) {
+      await httpClient.put(`/salary-records/${recordId}`, { deductions: manualNum });
+    }
+    await httpClient.post(`/salary-records/${recordId}/pay`, { cashboxId });
+  };
+
+  const handlePayWeek = async (date: string) => {
+    if (!cashboxId) { showToast('اختاري الصندوق أولاً', 'error'); return; }
+    if (payInUsd && usdRateNum <= 0) { showToast('أدخلي سعر صرف صحيحاً أكبر من صفر', 'error'); return; }
+    setPayingDate(date);
+    try {
+      await payWeek(date);
+      await loadRecords();
+      onChanged();
+      showToast(`تم تسليم راتب أسبوع ${date}`, 'success');
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'تعذر تسليم الراتب', 'error');
+    } finally {
+      setPayingDate(null);
+    }
+  };
+
+  const unpaidDates = weekDates.filter((d) => recordFor(d)?.payment_status !== 'paid');
+
+  const handlePayAllOverdue = async () => {
+    if (!cashboxId) { showToast('اختاري الصندوق أولاً', 'error'); return; }
+    if (payInUsd && usdRateNum <= 0) { showToast('أدخلي سعر صرف صحيحاً أكبر من صفر', 'error'); return; }
+    setBulkPaying(true);
+    try {
+      for (const date of unpaidDates) {
+        await payWeek(date);
+      }
+      await loadRecords();
+      onChanged();
+      showToast(`تم تسليم ${unpaidDates.length} أسبوع متأخر`, 'success');
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'تعذر تسليم كل الأسابيع — راجعي حالة كل أسبوع', 'error');
+      await loadRecords();
+    } finally {
+      setBulkPaying(false);
+    }
+  };
+
+  return (
+    <Modal title={`تسليم راتب أسبوعي — ${employee.name}`} onClose={onClose}>
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '10px' }}>
+            <div style={{ fontSize: '11.5px', color: '#6b7280', fontWeight: 600 }}>أجرة الأسبوع</div>
+            <div style={{ fontSize: '16px', fontWeight: 800 }}>
+              {fmt(employee.basic_salary)} {employee.currency}
+              {payInUsd && usdRateNum > 0 && (
+                <span style={{ fontSize: '12px', color: '#4f46e5', fontWeight: 700 }}> = {fmt(convertedUsdAmount)}$</span>
+              )}
+            </div>
+          </div>
+          <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '10px' }}>
+            <div style={{ fontSize: '11.5px', color: '#6b7280', fontWeight: 600 }}>السلف المفتوحة (بالدولار)</div>
+            <div style={{ fontSize: '16px', fontWeight: 800, color: totalOpenAdvancesUsd > 0 ? '#b45309' : '#166534' }}>
+              {fmt(totalOpenAdvancesUsd)}$
+            </div>
+          </div>
+        </div>
+
+        {isForeignCurrency && (
+          <div style={{ background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '8px', padding: '10px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
+              <input type="checkbox" checked={payInUsd} onChange={(e) => setPayInUsd(e.target.checked)} />
+              تحويل الراتب إلى دولار والدفع من صندوق دولار
+            </label>
+            {payInUsd && (
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', marginTop: '8px' }}>
+                <div style={{ flex: 1 }}>
+                  <label className="form-label">✏️ سعر الصرف (1$ = ؟ {employee.currency})</label>
+                  <input type="number" min="0.01" step="0.01" className="form-input w-full" value={usdRate} onChange={(e) => setUsdRate(e.target.value)} />
+                </div>
+                <div style={{ fontSize: '13px', fontWeight: 700, paddingBottom: '8px' }}>= {fmt(convertedUsdAmount)}$</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="form-group">
+          <label className="form-label">خصم مخالفات / أخرى لكل أسبوع يُسلَّم الآن (اختياري)</label>
+          <input type="number" min="0" step="0.01" className="form-input w-full" value={manualDeduction} onChange={(e) => setManualDeduction(e.target.value)} />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">الصندوق</label>
+          <select className="form-input w-full" value={cashboxId} onChange={(e) => setCashboxId(e.target.value)}>
+            <option value="">اختر...</option>
+            {eligibleCashboxes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          {currencyMismatchFallback && (
+            <p style={{ color: '#b45309', fontSize: '12.5px', marginTop: '4px' }}>
+              ⚠ لا يوجد صندوق بعملة {targetCurrency} تحديداً — تأكدي من اختيار صندوق بهذه العملة فعلاً.
+            </p>
+          )}
+        </div>
+
+        <h4 style={{ fontSize: '14px', fontWeight: 800, margin: '4px 0' }}>أسابيع {MONTHS_AR[periodMonth - 1]}</h4>
+        {loadingRecords ? (
+          <p style={{ color: '#6b7280', fontSize: '13px' }}>جاري التحميل...</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {weekDates.map((date) => {
+              const rec = recordFor(date);
+              const paid = rec?.payment_status === 'paid';
+              return (
+                <div key={date} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f9fafb', borderRadius: '8px', padding: '8px 12px' }}>
+                  <div style={{ fontSize: '13.5px', fontWeight: 600 }}>
+                    أسبوع {date}
+                    {paid && <span style={{ color: '#15803d', fontWeight: 700 }}> — مدفوع</span>}
+                  </div>
+                  <button
+                    type="button"
+                    className={`toolbar-btn ${paid ? '' : 'primary'}`}
+                    style={{ fontSize: '12px', padding: '5px 10px' }}
+                    disabled={paid || payingDate === date || bulkPaying || !cashboxId}
+                    onClick={() => void handlePayWeek(date)}
+                  >
+                    {payingDate === date ? 'جارٍ...' : paid ? 'مدفوع' : 'تسليم'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="flex gap-2 justify-end pt-2">
+          <button type="button" className="toolbar-btn" onClick={onClose}>إغلاق</button>
+          {unpaidDates.length > 1 && (
+            <button type="button" className="toolbar-btn primary" onClick={() => void handlePayAllOverdue()} disabled={bulkPaying || !cashboxId}>
+              {bulkPaying ? 'جارٍ تسليم الكل...' : `تسليم كل الأسابيع المتأخرة (${unpaidDates.length})`}
+            </button>
+          )}
         </div>
       </div>
     </Modal>

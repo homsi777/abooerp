@@ -26,6 +26,8 @@ const salaryCreateSchema = z.object({
   employeeId: z.string().uuid(),
   periodYear: z.number().int().min(2000).max(2100),
   periodMonth: z.number().int().min(1).max(12),
+  /** تاريخ الدفعة الفعلي — أول الشهر للراتب الشهري، تاريخ الأسبوع للأسبوعي. */
+  payDate: z.string(),
   basicAmount: z.number().min(0),
   bonuses: z.number().min(0).optional(),
   deductions: z.number().min(0).optional(),
@@ -224,6 +226,7 @@ export function createSalaryRouter(
           employeeId: body.employeeId,
           periodYear: body.periodYear,
           periodMonth: body.periodMonth,
+          payDate: body.payDate,
           basicAmount: body.basicAmount,
           bonuses: body.bonuses ?? 0,
           deductions,
@@ -239,7 +242,7 @@ export function createSalaryRouter(
           // القيد الفريد لا يتجاهل الصفوف المحذوفة ناعماً/الملغاة — فقد يوجد
           // صف مخفي لهذا الموظف/الفترة من محاولة قديمة. نُحييه بالقيم
           // الجديدة بدل الفشل، فلا تُحجَب عملية تسليم الراتب بسبب أثر قديم.
-          const existing = await repository.findAnyForPeriod(companyId, body.employeeId, body.periodYear, body.periodMonth);
+          const existing = await repository.findAnyForPeriod(companyId, body.employeeId, body.periodYear, body.periodMonth, body.payDate);
           if (existing && (existing.deleted_at || existing.payment_status === 'cancelled')) {
             data = await repository.reviveSalaryForPeriod(existing.id, companyId, {
               basicAmount: body.basicAmount,
@@ -251,7 +254,7 @@ export function createSalaryRouter(
               createdBy: userId(req),
             });
           } else {
-            throw new HttpError(409, `راتب الموظف لشهر ${body.periodMonth}/${body.periodYear} مسجّل مسبقاً.`);
+            throw new HttpError(409, `راتب الموظف لهذا التاريخ (${body.payDate}) مسجّل مسبقاً.`);
           }
         } else {
           throw err;
