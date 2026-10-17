@@ -1718,12 +1718,12 @@ export class FinanceRepository {
       insert into cashbox_transactions(
         transaction_type, source_voucher_type, source_voucher_id, branch_id, agent_id, shipment_id, delivery_id,
         notes, original_amount, original_currency, exchange_rate_to_usd, base_amount_usd, created_by_user_id,
-        company_id, cashbox_id
+        company_id, cashbox_id, created_at
       ) values(
         'outflow', 'payment', $1, $2, $3, $4, $5,
         $6, $7, $8, $9, $10, $11,
         coalesce($12, (select id from companies where is_active = true order by created_at limit 1)),
-        $13
+        $13, coalesce($14::timestamptz, now())
       )
       on conflict do nothing
       `,
@@ -1741,6 +1741,7 @@ export class FinanceRepository {
         voucher.created_by_user_id,
         voucher.company_id ?? null,
         voucher.cashbox_id ?? null,
+        voucher.created_at ?? null,
       ],
     );
 
@@ -2356,13 +2357,13 @@ export class FinanceRepository {
       insert into payment_vouchers(
         voucher_no, branch_id, agent_id, shipment_id, delivery_id, customer_id, sender_receiver_id,
         related_entity_type, related_entity_id, status, notes, original_amount, original_currency,
-        exchange_rate_to_usd, base_amount_usd, created_by_user_id, company_id, cashbox_id
+        exchange_rate_to_usd, base_amount_usd, created_by_user_id, company_id, cashbox_id, created_at
       ) values(
         $1,$2,$3,$4,$5,$6,$7,
         $8,$9,$10,$11,$12,$13,
         $14,$15,$16,
         coalesce($17, (select id from companies where is_active = true order by created_at limit 1)),
-        $18
+        $18, coalesce($19::timestamptz, now())
       )
       returning *
       `,
@@ -2385,6 +2386,7 @@ export class FinanceRepository {
         input.createdByUserId ?? null,
         input.companyId ?? null,
         input.cashboxId ?? null,
+        input.createdAt ?? null,
       ],
     );
     const voucher = created.rows[0];
