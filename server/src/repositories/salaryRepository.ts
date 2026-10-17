@@ -206,6 +206,79 @@ export class SalaryRepository {
     return result.rows[0];
   }
 
+  /**
+   * القيد الفريد (employee_id, period_year, period_month) لا يتجاهل الصفوف
+   * المحذوفة ناعماً أو الملغاة — فيبقى موجوداً ويمنع أي إدخال جديد لنفس
+   * الموظف/الفترة حتى لو كان غير مرئي في أي شاشة. تُستعمل هذه الدالة عند
+   * تعارض الإدخال (23505) لإيجاد ذلك الصف المخفي وإحيائه بدل الفشل.
+   */
+  async findAnyForPeriod(
+    companyId: string,
+    employeeId: string,
+    periodYear: number,
+    periodMonth: number,
+  ): Promise<SalaryRecord | null> {
+    const result = await pool.query<SalaryRecord>(
+      `
+      select * from salary_records
+      where company_id = $1 and employee_id = $2 and period_year = $3 and period_month = $4
+      limit 1
+      `,
+      [companyId, employeeId, periodYear, periodMonth],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** يُحيي صفاً محذوفاً ناعماً أو ملغًى لنفس الفترة بالقيم الجديدة بدل إدخال صف مكرر. */
+  async reviveSalaryForPeriod(
+    id: string,
+    companyId: string,
+    input: {
+      basicAmount: number;
+      bonuses: number;
+      deductions: number;
+      manualDeductions: number;
+      advanceDeductions: number;
+      currency: string;
+      createdBy?: string;
+    },
+  ): Promise<SalaryRecord> {
+    const result = await pool.query<SalaryRecord>(
+      `
+      update salary_records
+      set
+        deleted_at = null,
+        payment_status = 'pending',
+        paid_at = null,
+        paid_amount = 0,
+        salary_payment_voucher_id = null,
+        salary_cashbox_id = null,
+        basic_amount = $3::numeric,
+        bonuses = $4::numeric,
+        deductions = $5::numeric,
+        manual_deductions = $6::numeric,
+        advance_deductions = $7::numeric,
+        currency = $8,
+        created_by = coalesce($9, created_by),
+        updated_at = now()
+      where id = $1 and company_id = $2
+      returning *
+      `,
+      [
+        id,
+        companyId,
+        input.basicAmount,
+        input.bonuses,
+        input.deductions,
+        input.manualDeductions,
+        input.advanceDeductions,
+        input.currency,
+        input.createdBy ?? null,
+      ],
+    );
+    return result.rows[0];
+  }
+
   async updateSalary(
     id: string,
     companyId: string,

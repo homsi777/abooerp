@@ -236,9 +236,26 @@ export function createSalaryRouter(
         });
       } catch (err: any) {
         if (err?.code === '23505') {
-          throw new HttpError(409, `راتب الموظف لشهر ${body.periodMonth}/${body.periodYear} مسجّل مسبقاً.`);
+          // القيد الفريد لا يتجاهل الصفوف المحذوفة ناعماً/الملغاة — فقد يوجد
+          // صف مخفي لهذا الموظف/الفترة من محاولة قديمة. نُحييه بالقيم
+          // الجديدة بدل الفشل، فلا تُحجَب عملية تسليم الراتب بسبب أثر قديم.
+          const existing = await repository.findAnyForPeriod(companyId, body.employeeId, body.periodYear, body.periodMonth);
+          if (existing && (existing.deleted_at || existing.payment_status === 'cancelled')) {
+            data = await repository.reviveSalaryForPeriod(existing.id, companyId, {
+              basicAmount: body.basicAmount,
+              bonuses: body.bonuses ?? 0,
+              deductions,
+              manualDeductions,
+              advanceDeductions,
+              currency: body.currency ?? 'USD',
+              createdBy: userId(req),
+            });
+          } else {
+            throw new HttpError(409, `راتب الموظف لشهر ${body.periodMonth}/${body.periodYear} مسجّل مسبقاً.`);
+          }
+        } else {
+          throw err;
         }
-        throw err;
       }
       auditService.logAsync({ req, action: 'SALARY_CREATED', entityType: 'salary_record', entityId: data.id, metadata: { employeeId: data.employee_id, period: `${data.period_year}-${data.period_month}` } });
       res.status(201).json({ success: true, data });
