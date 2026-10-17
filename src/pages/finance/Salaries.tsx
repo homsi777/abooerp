@@ -126,13 +126,25 @@ const emptyEmp: EmpForm = {
 function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
   useRegisterEscape(onClose);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className={`bg-white rounded-lg shadow-xl w-full ${wide ? 'max-w-4xl' : 'max-w-lg'} max-h-[90vh] flex flex-col`}>
-        <div className="flex items-center justify-between p-4 border-b">
-          <h3 className="font-bold text-lg">{title}</h3>
-          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 10100, display: 'flex', alignItems: 'center',
+        justifyContent: 'center', background: 'rgba(15,23,42,0.5)', padding: '16px',
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: '#fff', borderRadius: '10px', boxShadow: '0 20px 50px rgba(15,23,42,0.25)',
+          width: '100%', maxWidth: wide ? '880px' : '520px', maxHeight: '90vh', display: 'flex', flexDirection: 'column',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid #e5e7eb' }}>
+          <h3 style={{ margin: 0, fontWeight: 800, fontSize: '16px' }}>{title}</h3>
+          <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '20px', color: '#9ca3af', cursor: 'pointer', lineHeight: 1 }}>✕</button>
         </div>
-        <div className="overflow-y-auto flex-1 p-4">{children}</div>
+        <div style={{ overflowY: 'auto', flex: 1, padding: '18px 20px' }}>{children}</div>
       </div>
     </div>
   );
@@ -594,7 +606,15 @@ function SalaryPayPanel({
       .finally(() => setLoadingAdvances(false));
   }, [employee.id]);
 
-  const eligibleCashboxes = cashboxes.filter((c) => c.is_active && c.currency_code === employee.currency);
+  const activeCashboxes = cashboxes.filter((c) => c.is_active);
+  const sameCurrencyCashboxes = activeCashboxes.filter(
+    (c) => c.currency_code?.trim().toUpperCase() === employee.currency?.trim().toUpperCase(),
+  );
+  // لو لم يوجد صندوق بنفس عملة الموظف (حالة إعداد غير مكتملة)، نعرض كل
+  // الصناديق النشطة بدل تفريغ القائمة بالكامل — الخادم يرفض أي عدم تطابق
+  // عملة فعلي عند الدفع، فلا خطر محاسبي من عرضها جميعاً هنا.
+  const eligibleCashboxes = sameCurrencyCashboxes.length > 0 ? sameCurrencyCashboxes : activeCashboxes;
+  const currencyMismatchFallback = sameCurrencyCashboxes.length === 0 && activeCashboxes.length > 0;
   const totalOpenAdvancesUsd = openAdvances.reduce((sum, a) => sum + Number(a.outstanding_usd_equivalent ?? 0), 0);
 
   const confirmPay = async () => {
@@ -670,7 +690,12 @@ function SalaryPayPanel({
             {eligibleCashboxes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
           {eligibleCashboxes.length === 0 && (
-            <p style={{ color: '#dc2626', fontSize: '12.5px', marginTop: '4px' }}>لا يوجد صندوق نشط بعملة {employee.currency}.</p>
+            <p style={{ color: '#dc2626', fontSize: '12.5px', marginTop: '4px' }}>لا يوجد أي صندوق نشط في النظام حالياً.</p>
+          )}
+          {currencyMismatchFallback && (
+            <p style={{ color: '#b45309', fontSize: '12.5px', marginTop: '4px' }}>
+              ⚠ لا يوجد صندوق بعملة {employee.currency} تحديداً — القائمة تعرض كل الصناديق النشطة، تأكدي من اختيار صندوق بنفس عملة الراتب.
+            </p>
           )}
         </div>
 
