@@ -598,6 +598,10 @@ function SalaryPayPanel({
   const [cashboxId, setCashboxId] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const isForeignCurrency = employee.currency?.trim().toUpperCase() !== 'USD';
+  const [payInUsd, setPayInUsd] = useState(false);
+  const [usdRate, setUsdRate] = useState(''); // كم من عملة الموظف (مثلاً ل.س) يساوي 1 دولار
+
   useEffect(() => {
     httpClient
       .get<Advance[]>(`/employee-advances?employeeId=${employee.id}`)
@@ -606,35 +610,61 @@ function SalaryPayPanel({
       .finally(() => setLoadingAdvances(false));
   }, [employee.id]);
 
+  // تعبئة سعر صرف مبدئي من سعر اليوم المسجَّل في النظام — قابل للتعديل يدوياً
+  // عبر الحقل مباشرة (المحاسبة قد تعتمد سعراً تقريبياً مختلفاً عن الرسمي).
+  useEffect(() => {
+    if (!isForeignCurrency) return;
+    httpClient
+      .get<{ rate: number }>(`/advance-usd-quote?amount=1&currency=${employee.currency}&date=${today()}`)
+      .then((q) => { if (q.rate > 0) setUsdRate(String(Number((1 / q.rate).toFixed(2)))); })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const activeCashboxes = cashboxes.filter((c) => c.is_active);
-  const sameCurrencyCashboxes = activeCashboxes.filter(
-    (c) => c.currency_code?.trim().toUpperCase() === employee.currency?.trim().toUpperCase(),
-  );
-  // لو لم يوجد صندوق بنفس عملة الموظف (حالة إعداد غير مكتملة)، نعرض كل
+  const targetCurrency = payInUsd ? 'USD' : employee.currency?.trim().toUpperCase();
+  const sameCurrencyCashboxes = activeCashboxes.filter((c) => c.currency_code?.trim().toUpperCase() === targetCurrency);
+  // لو لم يوجد صندوق بنفس العملة المستهدَفة (حالة إعداد غير مكتملة)، نعرض كل
   // الصناديق النشطة بدل تفريغ القائمة بالكامل — الخادم يرفض أي عدم تطابق
   // عملة فعلي عند الدفع، فلا خطر محاسبي من عرضها جميعاً هنا.
   const eligibleCashboxes = sameCurrencyCashboxes.length > 0 ? sameCurrencyCashboxes : activeCashboxes;
   const currencyMismatchFallback = sameCurrencyCashboxes.length === 0 && activeCashboxes.length > 0;
   const totalOpenAdvancesUsd = openAdvances.reduce((sum, a) => sum + Number(a.outstanding_usd_equivalent ?? 0), 0);
 
+  const usdRateNum = Number(usdRate) || 0;
+  const convertedUsdAmount = usdRateNum > 0 ? Number(((parseFloat(employee.basic_salary) || 0) / usdRateNum).toFixed(2)) : 0;
+
   const confirmPay = async () => {
     if (!cashboxId) {
       showToast('اختاري الصندوق أولاً', 'error');
       return;
     }
+    if (payInUsd && usdRateNum <= 0) {
+      showToast('أدخلي سعر صرف صحيحاً أكبر من صفر', 'error');
+      return;
+    }
     setSaving(true);
     try {
-      let recordId = currentRecord?.id;
+      const payCurrency = payInUsd ? 'USD' : employee.currency;
+      const payBasicAmount = payInUsd ? convertedUsdAmount : (parseFloat(employee.basic_salary) || 0);
       const manualNum = Number(manualDeduction) || 0;
+
+      let recordId = currentRecord?.id;
+      // سجل سابق من محاولة فاشلة (عملة أو مبلغ مختلف عن المطلوب الآن) — يُحذَف
+      // ويُعاد إنشاؤه بالقيم الصحيحة؛ لم يُدفع فعلياً فلا خطر محاسبي من ذلك.
+      if (recordId && (currentRecord!.currency !== payCurrency || Math.abs(parseFloat(currentRecord!.basic_amount) - payBasicAmount) > 0.004)) {
+        await httpClient.delete(`/salary-records/${recordId}`);
+        recordId = undefined;
+      }
       if (!recordId) {
         const created = await httpClient.post<SalaryRecord>('/salary-records', {
           employeeId: employee.id,
           periodYear,
           periodMonth,
-          basicAmount: parseFloat(employee.basic_salary) || 0,
+          basicAmount: payBasicAmount,
           bonuses: 0,
           deductions: manualNum,
-          currency: employee.currency,
+          currency: payCurrency,
         });
         recordId = created.id;
       } else if (manualNum !== Number(currentRecord?.manual_deductions ?? currentRecord?.deductions ?? 0)) {
@@ -656,7 +686,12 @@ function SalaryPayPanel({
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '10px' }}>
             <div style={{ fontSize: '11.5px', color: '#6b7280', fontWeight: 600 }}>الراتب الأساسي</div>
-            <div style={{ fontSize: '16px', fontWeight: 800 }}>{fmt(employee.basic_salary)} {employee.currency}</div>
+            <div style={{ fontSize: '16px', fontWeight: 800 }}>
+              {fmt(employee.basic_salary)} {employee.currency}
+              {payInUsd && usdRateNum > 0 && (
+                <span style={{ fontSize: '12px', color: '#4f46e5', fontWeight: 700 }}> = {fmt(convertedUsdAmount)}$</span>
+              )}
+            </div>
           </div>
           <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '10px' }}>
             <div style={{ fontSize: '11.5px', color: '#6b7280', fontWeight: 600 }}>السلف المفتوحة (ما يعادله بالدولار)</div>
@@ -665,6 +700,29 @@ function SalaryPayPanel({
             </div>
           </div>
         </div>
+
+        {isForeignCurrency && (
+          <div style={{ background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '8px', padding: '10px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
+              <input type="checkbox" checked={payInUsd} onChange={(e) => setPayInUsd(e.target.checked)} />
+              تحويل الراتب إلى دولار والدفع من صندوق دولار
+            </label>
+            {payInUsd && (
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', marginTop: '8px' }}>
+                <div style={{ flex: 1 }}>
+                  <label className="form-label">✏️ سعر الصرف (1$ = ؟ {employee.currency})</label>
+                  <input
+                    type="number" min="0.01" step="0.01" className="form-input w-full"
+                    value={usdRate} onChange={(e) => setUsdRate(e.target.value)}
+                  />
+                </div>
+                <div style={{ fontSize: '13px', fontWeight: 700, paddingBottom: '8px' }}>
+                  = {fmt(convertedUsdAmount)}$
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {!loadingAdvances && openAdvances.length > 0 && (
           <div style={{ fontSize: '12.5px', color: '#374151', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '8px 10px' }}>
@@ -694,7 +752,7 @@ function SalaryPayPanel({
           )}
           {currencyMismatchFallback && (
             <p style={{ color: '#b45309', fontSize: '12.5px', marginTop: '4px' }}>
-              ⚠ لا يوجد صندوق بعملة {employee.currency} تحديداً — القائمة تعرض كل الصناديق النشطة، تأكدي من اختيار صندوق بنفس عملة الراتب.
+              ⚠ لا يوجد صندوق بعملة {targetCurrency} تحديداً — القائمة تعرض كل الصناديق النشطة، تأكدي من اختيار صندوق بهذه العملة فعلاً.
             </p>
           )}
         </div>
