@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { httpClient } from '../lib/api/httpClient';
 import { COMPANY_LOGO_PATH, COMPANY_NAME_AR } from '../lib/branding/companyBrand';
+import BarcodeScannerModal from '../components/shared/BarcodeScannerModal';
 
 type TrackingResult = {
   receiptNo: string;
@@ -168,63 +169,6 @@ function statusChipStyle(status: string): React.CSSProperties {
     return { background: 'rgba(148,163,184,.18)', color: '#cbd5e1', borderColor: 'rgba(148,163,184,.35)' };
   }
   return { background: 'rgba(124,58,237,.18)', color: '#c4b5fd', borderColor: 'rgba(124,58,237,.35)' };
-}
-
-/**
- * مسح باركود بالكاميرا — جاهز الآن تحسباً لإضافة باركود لكل سطر شحنة في
- * دفتر الشحن اليومي لاحقاً؛ حتى ذلك الحين يبحث بالقيمة النصية الممسوحة
- * تماماً كما لو كُتبت يدوياً في خانة البحث.
- */
-function BarcodeScannerModal({ onDetected, onClose }: { onDetected: (value: string) => void; onClose: () => void }) {
-  const containerId = 'public-tracking-barcode-scanner';
-  const scannerRef = useRef<import('html5-qrcode').Html5Qrcode | null>(null);
-  const [scanError, setScanError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let scanner: import('html5-qrcode').Html5Qrcode | null = null;
-
-    void (async () => {
-      const { Html5Qrcode } = await import('html5-qrcode');
-      if (cancelled) return;
-      scanner = new Html5Qrcode(containerId);
-      scannerRef.current = scanner;
-      try {
-        await scanner.start(
-          { facingMode: 'environment' },
-          { fps: 10, qrbox: { width: 260, height: 160 } },
-          (decodedText) => {
-            onDetected(decodedText);
-          },
-          undefined,
-        );
-      } catch {
-        if (!cancelled) setScanError('تعذر تشغيل الكاميرا — تأكدي من السماح بالوصول إليها.');
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      const active = scannerRef.current;
-      if (active) {
-        active.stop().then(() => active.clear()).catch(() => {});
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return (
-    <div style={styles.scannerBackdrop} role="presentation" onClick={onClose}>
-      <div style={styles.scannerCard} onClick={(e) => e.stopPropagation()}>
-        <div style={styles.scannerHeader}>
-          <span>وجّهي الكاميرا نحو الباركود</span>
-          <button type="button" style={styles.scannerClose} onClick={onClose} aria-label="إغلاق">✕</button>
-        </div>
-        <div id={containerId} style={styles.scannerViewport} />
-        {scanError ? <div style={styles.errorBox}>{scanError}</div> : null}
-      </div>
-    </div>
-  );
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -419,45 +363,5 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#fff',
     fontSize: '14px',
     fontWeight: 600,
-  },
-  scannerBackdrop: {
-    position: 'fixed',
-    inset: 0,
-    background: 'rgba(0,0,0,.7)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 50,
-    padding: '16px',
-  },
-  scannerCard: {
-    width: '100%',
-    maxWidth: '420px',
-    background: '#13102a',
-    borderRadius: '16px',
-    border: '1px solid rgba(255,255,255,.12)',
-    padding: '16px',
-  },
-  scannerHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    color: '#fff',
-    fontSize: '14px',
-    fontWeight: 700,
-    marginBottom: '12px',
-  },
-  scannerClose: {
-    background: 'transparent',
-    border: 'none',
-    color: '#fff',
-    fontSize: '16px',
-    cursor: 'pointer',
-  },
-  scannerViewport: {
-    width: '100%',
-    borderRadius: '10px',
-    overflow: 'hidden',
-    minHeight: '260px',
   },
 };

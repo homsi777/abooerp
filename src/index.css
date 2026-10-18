@@ -2157,6 +2157,24 @@ body {
   background: transparent;
 }
 
+.quick-ledger-global-search-scan-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid #99f6e4;
+  background: #f0fdfa;
+  color: #0f766e;
+  cursor: pointer;
+}
+
+.quick-ledger-global-search-scan-btn:hover {
+  background: #ccfbf1;
+}
+
 .quick-ledger-global-search-fields {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

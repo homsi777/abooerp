@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Printer, Search, X } from 'lucide-react';
+import { Camera, Printer, Search, X } from 'lucide-react';
+import BarcodeScannerModal from '../shared/BarcodeScannerModal';
 import {
   hasLedgerGlobalSearchCriteria,
   searchLedgerRowsGlobally,
@@ -70,6 +71,7 @@ export default function QuickLedgerGlobalSearchModal({
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastCriteria, setLastCriteria] = useState<LedgerGlobalSearchInput>({});
+  const [scannerOpen, setScannerOpen] = useState(false);
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
 
   const branchNameById = useMemo(() => {
@@ -109,8 +111,8 @@ export default function QuickLedgerGlobalSearchModal({
 
   const scopeLabel = `${allBranches ? 'كل الفروع' : 'الفرع الحالي'} — ${dateRangeSummary}`;
 
-  const runSearch = useCallback(async () => {
-    const trimmed = query.trim();
+  const runSearch = useCallback(async (overrideQuery?: string) => {
+    const trimmed = (overrideQuery ?? query).trim();
     const input: LedgerGlobalSearchInput = {
       q: trimmed,
       dateFrom: dateFrom || undefined,
@@ -214,6 +216,15 @@ export default function QuickLedgerGlobalSearchModal({
                 onKeyDown={(e) => e.key === 'Enter' && void runSearch()}
                 autoFocus
               />
+              <button
+                type="button"
+                className="quick-ledger-global-search-scan-btn"
+                onClick={() => setScannerOpen(true)}
+                title="مسح رقم الإيصال بالكاميرا"
+                aria-label="مسح رقم الإيصال بالكاميرا"
+              >
+                <Camera size={18} />
+              </button>
             </div>
           </label>
 
@@ -342,6 +353,18 @@ export default function QuickLedgerGlobalSearchModal({
           </div>
         </div>
       </div>
+
+      {scannerOpen ? (
+        <BarcodeScannerModal
+          title="وجّهي الكاميرا نحو رقم الإيصال"
+          onDetected={(value) => {
+            setScannerOpen(false);
+            setQuery(value);
+            void runSearch(value);
+          }}
+          onClose={() => setScannerOpen(false)}
+        />
+      ) : null}
     </div>,
     document.body,
   );
