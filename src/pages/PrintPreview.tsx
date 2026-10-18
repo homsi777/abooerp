@@ -84,7 +84,7 @@ export default function PrintPreview() {
     return (
       <div className="print-preview">
         <div className="print-header">
-          <div className="print-title">شركة عبو المحمود لنقل والخدمات الوجستية — الفرع الرئيسي</div>
+          <div className="print-title">شركة عبو المحمود للنقل والخدمات اللوجستية — الفرع الرئيسي</div>
           <div className="print-subtitle">إشعار شحنة / بوليصة الشحن</div>
         </div>
 
@@ -154,7 +154,7 @@ export default function PrintPreview() {
     return (
       <div className="print-preview">
         <div className="print-header">
-          <div className="print-title">شركة عبو المحمود لنقل والخدمات الوجستية — الفرع الرئيسي</div>
+          <div className="print-title">شركة عبو المحمود للنقل والخدمات اللوجستية — الفرع الرئيسي</div>
           <div className="print-subtitle">بيان شحنات — Manifest</div>
         </div>
 
@@ -207,7 +207,7 @@ export default function PrintPreview() {
     return (
       <div className="print-preview">
         <div className="print-header">
-          <div className="print-title">شركة عبو المحمود لنقل والخدمات الوجستية — الفرع الرئيسي</div>
+          <div className="print-title">شركة عبو المحمود للنقل والخدمات اللوجستية — الفرع الرئيسي</div>
           <div className="print-subtitle">سند قبض</div>
         </div>
 
@@ -245,7 +245,7 @@ export default function PrintPreview() {
     return (
       <div className="print-preview">
         <div className="print-header">
-          <div className="print-title">شركة عبو المحمود لنقل والخدمات الوجستية — الفرع الرئيسي</div>
+          <div className="print-title">شركة عبو المحمود للنقل والخدمات اللوجستية — الفرع الرئيسي</div>
           <div className="print-subtitle">كشف حساب عميل</div>
         </div>
 
@@ -279,7 +279,7 @@ export default function PrintPreview() {
     return (
       <div className="print-preview-80mm">
         <div className="text-center border-b border-black pb-2 mb-2">
-          <div className="font-bold">شركة عبو المحمود لنقل والخدمات الوجستية</div>
+          <div className="font-bold">شركة عبو المحمود للنقل والخدمات اللوجستية</div>
           <div className="text-sm">إيصال استلام</div>
         </div>
 

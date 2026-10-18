@@ -28,7 +28,7 @@ async function removeDir(target) {
   }
 }
 
-tryKill('شركة عبو المحمود لنقل والخدمات الوجستية.exe');
+tryKill('شركة عبو المحمود للنقل والخدمات اللوجستية.exe');
 tryKill('shahn.exe');
 
 for (const target of targets) {

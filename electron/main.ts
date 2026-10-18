@@ -30,8 +30,8 @@ const __dirname = path.dirname(__filename);
 const isSmokeMode = process.argv.includes('--smoke-runtime') || process.env.ELECTRON_SMOKE_RUNTIME === '1';
 
 if (!app.isPackaged) {
-  app.setName('شركة عبو المحمود لنقل والخدمات الوجستية Dev');
-  app.setPath('userData', path.join(app.getPath('appData'), 'شركة عبو المحمود لنقل والخدمات الوجستية Dev'));
+  app.setName('شركة عبو المحمود للنقل والخدمات اللوجستية Dev');
+  app.setPath('userData', path.join(app.getPath('appData'), 'شركة عبو المحمود للنقل والخدمات اللوجستية Dev'));
   // Vite HMR needs unsafe-eval; keeps devtools console free of the generic CSP warning.
   process.env['ELECTRON_DISABLE_SECURITY_WARNINGS'] = 'true';
 }

@@ -1,5 +1,5 @@
 /** هوية الشركة — مسارات ثابتة للواجهة والطباعة */
-export const COMPANY_NAME_AR = 'شركة عبو المحمود لنقل والخدمات الوجستية';
+export const COMPANY_NAME_AR = 'شركة عبو المحمود للنقل والخدمات اللوجستية';
 export const COMPANY_NAME_EN = 'ABBO AL-MAHMOUD FOR TRANSPORT & LOGISTICS';
 export const COMPANY_LOGO_PATH = '/branding/company-logo.png';
 export const COMPANY_FAVICON_PATH = '/branding/favicon.png';

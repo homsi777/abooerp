@@ -442,15 +442,15 @@ export default function Login() {
                   <span style={{ width: 28, height: 28, borderRadius: 8, background: '#8b5cf6',
                     color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
                     fontWeight: 800, fontSize: 14, flexShrink: 0 }}>2</span>
-                  <span style={{ fontWeight: 700, color: '#6d28d9', fontSize: 14 }}>تثبيت نظام شركة عبو المحمود لنقل والخدمات الوجستية</span>
+                  <span style={{ fontWeight: 700, color: '#6d28d9', fontSize: 14 }}>تثبيت نظام شركة عبو المحمود للنقل والخدمات اللوجستية</span>
                 </div>
                 <div style={{ padding: '16px 18px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {[
-                    { icon: '📁', text: 'شغّل ملف التثبيت: شركة عبو المحمود لنقل والخدمات الوجستية Setup 1.0.1.exe' },
+                    { icon: '📁', text: 'شغّل ملف التثبيت: شركة عبو المحمود للنقل والخدمات اللوجستية Setup 1.0.1.exe' },
                     { icon: '✅', text: 'اضغط "نعم" على رسالة التحكم بحساب المستخدم (UAC)' },
                     { icon: '📂', text: 'اختر مجلد التثبيت (المجلد الافتراضي موصى به)' },
                     { icon: '⏳', text: 'انتظر اكتمال التثبيت — يستغرق دقيقة إلى دقيقتين' },
-                    { icon: '🚀', text: 'اضغط على اختصار "شركة عبو المحمود لنقل والخدمات الوجستية" على سطح المكتب لتشغيل البرنامج' },
+                    { icon: '🚀', text: 'اضغط على اختصار "شركة عبو المحمود للنقل والخدمات اللوجستية" على سطح المكتب لتشغيل البرنامج' },
                   ].map(({ icon, text }) => (
                     <div key={text} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                       <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>{icon}</span>
@@ -525,14 +525,14 @@ export default function Login() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: '#64748b' }}>
                   <span>① على الجهاز الرئيسي: اضغط ⚙️ ← "ربط محلي" ← سجّل IP الجهاز الرئيسي</span>
                   <span>② على الجهاز الثانوي: افتح المتصفح ← <code style={{ background: '#e2e8f0', padding: '1px 5px', borderRadius: 4 }}>http://[IP-الجهاز-الرئيسي]:5188</code></span>
-                  <span>③ أو شغّل نسخة شركة عبو المحمود لنقل والخدمات الوجستية وأدخل IP الجهاز الرئيسي في "ربط محلي"</span>
+                  <span>③ أو شغّل نسخة شركة عبو المحمود للنقل والخدمات اللوجستية وأدخل IP الجهاز الرئيسي في "ربط محلي"</span>
                 </div>
               </div>
 
               {/* Footer */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 paddingTop: 16, borderTop: '1px solid #e5e7eb' }}>
-                <span style={{ fontSize: 11, color: '#9ca3af' }}>شركة عبو المحمود لنقل والخدمات الوجستية — نظام إدارة شركات الشحن</span>
+                <span style={{ fontSize: 11, color: '#9ca3af' }}>شركة عبو المحمود للنقل والخدمات اللوجستية — نظام إدارة شركات الشحن</span>
                 <button onClick={() => setShowHelp(false)} style={{
                   background: 'linear-gradient(135deg,#7c3aed,#4f46e5)',
                   color: '#fff', border: 'none', borderRadius: 8, padding: '9px 24px',

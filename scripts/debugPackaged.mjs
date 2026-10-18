@@ -24,12 +24,12 @@ console.log('╚═════════════════════�
 
 // ── الأمسار المتوقعة في التطبيق المغلف ──────────────────────────────────────
 const diagnostics = {
-  'مسار بيانات المستخدم': path.join(os.homedir(), 'AppData', 'Roaming', 'شركة عبو المحمود لنقل والخدمات الوجستية'),
-  'مسار ملف server.env': path.join(os.homedir(), 'AppData', 'Roaming', 'شركة عبو المحمود لنقل والخدمات الوجستية', 'server.env'),
+  'مسار بيانات المستخدم': path.join(os.homedir(), 'AppData', 'Roaming', 'شركة عبو المحمود للنقل والخدمات اللوجستية'),
+  'مسار ملف server.env': path.join(os.homedir(), 'AppData', 'Roaming', 'شركة عبو المحمود للنقل والخدمات اللوجستية', 'server.env'),
   'مسار ملف app-config.env (في الموارد)': path.join(path.dirname(process.execPath), 'resources', 'app-config.env'),
-  'مسار ملف JWT Secret': path.join(os.homedir(), 'AppData', 'Roaming', 'شركة عبو المحمود لنقل والخدمات الوجستية', '.jwt_secret'),
-  'مسار ملف Server Log': path.join(os.homedir(), 'AppData', 'Roaming', 'شركة عبو المحمود لنقل والخدمات الوجستية', 'server-process.log'),
-  'مسار ملف Runtime Log': path.join(os.homedir(), 'AppData', 'Roaming', 'شركة عبو المحمود لنقل والخدمات الوجستية', 'logs', 'runtime.log'),
+  'مسار ملف JWT Secret': path.join(os.homedir(), 'AppData', 'Roaming', 'شركة عبو المحمود للنقل والخدمات اللوجستية', '.jwt_secret'),
+  'مسار ملف Server Log': path.join(os.homedir(), 'AppData', 'Roaming', 'شركة عبو المحمود للنقل والخدمات اللوجستية', 'server-process.log'),
+  'مسار ملف Runtime Log': path.join(os.homedir(), 'AppData', 'Roaming', 'شركة عبو المحمود للنقل والخدمات اللوجستية', 'logs', 'runtime.log'),
 };
 
 console.log('📁 الأمسار المتوقعة في التطبيق المغلف:\n');

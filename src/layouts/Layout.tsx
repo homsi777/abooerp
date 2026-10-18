@@ -155,7 +155,7 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: '16px', flexShrink: 0,
           }}>📦</div>
-          <h1 style={{ fontSize: '15px', fontWeight: 700 }}>شركة عبو المحمود لنقل والخدمات الوجستية — نظام إدارة الشحن والمحاسبة</h1>
+          <h1 style={{ fontSize: '15px', fontWeight: 700 }}>شركة عبو المحمود للنقل والخدمات اللوجستية — نظام إدارة الشحن والمحاسبة</h1>
         </div>
         <div className="flex items-center gap-4 text-sm" style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '13px' }}>
           <span style={{ opacity: 0.7 }}>{today}</span>

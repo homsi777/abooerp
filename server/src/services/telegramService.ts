@@ -134,11 +134,11 @@ export async function sendActivationNotification(
 
     const timestamp = new Date().toLocaleString('ar-SY', { timeZone: 'Asia/Damascus' });
     const text = [
-      `🚀 <b>تفعيل نظام — شركة عبو المحمود لنقل والخدمات الوجستية</b>`,
+      `🚀 <b>تفعيل نظام — شركة عبو المحمود للنقل والخدمات اللوجستية</b>`,
       ``,
       `✅ تم تفعيل النظام بنجاح`,
       ``,
-      `📦 النظام: شركة عبو المحمود لنقل والخدمات الوجستية`,
+      `📦 النظام: شركة عبو المحمود للنقل والخدمات اللوجستية`,
       `🔑 نوع التفعيل: ${payload.licenseType}`,
       `💻 الجهاز: ${payload.deviceName ?? 'غير محدد'}`,
       `🌐 IP: ${payload.ipAddress ?? 'غير محدد'}`,
@@ -350,7 +350,7 @@ export async function sendTestMessage(
         ``,
         `✅ رسالة اختبار تيليجرام`,
         `🤖 البوت: ${bot.bot_username ?? 'غير محدد'}`,
-        `📦 النظام: شركة عبو المحمود لنقل والخدمات الوجستية`,
+        `📦 النظام: شركة عبو المحمود للنقل والخدمات اللوجستية`,
         `📅 ${timestamp}`,
       ].join('\n');
 

@@ -42,7 +42,7 @@ export function createSplashWindow() {
 </head>
 <body>
 <div class="card">
-  <div class="logo">شركة عبو المحمود لنقل والخدمات الوجستية</div>
+  <div class="logo">شركة عبو المحمود للنقل والخدمات اللوجستية</div>
   <div class="sub">نظام إدارة الشحن والمحاسبة</div>
   <div class="status" id="status">جاري التشغيل...</div>
   <div class="bar-wrap"><div class="bar" id="bar"></div></div>
