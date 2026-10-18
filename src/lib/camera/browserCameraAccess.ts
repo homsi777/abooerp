@@ -16,13 +16,13 @@ export function cameraEnvironmentMessage(): string | null {
     return 'المتصفح لا يدعم الوصول إلى الكاميرا.';
   }
   if (!isSecureCameraContext()) {
-    return 'الكاميرا لا تعمل على هذا العنوان. افتحي الموقع عبر HTTPS (مثل https://www.abooerp.org) أو من localhost على نفس الجهاز — وليس عبر IP شبكة محلية http://192.168…';
+    return 'الكاميرا لا تعمل على هذا العنوان. افتح/ي الموقع عبر HTTPS (مثل https://www.abooerp.org) أو من localhost على نفس الجهاز — وليس عبر IP شبكة محلية http://192.168…';
   }
   return null;
 }
 
 function permissionDeniedMessage(): string {
-  return 'تم رفض إذن الكاميرا. من إعدادات المتصفح أو الموقع (🔒 بجانب العنوان) فعّلي «الكاميرا» ثم أعيدي المحاولة.';
+  return 'تم رفض إذن الكاميرا. من إعدادات المتصفح أو الموقع (🔒 بجانب العنوان) فعّل/ي «الكاميرا» ثم أعد/ي المحاولة.';
 }
 
 function mapGetUserMediaError(err: unknown): string {
@@ -34,13 +34,13 @@ function mapGetUserMediaError(err: unknown): string {
       return 'لم يُعثر على كاميرا على هذا الجهاز.';
     }
     if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-      return 'الكاميرا مستخدمة من تطبيق آخر. أغلقيه ثم أعيدي المحاولة.';
+      return 'الكاميرا مستخدمة من تطبيق آخر. أغلق/ي ذلك التطبيق ثم أعد/ي المحاولة.';
     }
     if (err.name === 'SecurityError') {
       return cameraEnvironmentMessage() ?? permissionDeniedMessage();
     }
   }
-  return 'تعذر تشغيل الكاميرا. تحققي من الإذن ومن أن الموقع يفتح عبر HTTPS.';
+  return 'تعذر تشغيل الكاميرا. تحقق/ي من الإذن ومن أن الموقع يفتح عبر HTTPS.';
 }
 
 /**

@@ -76,7 +76,7 @@ async function startHtml5Scanner(
 export default function BarcodeScannerModal({
   onDetected,
   onClose,
-  title = 'وجّهي الكاميرا نحو الباركود',
+  title = 'وجّه/ي الكاميرا نحو الباركود',
 }: {
   onDetected: (value: string) => void;
   onClose: () => void;
@@ -116,7 +116,7 @@ export default function BarcodeScannerModal({
       await startHtml5Scanner(scanner, (value) => onDetectedRef.current(value));
     } catch {
       setScanError(
-        'تعذر تشغيل الكاميرا. اضغطي «تشغيل الكاميرا» أدناه، أو فعّلي الإذن من إعدادات الموقع في المتصفح.',
+        'تعذر تشغيل الكاميرا. اضغط/ي «تشغيل الكاميرا» أدناه، أو فعّل/ي الإذن من إعدادات الموقع في المتصفح.',
       );
     } finally {
       setStarting(false);

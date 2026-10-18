@@ -51,7 +51,7 @@ export default function CustomerTracking() {
   async function runSearch(receiptNo?: string) {
     const value = (receiptNo ?? query).trim();
     if (!value) {
-      setError('أدخلي رقم الإيصال أولاً.');
+      setError('أدخل/ي رقم الإيصال أولاً.');
       return;
     }
     setLoading(true);
@@ -87,9 +87,9 @@ export default function CustomerTracking() {
         </div>
 
         <h1 style={styles.headline}>
-          تتبّعي شحنتك <span style={styles.headlineAccent}>بخطوة واحدة</span>
+          تتبّع/ي شحنتك <span style={styles.headlineAccent}>بخطوة واحدة</span>
         </h1>
-        <p style={styles.subline}>أدخلي رقم الإيصال لمعرفة حالة شحنتك فوراً</p>
+        <p style={styles.subline}>أدخل/ي رقم الإيصال لمعرفة حالة شحنتك فوراً</p>
 
         <div style={styles.searchRow}>
           <input
