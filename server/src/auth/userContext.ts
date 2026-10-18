@@ -16,6 +16,7 @@ export interface RequestUserContext {
   activeBranchId?: string;
   scope: DataScope;
   sessionId?: string;
+  driverId?: string | null;
 }
 
 export interface AuthUserDto {
@@ -29,6 +30,7 @@ export interface AuthUserDto {
   branchId: string | null;
   allowedBranchIds: string[];
   agentId: string | null;
+  driverId: string | null;
 }
 
 export async function loadUserContextByUserId(userId: string): Promise<RequestUserContext | null> {
@@ -47,6 +49,7 @@ export async function loadUserContextByUserId(userId: string): Promise<RequestUs
     agent_city: string | null;
     agent_area: string | null;
     agent_branch_id: string | null;
+    driver_id: string | null;
   }>(
     `
     select
@@ -64,13 +67,14 @@ export async function loadUserContextByUserId(userId: string): Promise<RequestUs
       ,a.city as agent_city
       ,a.area as agent_area
       ,a.branch_id as agent_branch_id
+      ,u.driver_id
     from users u
     join roles r on r.id = u.role_id
     left join agents a on a.id = u.agent_id
     left join role_permissions rp on rp.role_id = u.role_id
     left join permissions p on p.id = rp.permission_id and p.is_active = true
     where u.id = $1
-    group by u.id, u.username, u.role_id, r.code, u.status, u.is_active, u.agent_id, u.user_type, u.company_id, a.governorate, a.city, a.area, a.branch_id
+    group by u.id, u.username, u.role_id, r.code, u.status, u.is_active, u.agent_id, u.user_type, u.company_id, a.governorate, a.city, a.area, a.branch_id, u.driver_id
     `,
     [userId],
   );
@@ -162,6 +166,7 @@ export async function loadUserContextByUserId(userId: string): Promise<RequestUs
       agentCity: user.agent_city ?? undefined,
       agentArea: user.agent_area ?? undefined,
     },
+    driverId: user.driver_id ?? null,
   };
 }
 
@@ -177,5 +182,6 @@ export function toAuthUserDto(context: RequestUserContext): AuthUserDto {
     branchId: context.activeBranchId ?? context.scope.branchId ?? null,
     allowedBranchIds: context.allowedBranchIds,
     agentId: context.scope.agentId ?? null,
+    driverId: context.driverId ?? null,
   };
 }

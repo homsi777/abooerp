@@ -148,6 +148,20 @@ export function createAuthRouter(service: AuthService) {
         userAgent: req.headers['user-agent'],
         ipAddress: resolveIp(req),
       });
+      // "مدخل بيانات — تطبيق أندرويد" is a narrow-permission role meant
+      // only for the tablet app — if these credentials were somehow used
+      // from the desktop/browser, refuse rather than silently granting a
+      // (very limited, but still real) session there. Every other role is
+      // unaffected — this does not touch the existing data_entry (desktop)
+      // role or the agent app's login flow.
+      if (data.user.role === 'data_entry_mobile' && !isAllowedMobileClient(req)) {
+        throw new HttpError(403, 'هذا الحساب مخصص لتطبيق إدخال البيانات على الأندرويد فقط.');
+      }
+      // "سائق — تطبيق أندرويد" نفس المنطق تماماً: حساب ضيّق الصلاحيات مخصص
+      // لتطبيق السائق فقط، يُرفض إن استُخدم من المتصفح/سطح المكتب.
+      if (data.user.role === 'driver_mobile' && !isAllowedMobileClient(req)) {
+        throw new HttpError(403, 'هذا الحساب مخصص لتطبيق السائق على الأندرويد فقط.');
+      }
       res.json({ success: true, data });
     }),
   );
