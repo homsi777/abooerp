@@ -212,7 +212,7 @@ export default function Login() {
   };
 
   return (
-    <div dir="rtl" style={styles.root}>
+    <div dir="rtl" className="login-root" style={styles.root}>
       {deviceBootstrap === 'wizard' && (
         <DeviceLoginBootstrap
           key="wizard"
@@ -561,7 +561,7 @@ export default function Login() {
       )}
 
       {/* ── LEFT PANEL ── */}
-      <div style={styles.left}>
+      <div className="login-left" style={styles.left}>
         <div style={styles.brand}>
           <img src={COMPANY_LOGO_PATH} alt={COMPANY_NAME_AR} style={styles.brandLogo} />
           <div>
@@ -592,7 +592,7 @@ export default function Login() {
       </div>
 
       {/* ── RIGHT PANEL ── */}
-      <div style={styles.right}>
+      <div className="login-right" style={styles.right}>
         <div style={styles.card}>
           {/* card header */}
           <div style={styles.cardHeader}>
@@ -720,6 +720,16 @@ export default function Login() {
         * { box-sizing: border-box; }
         input::placeholder { color: rgba(255,255,255,.3); }
         select option { background: #1e1b4b; color: #e5e7eb; }
+
+        /* الشاشة مصمَّمة أصلاً كعمودين جنباً إلى جنب بعرض ثابت للبطاقة
+           (440px) — على الموبايل هذا يتجاوز عرض الشاشة فيظهر كل شيء
+           مقصوصاً. نُحوّلها لعمود واحد، نخفي لوحة العرض الدعائية غير
+           الضرورية، ونسمح بتمرير رأسي كامل بدل القصّ. */
+        @media (max-width: 860px) {
+          .login-root { flex-direction: column !important; overflow-y: auto !important; height: auto !important; }
+          .login-left { display: none !important; }
+          .login-right { width: 100% !important; padding: 24px 16px !important; }
+        }
       `}</style>
     </div>
   );
@@ -733,7 +743,8 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'linear-gradient(135deg,#0d0b1e 0%,#1a1033 40%,#0e1628 100%)',
     fontFamily: "'Segoe UI',Tahoma,Arial,sans-serif",
     position: 'relative',
-    overflow: 'hidden',
+    overflowX: 'hidden',
+    overflowY: 'auto',
   },
   blob: {
     position: 'absolute',
