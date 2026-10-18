@@ -3,6 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { httpClient } from '../lib/api/httpClient';
 import { COMPANY_LOGO_PATH, COMPANY_NAME_AR } from '../lib/branding/companyBrand';
 import BarcodeScannerModal from '../components/shared/BarcodeScannerModal';
+import {
+  canUseBrowserCamera,
+  requestCameraPermissionForScan,
+} from '../lib/camera/browserCameraAccess';
 
 type TrackingResult = {
   receiptNo: string;
@@ -18,12 +22,6 @@ type TrackingResult = {
   statusLabel: string;
 };
 
-/** يظهر فقط هاتف/تابلت — زر الكاميرا لمسح الباركود لا معنى له على سطح مكتب بلا كاميرا بالقرب من المستخدم. */
-function isMobileDevice(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-}
-
 function formatDate(value: string): string {
   const part = String(value ?? '').split('T')[0];
   return part || value;
@@ -37,7 +35,18 @@ export default function CustomerTracking() {
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
-  const mobile = useRef(isMobileDevice()).current;
+  const [scannerError, setScannerError] = useState<string | null>(null);
+  const showCameraBtn = useRef(canUseBrowserCamera()).current;
+
+  async function openBarcodeScanner() {
+    setScannerError(null);
+    const permissionError = await requestCameraPermissionForScan();
+    if (permissionError) {
+      setScannerError(permissionError);
+      return;
+    }
+    setScannerOpen(true);
+  }
 
   async function runSearch(receiptNo?: string) {
     const value = (receiptNo ?? query).trim();
@@ -91,11 +100,11 @@ export default function CustomerTracking() {
             style={styles.searchInput}
             inputMode="numeric"
           />
-          {mobile ? (
+          {showCameraBtn ? (
             <button
               type="button"
               style={styles.cameraBtn}
-              onClick={() => setScannerOpen(true)}
+              onClick={() => void openBarcodeScanner()}
               title="مسح الباركود بالكاميرا"
               aria-label="مسح الباركود بالكاميرا"
             >
@@ -107,6 +116,7 @@ export default function CustomerTracking() {
           </button>
         </div>
 
+        {scannerError ? <div style={styles.errorBox}>{scannerError}</div> : null}
         {error ? <div style={styles.errorBox}>{error}</div> : null}
 
         {result ? (

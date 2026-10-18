@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Camera, Printer, Search, X } from 'lucide-react';
 import BarcodeScannerModal from '../shared/BarcodeScannerModal';
+import { requestCameraPermissionForScan } from '../../lib/camera/browserCameraAccess';
 import {
   hasLedgerGlobalSearchCriteria,
   searchLedgerRowsGlobally,
@@ -73,6 +74,15 @@ export default function QuickLedgerGlobalSearchModal({
   const [lastCriteria, setLastCriteria] = useState<LedgerGlobalSearchInput>({});
   const [scannerOpen, setScannerOpen] = useState(false);
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
+
+  const openBarcodeScanner = useCallback(async () => {
+    const permissionError = await requestCameraPermissionForScan();
+    if (permissionError) {
+      setError(permissionError);
+      return;
+    }
+    setScannerOpen(true);
+  }, []);
 
   const branchNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -219,7 +229,7 @@ export default function QuickLedgerGlobalSearchModal({
               <button
                 type="button"
                 className="quick-ledger-global-search-scan-btn"
-                onClick={() => setScannerOpen(true)}
+                onClick={() => void openBarcodeScanner()}
                 title="مسح رقم الإيصال بالكاميرا"
                 aria-label="مسح رقم الإيصال بالكاميرا"
               >
