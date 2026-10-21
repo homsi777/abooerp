@@ -789,7 +789,10 @@ function CreateVoucherModal({
   onCreated: () => void;
 }) {
   const { showToast } = useToast();
-  const [partyType, setPartyType] = useState<PartyType>(editing?.partyType ?? 'agent');
+  // null = "بدون طرف (مصروف داخلي)" — سندات حقيقية بلا وكيل/عميل/مرسل مثل
+  // المصاريف الداخلية أو القيود المستوردة من نظام محاسبة قديم. editing?.partyType
+  // يكون null أصلاً لمثل هذه السندات (resolvePartyType)، فنحترمه بدل افتراض "وكيل".
+  const [partyType, setPartyType] = useState<PartyType | null>(editing ? editing.partyType : 'agent');
   const [partyOptions, setPartyOptions] = useState<PartyOption[]>([]);
   const [partyId, setPartyId] = useState(editing?.partyId ?? '');
   const [amount, setAmount] = useState(editing ? String(editing.amount) : '');
@@ -811,6 +814,10 @@ function CreateVoucherModal({
       isFirstPartyTypeRun.current = false;
     } else {
       setPartyId('');
+    }
+    if (!partyType) {
+      setPartyOptions([]);
+      return;
     }
     const path = partyType === 'agent' ? '/agents' : partyType === 'customer' ? '/customers' : '/senders-receivers';
     httpClient
@@ -839,7 +846,7 @@ function CreateVoucherModal({
   }, [currency]);
 
   const save = async () => {
-    if (!partyId || !amount || !cashboxId) {
+    if ((partyType && !partyId) || !amount || !cashboxId) {
       showToast('الرجاء إكمال الطرف والمبلغ والصندوق', 'error');
       return;
     }
@@ -910,19 +917,26 @@ function CreateVoucherModal({
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <div className="form-group">
             <label className="form-label">نوع الطرف</label>
-            <select className="form-select" value={partyType} onChange={(e) => setPartyType(e.target.value as PartyType)}>
+            <select
+              className="form-select"
+              value={partyType ?? ''}
+              onChange={(e) => setPartyType((e.target.value || null) as PartyType | null)}
+            >
+              <option value="">بدون طرف (مصروف داخلي)</option>
               <option value="agent">وكيل</option>
               <option value="customer">عميل</option>
               <option value="sender_receiver">مرسل/مستلم</option>
             </select>
           </div>
-          <div className="form-group">
-            <label className="form-label">الطرف</label>
-            <select className="form-select" value={partyId} onChange={(e) => setPartyId(e.target.value)}>
-              <option value="">اختر...</option>
-              {partyOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </div>
+          {partyType && (
+            <div className="form-group">
+              <label className="form-label">الطرف</label>
+              <select className="form-select" value={partyId} onChange={(e) => setPartyId(e.target.value)}>
+                <option value="">اختر...</option>
+                {partyOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: '10px' }}>
             <div className="form-group" style={{ flex: 1 }}>
               <label className="form-label">المبلغ</label>
