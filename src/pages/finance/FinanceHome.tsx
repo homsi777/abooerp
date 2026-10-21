@@ -43,6 +43,7 @@ const GROUPS: FinanceGroup[] = [
   {
     title: 'الدفاتر والتقارير',
     cards: [
+      { icon: '🌳', label: 'شجرة الحسابات', path: '/finance/chart-of-accounts', permission: 'finance.read', built: true },
       { icon: '📘', label: 'دفتر الأستاذ', path: '/finance/general-ledger', permission: 'finance.read', built: true },
       { icon: '📅', label: 'دفتر اليومية', path: '/finance/daily-journal', permission: 'finance.read', built: true },
       { icon: '⚖️', label: 'ميزان المراجعة', path: '/finance/trial-balance', permission: 'finance.read', built: true },

@@ -25,6 +25,7 @@ import Custody from './pages/finance/Custody';
 import VehicleTripProfitReport from './pages/finance/VehicleTripProfitReport';
 import CompanyMonthlyReport from './pages/finance/CompanyMonthlyReport';
 import GoodsPricing from './pages/finance/GoodsPricing';
+import ChartOfAccounts from './pages/finance/ChartOfAccounts';
 import FinanceExpenses from './pages/finance/Expenses';
 import FinanceSalaries from './pages/finance/Salaries';
 import FinanceCashBoxes from './pages/finance/CashBoxes';
@@ -361,6 +362,14 @@ export default function App() {
                     element={
                       <RequirePermission permission="finance.read">
                         <GoodsPricing />
+                      </RequirePermission>
+                    }
+                  />
+                  <Route
+                    path="/finance/chart-of-accounts"
+                    element={
+                      <RequirePermission permission="finance.read">
+                        <ChartOfAccounts />
                       </RequirePermission>
                     }
                   />

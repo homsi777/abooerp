@@ -2347,6 +2347,92 @@ export function createFinanceRouter(service: FinanceService) {
     }),
   );
 
+  const chartOfAccountCreateSchema = z.object({
+    accountCode: z.string().min(1),
+    accountName: z.string().min(1),
+    accountType: z.enum(['asset', 'liability', 'equity', 'revenue', 'expense']),
+    normalBalance: z.enum(['debit', 'credit']),
+    parentAccountId: z.string().uuid().nullable().optional(),
+    notes: z.string().nullable().optional(),
+  });
+
+  router.post(
+    '/chart-of-accounts',
+    requireAnyPermissions(['finance.write']),
+    asyncHandler(async (req, res) => {
+      const body = chartOfAccountCreateSchema.parse(req.body);
+      const account = await service.createChartOfAccount(
+        {
+          accountCode: body.accountCode,
+          accountName: body.accountName,
+          accountType: body.accountType,
+          normalBalance: body.normalBalance,
+          parentAccountId: body.parentAccountId ?? null,
+          notes: body.notes ?? null,
+        },
+        parseDataScope(req),
+      );
+      auditService.logAsync({
+        req,
+        action: 'CHART_OF_ACCOUNT_CREATED',
+        entityType: 'chart_of_account',
+        entityId: account.id,
+        metadata: { accountCode: account.account_code, accountName: account.account_name },
+      });
+      res.status(201).json({ success: true, data: account });
+    }),
+  );
+
+  const chartOfAccountUpdateSchema = z.object({
+    accountName: z.string().min(1),
+    parentAccountId: z.string().uuid().nullable().optional(),
+    notes: z.string().nullable().optional(),
+  });
+
+  router.put(
+    '/chart-of-accounts/:id',
+    requireAnyPermissions(['finance.write']),
+    asyncHandler(async (req, res) => {
+      const body = chartOfAccountUpdateSchema.parse(req.body);
+      const account = await service.updateChartOfAccount(String(req.params.id), {
+        accountName: body.accountName,
+        parentAccountId: body.parentAccountId ?? null,
+        notes: body.notes ?? null,
+      });
+      if (!account) {
+        res.status(404).json({ success: false, error: 'هذا الحساب غير موجود.' });
+        return;
+      }
+      auditService.logAsync({
+        req,
+        action: 'CHART_OF_ACCOUNT_UPDATED',
+        entityType: 'chart_of_account',
+        entityId: account.id,
+        metadata: { accountCode: account.account_code },
+      });
+      res.json({ success: true, data: account });
+    }),
+  );
+
+  router.delete(
+    '/chart-of-accounts/:id',
+    requireAnyPermissions(['finance.write']),
+    asyncHandler(async (req, res) => {
+      const removed = await service.deactivateChartOfAccount(String(req.params.id));
+      if (!removed) {
+        res.status(404).json({ success: false, error: 'هذا الحساب غير موجود.' });
+        return;
+      }
+      auditService.logAsync({
+        req,
+        action: 'CHART_OF_ACCOUNT_DEACTIVATED',
+        entityType: 'chart_of_account',
+        entityId: String(req.params.id),
+      });
+      res.json({ success: true });
+    }),
+  );
+
   router.get(
     '/journal-entries',
     requireAnyPermissions(['finance.read', 'finance.view']),

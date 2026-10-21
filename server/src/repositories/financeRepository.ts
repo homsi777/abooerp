@@ -2615,7 +2615,7 @@ export class FinanceRepository {
   async listChartOfAccounts(scope?: DataScope) {
     const result = await pool.query(
       `select id, account_code, account_name, account_type, normal_balance,
-              is_control_account, control_party_type
+              parent_account_id, is_control_account, control_party_type, notes
        from chart_of_accounts
        where is_active = true
          and ($1::uuid is null or company_id = $1)
@@ -2623,6 +2623,72 @@ export class FinanceRepository {
       [scope?.companyId ?? null],
     );
     return result.rows;
+  }
+
+  async createChartOfAccount(
+    input: {
+      accountCode: string;
+      accountName: string;
+      accountType: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
+      normalBalance: 'debit' | 'credit';
+      parentAccountId: string | null;
+      notes: string | null;
+    },
+    scope?: DataScope,
+  ) {
+    const result = await pool.query(
+      `
+      insert into chart_of_accounts (
+        company_id, account_code, account_name, account_type, normal_balance, parent_account_id, notes
+      ) values (
+        coalesce($1::uuid, (select id from companies where is_active = true order by created_at asc limit 1)),
+        $2, $3, $4, $5, $6, $7
+      )
+      returning id, account_code, account_name, account_type, normal_balance, parent_account_id, is_control_account, control_party_type, notes
+      `,
+      [
+        scope?.companyId ?? null,
+        input.accountCode.trim(),
+        input.accountName.trim(),
+        input.accountType,
+        input.normalBalance,
+        input.parentAccountId,
+        input.notes,
+      ],
+    );
+    return result.rows[0];
+  }
+
+  async updateChartOfAccount(
+    id: string,
+    input: { accountName: string; parentAccountId: string | null; notes: string | null },
+  ) {
+    const result = await pool.query(
+      `
+      update chart_of_accounts
+      set account_name = $2, parent_account_id = $3, notes = $4, updated_at = now()
+      where id = $1 and is_active = true
+      returning id, account_code, account_name, account_type, normal_balance, parent_account_id, is_control_account, control_party_type, notes
+      `,
+      [id, input.accountName.trim(), input.parentAccountId, input.notes],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** إلغاء تفعيل بدل حذف فعلي — يحافظ على أي قيود تاريخية مرحَّلة على الحساب. */
+  async deactivateChartOfAccount(id: string): Promise<boolean> {
+    const hasChildren = await pool.query(
+      `select 1 from chart_of_accounts where parent_account_id = $1 and is_active = true limit 1`,
+      [id],
+    );
+    if (hasChildren.rows[0]) {
+      throw new HttpError(400, 'يحتوي هذا الحساب على حسابات فرعية — ألغي تفعيلها أولاً.');
+    }
+    const result = await pool.query(
+      `update chart_of_accounts set is_active = false, updated_at = now() where id = $1 returning id`,
+      [id],
+    );
+    return Boolean(result.rows[0]);
   }
 
   async listJournalEntries(scope?: DataScope, filters?: { dateFrom?: string; dateTo?: string }) {

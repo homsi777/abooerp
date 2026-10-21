@@ -1134,6 +1134,31 @@ export class FinanceService {
     return this.repository.listChartOfAccounts(scope);
   }
 
+  createChartOfAccount(
+    input: {
+      accountCode: string;
+      accountName: string;
+      accountType: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
+      normalBalance: 'debit' | 'credit';
+      parentAccountId: string | null;
+      notes: string | null;
+    },
+    scope?: DataScope,
+  ) {
+    return this.repository.createChartOfAccount(input, scope);
+  }
+
+  updateChartOfAccount(
+    id: string,
+    input: { accountName: string; parentAccountId: string | null; notes: string | null },
+  ) {
+    return this.repository.updateChartOfAccount(id, input);
+  }
+
+  deactivateChartOfAccount(id: string) {
+    return this.repository.deactivateChartOfAccount(id);
+  }
+
   listJournalEntries(scope?: DataScope, filters?: { dateFrom?: string; dateTo?: string }) {
     return this.repository.listJournalEntries(scope, filters);
   }
