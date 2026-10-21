@@ -26,5 +26,18 @@ export const goodsShippingPricesGateway = {
     unitPriceUsd: number;
     customerName?: string | null;
   }): Promise<GoodsShippingPriceRow> => httpClient.post('/finance/goods-shipping-prices', input),
+  update: (
+    id: string,
+    input: {
+      goodsName: string;
+      origin: string;
+      destination: string;
+      weightFromKg?: number | null;
+      weightToKg?: number | null;
+      parcelCount?: number | null;
+      unitPriceUsd: number;
+      customerName?: string | null;
+    },
+  ): Promise<GoodsShippingPriceRow> => httpClient.put(`/finance/goods-shipping-prices/${id}`, input),
   remove: (id: string) => httpClient.delete(`/finance/goods-shipping-prices/${id}`),
 };

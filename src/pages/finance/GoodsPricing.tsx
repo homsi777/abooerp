@@ -48,6 +48,7 @@ export default function GoodsPricing() {
   const [rows, setRows] = useState<GoodsShippingPriceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [destinations, setDestinations] = useState<string[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -83,10 +84,25 @@ export default function GoodsPricing() {
     setUnitPriceUsd('');
     setCustomerName('');
     setCustomerConfirmed(false);
+    setEditingId(null);
     if (!keepFocusField) {
       setDestination('');
       setOrigin(MAIN_BRANCH_LABEL);
     }
+  };
+
+  const startEdit = (row: GoodsShippingPriceRow) => {
+    setEditingId(row.id);
+    setGoodsName(row.goods_name);
+    setOrigin(row.origin ?? MAIN_BRANCH_LABEL);
+    setDestination(row.destination);
+    setWeightFromKg(row.weight_from_kg ?? '');
+    setWeightToKg(row.weight_to_kg ?? '');
+    setParcelCount(row.parcel_count != null ? String(row.parcel_count) : '');
+    setUnitPriceUsd(String(row.unit_price_usd));
+    setCustomerName(row.customer_name ?? '');
+    setCustomerConfirmed(Boolean(row.customer_name));
+    setError('');
   };
 
   const validate = (): boolean => {
@@ -128,7 +144,7 @@ export default function GoodsPricing() {
     if (!validate()) return false;
     setSaving(true);
     try {
-      const created = await goodsShippingPricesGateway.create({
+      const payload = {
         goodsName: goodsName.trim(),
         origin: origin.trim(),
         destination: destination.trim(),
@@ -137,8 +153,14 @@ export default function GoodsPricing() {
         parcelCount: parcelCount.trim() ? Number(parcelCount) : null,
         unitPriceUsd: Number(unitPriceUsd),
         customerName: customerName.trim() || null,
-      });
-      setRows((prev) => [created, ...prev]);
+      };
+      if (editingId) {
+        const updated = await goodsShippingPricesGateway.update(editingId, payload);
+        setRows((prev) => prev.map((r) => (r.id === editingId ? updated : r)));
+      } else {
+        const created = await goodsShippingPricesGateway.create(payload);
+        setRows((prev) => [created, ...prev]);
+      }
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'تعذر الحفظ');
@@ -164,10 +186,19 @@ export default function GoodsPricing() {
     }
   };
 
+  const saveEdit = async () => {
+    const ok = await save();
+    if (ok) {
+      resetForm(true);
+      showToast('تم تحديث السعر', 'success');
+    }
+  };
+
   const removeRow = async (id: string) => {
     try {
       await goodsShippingPricesGateway.remove(id);
       setRows((prev) => prev.filter((r) => r.id !== id));
+      if (editingId === id) resetForm(true);
     } catch {
       showToast('تعذر الحذف', 'error');
     }
@@ -186,8 +217,10 @@ export default function GoodsPricing() {
         {/* ───── Right: add new price ───── */}
         <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '14px', padding: '20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <h2 style={{ fontSize: '17px', fontWeight: 800, color: '#111827' }}>إضافة سعر شحن جديد</h2>
-            <span style={{ fontSize: '20px' }}>⊕</span>
+            <h2 style={{ fontSize: '17px', fontWeight: 800, color: '#111827' }}>
+              {editingId ? '✏️ تعديل سعر شحن' : 'إضافة سعر شحن جديد'}
+            </h2>
+            <span style={{ fontSize: '20px' }}>{editingId ? '✏️' : '⊕'}</span>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -307,42 +340,85 @@ export default function GoodsPricing() {
             {error && <p style={{ color: '#dc2626', fontSize: '14px', margin: 0 }}>{error}</p>}
 
             <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
-              <button
-                type="button"
-                onClick={() => void saveAndAddAnother()}
-                disabled={saving}
-                style={{
-                  flex: 1,
-                  minHeight: '46px',
-                  background: '#4f46e5',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '10px',
-                  fontSize: '15px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                }}
-              >
-                {saving ? 'جارٍ الحفظ...' : 'حفظ وإضافة آخر'}
-              </button>
-              <button
-                type="button"
-                onClick={() => void saveAndExit()}
-                disabled={saving}
-                style={{
-                  flex: 1,
-                  minHeight: '46px',
-                  background: '#fff',
-                  color: '#374151',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '10px',
-                  fontSize: '15px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                }}
-              >
-                حفظ وخروج
-              </button>
+              {editingId ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void saveEdit()}
+                    disabled={saving}
+                    style={{
+                      flex: 1,
+                      minHeight: '46px',
+                      background: '#4f46e5',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '10px',
+                      fontSize: '15px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {saving ? 'جارٍ التحديث...' : 'تحديث'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => resetForm(true)}
+                    disabled={saving}
+                    style={{
+                      flex: 1,
+                      minHeight: '46px',
+                      background: '#fff',
+                      color: '#374151',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '10px',
+                      fontSize: '15px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    إلغاء
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void saveAndAddAnother()}
+                    disabled={saving}
+                    style={{
+                      flex: 1,
+                      minHeight: '46px',
+                      background: '#4f46e5',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '10px',
+                      fontSize: '15px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {saving ? 'جارٍ الحفظ...' : 'حفظ وإضافة آخر'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void saveAndExit()}
+                    disabled={saving}
+                    style={{
+                      flex: 1,
+                      minHeight: '46px',
+                      background: '#fff',
+                      color: '#374151',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '10px',
+                      fontSize: '15px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    حفظ وخروج
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -388,7 +464,15 @@ export default function GoodsPricing() {
                       {Number(r.unit_price_usd).toLocaleString('en-US', { maximumFractionDigits: 2 })}
                     </td>
                     <td style={{ padding: '8px 10px' }}>{r.customer_name ?? '—'}</td>
-                    <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                    <td style={{ padding: '8px 10px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      <button
+                        type="button"
+                        onClick={() => startEdit(r)}
+                        title="تعديل"
+                        style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', fontSize: '14px', marginInlineEnd: '10px' }}
+                      >
+                        ✏️
+                      </button>
                       <button
                         type="button"
                         onClick={() => void removeRow(r.id)}

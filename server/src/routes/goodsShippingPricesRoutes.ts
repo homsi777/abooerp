@@ -87,6 +87,52 @@ export function createGoodsShippingPricesRouter() {
     }),
   );
 
+  router.put(
+    '/:id',
+    requirePermissions(WRITE_PERMISSIONS),
+    asyncHandler(async (req, res) => {
+      const body = createSchema.parse(req.body);
+      const { rows } = await pool.query(
+        `
+        update goods_shipping_prices
+        set
+          goods_name = $2,
+          goods_name_normalized = $3,
+          origin = $4,
+          origin_normalized = $5,
+          destination = $6,
+          destination_normalized = $7,
+          weight_from_kg = $8,
+          weight_to_kg = $9,
+          parcel_count = $10,
+          unit_price_usd = $11,
+          customer_name = $12
+        where id = $1
+        returning id, goods_name, origin, destination, weight_from_kg, weight_to_kg, parcel_count, unit_price_usd, customer_name, created_at
+        `,
+        [
+          req.params.id,
+          body.goodsName.trim(),
+          normalizeName(body.goodsName).toLowerCase(),
+          body.origin.trim(),
+          normalizeName(body.origin).toLowerCase(),
+          body.destination.trim(),
+          normalizeName(body.destination).toLowerCase(),
+          body.weightFromKg ?? null,
+          body.weightToKg ?? null,
+          body.parcelCount ?? null,
+          body.unitPriceUsd,
+          body.customerName?.trim() || null,
+        ],
+      );
+      if (!rows[0]) {
+        res.status(404).json({ success: false, error: 'هذا السعر غير موجود.' });
+        return;
+      }
+      res.json({ success: true, data: rows[0] });
+    }),
+  );
+
   router.delete(
     '/:id',
     requirePermissions(WRITE_PERMISSIONS),
