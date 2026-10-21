@@ -53,6 +53,7 @@ export default function FinanceExpenses() {
   const [searchTerm, setSearchTerm] = useState('');
   const [dateFrom, setDateFrom] = useState(monthStartIso);
   const [dateTo, setDateTo] = useState(todayIso);
+  const [cashboxFilter, setCashboxFilter] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -101,6 +102,7 @@ export default function FinanceExpenses() {
       const d = ymd(v.date);
       if (dateFrom && d < dateFrom) return false;
       if (dateTo && d > dateTo) return false;
+      if (cashboxFilter && v.cashboxId !== cashboxFilter) return false;
       if (!q) return true;
       return (
         v.voucherNo.toLowerCase().includes(q) ||
@@ -108,7 +110,7 @@ export default function FinanceExpenses() {
         (v.description && v.description.toLowerCase().includes(q))
       );
     });
-  }, [expenseVouchers, searchTerm, dateFrom, dateTo]);
+  }, [expenseVouchers, searchTerm, dateFrom, dateTo, cashboxFilter]);
 
   const buildExportRows = useCallback(
     (rows: PaymentVoucher[]) =>
@@ -134,9 +136,13 @@ export default function FinanceExpenses() {
   const buildSubtitle = useCallback(() => {
     const parts: string[] = [];
     if (dateFrom || dateTo) parts.push(`الفترة: ${dateFrom || '…'} → ${dateTo || '…'}`);
+    if (cashboxFilter) {
+      const box = cashboxes.find((c) => c.id === cashboxFilter);
+      if (box) parts.push(`الصندوق: ${box.name}`);
+    }
     if (searchTerm.trim()) parts.push(`بحث: ${searchTerm.trim()}`);
     return parts.length ? parts.join(' | ') : undefined;
-  }, [dateFrom, dateTo, searchTerm]);
+  }, [dateFrom, dateTo, searchTerm, cashboxFilter, cashboxes]);
 
   const stats = useMemo(() => {
     let totalUsd = 0;
@@ -412,6 +418,15 @@ export default function FinanceExpenses() {
               onChange={(e) => setDateTo(e.target.value)}
             />
           </label>
+          <label className="form-group block">
+            <span className="form-label">الصندوق</span>
+            <select className="form-input w-full" value={cashboxFilter} onChange={(e) => setCashboxFilter(e.target.value)}>
+              <option value="">الكل</option>
+              {cashboxes.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
             className="toolbar-btn"
@@ -419,6 +434,7 @@ export default function FinanceExpenses() {
               setDateFrom('');
               setDateTo('');
               setSearchTerm('');
+              setCashboxFilter('');
             }}
           >
             مسح الفلتر
