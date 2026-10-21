@@ -5,7 +5,8 @@ export interface GoodsShippingPriceRow {
   goods_name: string;
   origin: string | null;
   destination: string;
-  weight_kg: string | null;
+  weight_from_kg: string | null;
+  weight_to_kg: string | null;
   parcel_count: number | null;
   unit_price_usd: string;
   customer_name: string | null;
@@ -19,7 +20,8 @@ export const goodsShippingPricesGateway = {
     goodsName: string;
     origin: string;
     destination: string;
-    weightKg?: number | null;
+    weightFromKg?: number | null;
+    weightToKg?: number | null;
     parcelCount?: number | null;
     unitPriceUsd: number;
     customerName?: string | null;

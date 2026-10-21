@@ -36,7 +36,8 @@ export default function GoodsPricing() {
   const [goodsName, setGoodsName] = useState('');
   const [origin, setOrigin] = useState(MAIN_BRANCH_LABEL);
   const [destination, setDestination] = useState('');
-  const [weightKg, setWeightKg] = useState('');
+  const [weightFromKg, setWeightFromKg] = useState('');
+  const [weightToKg, setWeightToKg] = useState('');
   const [parcelCount, setParcelCount] = useState('');
   const [unitPriceUsd, setUnitPriceUsd] = useState('');
   const [customerName, setCustomerName] = useState('');
@@ -76,7 +77,8 @@ export default function GoodsPricing() {
 
   const resetForm = (keepFocusField = true) => {
     setGoodsName('');
-    setWeightKg('');
+    setWeightFromKg('');
+    setWeightToKg('');
     setParcelCount('');
     setUnitPriceUsd('');
     setCustomerName('');
@@ -105,6 +107,16 @@ export default function GoodsPricing() {
       setError('أدخلي سعراً صحيحاً.');
       return false;
     }
+    if (weightFromKg.trim() || weightToKg.trim()) {
+      if (!weightFromKg.trim() || !weightToKg.trim()) {
+        setError('أدخلي وزن "من" و"إلى" معاً.');
+        return false;
+      }
+      if (Number(weightToKg) < Number(weightFromKg)) {
+        setError('وزن "إلى" يجب أن يكون أكبر من أو يساوي وزن "من".');
+        return false;
+      }
+    }
     if (customerName.trim() && !customerConfirmed) {
       setError('اسم الزبون غير موجود في النظام — اختاريه من قائمة الاقتراحات أو اتركي الحقل فارغاً.');
       return false;
@@ -120,7 +132,8 @@ export default function GoodsPricing() {
         goodsName: goodsName.trim(),
         origin: origin.trim(),
         destination: destination.trim(),
-        weightKg: weightKg.trim() ? Number(weightKg) : null,
+        weightFromKg: weightFromKg.trim() ? Number(weightFromKg) : null,
+        weightToKg: weightToKg.trim() ? Number(weightToKg) : null,
         parcelCount: parcelCount.trim() ? Number(parcelCount) : null,
         unitPriceUsd: Number(unitPriceUsd),
         customerName: customerName.trim() || null,
@@ -207,33 +220,52 @@ export default function GoodsPricing() {
               </select>
             </div>
 
-            <div>
-              <label style={labelStyle}>الوزن (كغ)</label>
-              <input
-                style={{ ...inputStyle, ...(parcelCount.trim() ? disabledInputStyle : {}) }}
-                value={weightKg}
-                onChange={(e) => {
-                  setWeightKg(e.target.value);
-                  if (e.target.value.trim()) setParcelCount('');
-                }}
-                disabled={Boolean(parcelCount.trim())}
-                inputMode="decimal"
-                placeholder={parcelCount.trim() ? 'مُعطَّل — يوجد عدد طرود' : ''}
-              />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+              <div>
+                <label style={labelStyle}>من وزن (كغ)</label>
+                <input
+                  style={{ ...inputStyle, ...(parcelCount.trim() ? disabledInputStyle : {}) }}
+                  value={weightFromKg}
+                  onChange={(e) => {
+                    setWeightFromKg(e.target.value);
+                    if (e.target.value.trim()) setParcelCount('');
+                  }}
+                  disabled={Boolean(parcelCount.trim())}
+                  inputMode="decimal"
+                  placeholder={parcelCount.trim() ? 'مُعطَّل — يوجد عدد طرود' : 'مثال: 1'}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>إلى وزن (كغ)</label>
+                <input
+                  style={{ ...inputStyle, ...(parcelCount.trim() ? disabledInputStyle : {}) }}
+                  value={weightToKg}
+                  onChange={(e) => {
+                    setWeightToKg(e.target.value);
+                    if (e.target.value.trim()) setParcelCount('');
+                  }}
+                  disabled={Boolean(parcelCount.trim())}
+                  inputMode="decimal"
+                  placeholder={parcelCount.trim() ? 'مُعطَّل — يوجد عدد طرود' : 'مثال: 50'}
+                />
+              </div>
             </div>
 
             <div>
               <label style={labelStyle}>عدد الطرود</label>
               <input
-                style={{ ...inputStyle, ...(weightKg.trim() ? disabledInputStyle : {}) }}
+                style={{ ...inputStyle, ...(weightFromKg.trim() || weightToKg.trim() ? disabledInputStyle : {}) }}
                 value={parcelCount}
                 onChange={(e) => {
                   setParcelCount(e.target.value);
-                  if (e.target.value.trim()) setWeightKg('');
+                  if (e.target.value.trim()) {
+                    setWeightFromKg('');
+                    setWeightToKg('');
+                  }
                 }}
-                disabled={Boolean(weightKg.trim())}
+                disabled={Boolean(weightFromKg.trim() || weightToKg.trim())}
                 inputMode="numeric"
-                placeholder={weightKg.trim() ? 'مُعطَّل — يوجد وزن' : ''}
+                placeholder={weightFromKg.trim() || weightToKg.trim() ? 'مُعطَّل — يوجد نطاق وزن' : ''}
               />
             </div>
 
@@ -334,7 +366,7 @@ export default function GoodsPricing() {
                   <th style={{ padding: '9px 10px', textAlign: 'right', fontWeight: 700 }}>اسم البضاعة</th>
                   <th style={{ padding: '9px 10px', textAlign: 'center', fontWeight: 700 }}>المصدر</th>
                   <th style={{ padding: '9px 10px', textAlign: 'center', fontWeight: 700 }}>الوجهة</th>
-                  <th style={{ padding: '9px 10px', textAlign: 'center', fontWeight: 700 }}>الوزن (كغ)</th>
+                  <th style={{ padding: '9px 10px', textAlign: 'center', fontWeight: 700 }}>نطاق الوزن (كغ)</th>
                   <th style={{ padding: '9px 10px', textAlign: 'center', fontWeight: 700 }}>الطرود</th>
                   <th style={{ padding: '9px 10px', textAlign: 'center', fontWeight: 700 }}>السعر ($)</th>
                   <th style={{ padding: '9px 10px', textAlign: 'right', fontWeight: 700 }}>الزبون</th>
@@ -348,7 +380,9 @@ export default function GoodsPricing() {
                     <td style={{ padding: '8px 10px' }}>{r.goods_name}</td>
                     <td style={{ padding: '8px 10px', textAlign: 'center', color: '#6b7280' }}>{r.origin ?? '—'}</td>
                     <td style={{ padding: '8px 10px', textAlign: 'center' }}>{r.destination}</td>
-                    <td style={{ padding: '8px 10px', textAlign: 'center' }}>{r.weight_kg ?? '—'}</td>
+                    <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                      {r.weight_from_kg != null && r.weight_to_kg != null ? `${r.weight_from_kg} - ${r.weight_to_kg}` : '—'}
+                    </td>
                     <td style={{ padding: '8px 10px', textAlign: 'center' }}>{r.parcel_count ?? '—'}</td>
                     <td style={{ padding: '8px 10px', textAlign: 'center', fontWeight: 700, color: '#166534' }}>
                       {Number(r.unit_price_usd).toLocaleString('en-US', { maximumFractionDigits: 2 })}
