@@ -6116,16 +6116,16 @@ button.linkish {
   box-shadow: 0 30px 70px -20px rgba(14, 80, 60, 0.35), 0 2px 8px rgba(14, 80, 60, 0.08);
 }
 
-.breeze-card.wide { max-width: 900px; }
+.breeze-card.wide { max-width: 1040px; }
 
 .breeze-body.breeze-body-cols {
   display: grid;
-  grid-template-columns: 1fr 1.05fr;
+  grid-template-columns: 1fr 1.08fr;
   align-items: start;
-  gap: 20px;
+  gap: 30px;
 }
 
-.breeze-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; width: 100%; }
+.breeze-col { display: flex; flex-direction: column; gap: 18px; min-width: 0; width: 100%; }
 
 @media (max-width: 760px) {
   .breeze-body.breeze-body-cols { grid-template-columns: 1fr; }
@@ -6176,10 +6176,10 @@ button.linkish {
 }
 
 .breeze-body {
-  padding: 18px 24px 24px;
+  padding: 22px 28px 28px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
 }
 
 .breeze-tiles {
@@ -6202,9 +6202,9 @@ button.linkish {
 }
 
 .breeze-tile-value {
-  font-size: 17px;
+  font-size: 19px;
   font-weight: 800;
-  margin-top: 3px;
+  margin-top: 4px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -6241,12 +6241,12 @@ button.linkish {
 }
 
 .breeze-section-head {
-  padding: 11px 14px;
+  padding: 12px 16px;
   background: var(--breeze-bg);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 800;
 }
 
@@ -6261,9 +6261,9 @@ button.linkish {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 11px 14px;
+  padding: 12px 16px;
   border-top: 1px solid var(--breeze-border);
-  font-size: 12.5px;
+  font-size: 13.5px;
   cursor: pointer;
 }
 
@@ -6290,7 +6290,7 @@ button.linkish {
 
 .breeze-field label {
   display: block;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 700;
   color: var(--breeze-muted);
   margin-bottom: 6px;
@@ -6301,8 +6301,8 @@ button.linkish {
   width: 100%;
   border: 1.5px solid var(--breeze-border);
   border-radius: 12px;
-  padding: 10px 12px;
-  font-size: 13px;
+  padding: 11px 13px;
+  font-size: 14px;
   font-family: inherit;
   background: var(--breeze-surface);
   color: var(--breeze-text);
@@ -6323,8 +6323,8 @@ button.linkish {
   background: var(--breeze-bg);
   border: 1px solid var(--breeze-border);
   border-radius: 14px;
-  padding: 10px 14px;
-  font-size: 12.5px;
+  padding: 11px 16px;
+  font-size: 13.5px;
   font-weight: 700;
 }
 
@@ -6333,8 +6333,8 @@ button.linkish {
 .breeze-week-btn {
   border: none;
   border-radius: 10px;
-  padding: 7px 16px;
-  font-size: 12px;
+  padding: 8px 18px;
+  font-size: 13px;
   font-weight: 800;
   cursor: pointer;
   font-family: inherit;
