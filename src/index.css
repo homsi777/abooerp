@@ -6202,8 +6202,9 @@ button.linkish {
 }
 
 .breeze-tile-value {
-  font-size: 19px;
-  font-weight: 800;
+  font-size: 23px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
   margin-top: 4px;
   font-variant-numeric: tabular-nums;
 }
@@ -6232,7 +6233,7 @@ button.linkish {
 }
 
 .breeze-fx-detail > .breeze-field { flex: 1 1 auto; min-width: 140px; }
-.breeze-fx-detail > .breeze-fx-result { flex: none; font-size: 13px; font-weight: 800; padding-bottom: 10px; white-space: nowrap; }
+.breeze-fx-detail > .breeze-fx-result { flex: none; font-size: 16px; font-weight: 900; padding-bottom: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 .breeze-section {
   border: 1px solid var(--breeze-border);
@@ -6271,9 +6272,9 @@ button.linkish {
 
 .breeze-adv-label { display: flex; align-items: center; gap: 9px; font-weight: 600; }
 .breeze-adv input { accent-color: var(--breeze-warn); width: 16px; height: 16px; }
-.breeze-adv-amt { font-weight: 800; font-variant-numeric: tabular-nums; }
+.breeze-adv-amt { font-size: 15px; font-weight: 900; letter-spacing: 0.2px; font-variant-numeric: tabular-nums; }
 .breeze-adv.checked .breeze-adv-amt { color: var(--breeze-warn); }
-.breeze-adv-orig { font-weight: 500; color: var(--breeze-muted); }
+.breeze-adv-orig { font-weight: 600; font-size: 12.5px; color: var(--breeze-muted); }
 
 .breeze-selsum {
   padding: 10px 14px;
@@ -6287,6 +6288,7 @@ button.linkish {
 }
 
 .breeze-selsum .muted { color: var(--breeze-muted); font-weight: 500; }
+.breeze-amt { font-size: 15px; font-weight: 900; letter-spacing: 0.2px; font-variant-numeric: tabular-nums; }
 
 .breeze-field label {
   display: block;
@@ -6303,9 +6305,17 @@ button.linkish {
   border-radius: 12px;
   padding: 11px 13px;
   font-size: 14px;
+  font-weight: 600;
   font-family: inherit;
   background: var(--breeze-surface);
   color: var(--breeze-text);
+}
+
+.breeze-input-amt {
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0.3px;
+  font-variant-numeric: tabular-nums;
 }
 
 .breeze-select:focus,
@@ -6356,7 +6366,7 @@ button.linkish {
 }
 
 .breeze-net-label { font-size: 13px; font-weight: 800; color: var(--breeze-good); }
-.breeze-net-value { font-size: 21px; font-weight: 800; color: var(--breeze-good); font-variant-numeric: tabular-nums; }
+.breeze-net-value { font-size: 26px; font-weight: 900; letter-spacing: 0.3px; color: var(--breeze-good); font-variant-numeric: tabular-nums; }
 
 .breeze-actions { display: flex; gap: 10px; }
 

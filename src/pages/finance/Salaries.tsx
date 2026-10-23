@@ -880,7 +880,7 @@ function SalaryPayPanel({
               <div className="breeze-fx-detail">
                 <div className="breeze-field">
                   <label>✏️ سعر الصرف (1$ = ؟ {employee.currency})</label>
-                  <input type="number" min="0.01" step="0.01" dir="ltr" className="breeze-input" value={usdRate} onChange={(e) => setUsdRate(e.target.value)} />
+                  <input type="text" inputMode="decimal" dir="ltr" className="breeze-input breeze-input-amt" value={usdRate} onChange={(e) => setUsdRate(e.target.value)} />
                 </div>
                 <div className="breeze-fx-result">= {fmt(convertedUsdAmount)}$</div>
               </div>
@@ -890,7 +890,7 @@ function SalaryPayPanel({
 
         <div className="breeze-field">
           <label>خصم مخالفات / أخرى (اختياري)</label>
-          <input type="number" min="0" step="0.01" dir="ltr" className="breeze-input" value={manualDeduction} onChange={(e) => setManualDeduction(e.target.value)} />
+          <input type="text" inputMode="decimal" dir="ltr" className="breeze-input breeze-input-amt" value={manualDeduction} onChange={(e) => setManualDeduction(e.target.value)} />
         </div>
 
         <div className="breeze-field">
@@ -950,7 +950,7 @@ function SalaryPayPanel({
                 );
               })}
               <div className="breeze-selsum">
-                <span>سيُخصَم من هذا الراتب: {fmt(totalSelectedAdvancesUsd)}$</span>
+                <span>سيُخصَم من هذا الراتب: <strong className="breeze-amt">{fmt(totalSelectedAdvancesUsd)}$</strong></span>
                 {selectedAdvanceIds.size === 0 && <span className="muted">لم تُحدَّد أي سلفة بعد</span>}
               </div>
             </>
@@ -1147,7 +1147,7 @@ function WeeklySalaryPayModal({
               <div className="breeze-fx-detail">
                 <div className="breeze-field">
                   <label>✏️ سعر الصرف (1$ = ؟ {employee.currency})</label>
-                  <input type="number" min="0.01" step="0.01" dir="ltr" className="breeze-input" value={usdRate} onChange={(e) => setUsdRate(e.target.value)} />
+                  <input type="text" inputMode="decimal" dir="ltr" className="breeze-input breeze-input-amt" value={usdRate} onChange={(e) => setUsdRate(e.target.value)} />
                 </div>
                 <div className="breeze-fx-result">= {fmt(convertedUsdAmount)}$</div>
               </div>
@@ -1157,7 +1157,7 @@ function WeeklySalaryPayModal({
 
         <div className="breeze-field">
           <label>خصم مخالفات / أخرى لكل أسبوع يُسلَّم الآن (اختياري)</label>
-          <input type="number" min="0" step="0.01" dir="ltr" className="breeze-input" value={manualDeduction} onChange={(e) => setManualDeduction(e.target.value)} />
+          <input type="text" inputMode="decimal" dir="ltr" className="breeze-input breeze-input-amt" value={manualDeduction} onChange={(e) => setManualDeduction(e.target.value)} />
         </div>
 
         <div className="breeze-field">
@@ -1206,7 +1206,7 @@ function WeeklySalaryPayModal({
               );
             })}
             <div className="breeze-selsum">
-              <span>سيُخصَم من كل أسبوع يُسلَّم الآن: {fmt(totalSelectedAdvancesUsd)}$</span>
+              <span>سيُخصَم من كل أسبوع يُسلَّم الآن: <strong className="breeze-amt">{fmt(totalSelectedAdvancesUsd)}$</strong></span>
               {selectedAdvanceIds.size === 0 && <span className="muted">لم تُحدَّد أي سلفة بعد</span>}
             </div>
           </div>
