@@ -282,6 +282,7 @@ export default function FinanceSalaries() {
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [allSalaries, setAllSalaries] = useState<SalaryRecord[]>([]);
+  const [allAdvances, setAllAdvances] = useState<Advance[]>([]);
   const [cashboxes, setCashboxes] = useState<BackendCashboxRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [printingId, setPrintingId] = useState<string | null>(null);
@@ -302,13 +303,15 @@ export default function FinanceSalaries() {
   const load = async () => {
     setLoading(true);
     try {
-      const [emps, sals, boxes] = await Promise.all([
+      const [emps, sals, advs, boxes] = await Promise.all([
         httpClient.get<Employee[]>('/employees?includeInactive=true'),
         httpClient.get<SalaryRecord[]>('/salary-records'),
+        httpClient.get<Advance[]>('/employee-advances'),
         phase3FinanceGateway.cashbox.listMaster(),
       ]);
       setEmployees(emps);
       setAllSalaries(sals);
+      setAllAdvances(advs);
       setCashboxes(boxes);
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'تعذر تحميل البيانات', 'error');
@@ -350,6 +353,19 @@ export default function FinanceSalaries() {
     const paid = allSalaries.filter((s) => s.employee_id === employeeId && s.payment_status === 'paid');
     if (!paid.length) return null;
     return paid.reduce((latest, s) => (s.pay_date > latest.pay_date ? s : latest), paid[0]!);
+  };
+
+  /** مجموع السلف المفتوحة (معلّقة أو مسدَّدة جزئياً) لموظف، مجمَّعة حسب العملة
+   *  (نادراً ما يملك موظف سلفاً بأكثر من عملة، لكن نعرضها بأمان لو حصل). */
+  const openAdvancesByCurrencyFor = (employeeId: string): { currency: string; amount: number }[] => {
+    const byCurrency = new Map<string, number>();
+    for (const a of allAdvances) {
+      if (a.employee_id !== employeeId || (a.status !== 'pending' && a.status !== 'partially_repaid')) continue;
+      const remaining = Math.max(0, Number(a.amount) - Number(a.repaid_amount));
+      if (remaining <= 0) continue;
+      byCurrency.set(a.currency, (byCurrency.get(a.currency) ?? 0) + remaining);
+    }
+    return Array.from(byCurrency, ([currency, amount]) => ({ currency, amount }));
   };
 
   const openCreateEmp = () => { setEmpForm(emptyEmp); setEmpModal('create'); };
@@ -449,6 +465,7 @@ export default function FinanceSalaries() {
                 <tr style={{ background: '#f3f4f6', borderBottom: '2px solid #9ca3af' }}>
                   <th style={thStyle('right')}>الموظف</th>
                   <th style={thStyle('right')}>الراتب الأساسي</th>
+                  <th style={thStyle('right')}>السلف</th>
                   <th style={thStyle('right')}>حالة هذا الشهر</th>
                   <th style={thStyle('right')}>إجراءات</th>
                 </tr>
@@ -473,6 +490,28 @@ export default function FinanceSalaries() {
                       <td style={tdStyle('right')}>
                         {fmt(e.basic_salary)} {e.currency}
                         {isWeekly && <span style={{ fontSize: '11px', color: '#6b7280' }}> / أسبوع</span>}
+                      </td>
+                      <td style={tdStyle('right')}>
+                        {(() => {
+                          const advances = openAdvancesByCurrencyFor(e.id);
+                          return advances.length === 0 ? (
+                            <span style={{ color: '#9ca3af', fontSize: '12px' }}>—</span>
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              {advances.map(({ currency, amount }) => (
+                                <span
+                                  key={currency}
+                                  style={{
+                                    background: '#fff3db', color: '#b45309', padding: '3px 10px',
+                                    borderRadius: '999px', fontSize: '11.5px', fontWeight: 700, width: 'fit-content',
+                                  }}
+                                >
+                                  {fmt(amount)} {currency}
+                                </span>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td style={tdStyle('right')}>
                         {isWeekly ? (
