@@ -179,25 +179,26 @@ function Modal({ title, onClose, children, wide }: { title: string; onClose: () 
 // ─── "النسيم" — غلاف بطاقة تسليم الراتب ────────────────────────────────────
 
 function BreezeShell({
-  tag, title, sub, onClose, children,
+  tag, title, sub, onClose, children, wide,
 }: {
   tag: string;
   title: string;
   sub: string;
   onClose: () => void;
   children: React.ReactNode;
+  wide?: boolean;
 }) {
   useRegisterEscape(onClose);
   return (
     <div className="breeze-overlay" onClick={onClose}>
-      <div className="breeze breeze-card" onClick={(e) => e.stopPropagation()}>
+      <div className={`breeze breeze-card ${wide ? 'wide' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="breeze-head">
           <button type="button" className="breeze-head-x" onClick={onClose}>✕</button>
           <div className="breeze-tag">{tag}</div>
           <h2>{title}</h2>
           <div className="breeze-sub">{sub}</div>
         </div>
-        <div className="breeze-body">{children}</div>
+        <div className={`breeze-body ${wide ? 'breeze-body-cols' : ''}`}>{children}</div>
       </div>
     </div>
   );
@@ -851,106 +852,110 @@ function SalaryPayPanel({
   );
 
   return (
-    <BreezeShell tag="تسليم راتب" title={employee.name} sub={`${employee.code}${employee.position ? ` · ${employee.position}` : ''}`} onClose={onClose}>
-      <div className="breeze-tiles">
-        <div className="breeze-tile">
-          <div className="breeze-tile-label">الراتب الأساسي</div>
-          <div className="breeze-tile-value">
-            {fmt(employee.basic_salary)} {employee.currency}
-            {payInUsd && usdRateNum > 0 && <span style={{ fontSize: '12px', color: 'var(--breeze-accent)', fontWeight: 700 }}> = {fmt(convertedUsdAmount)}$</span>}
-          </div>
-        </div>
-        <div className="breeze-tile">
-          <div className="breeze-tile-label">السلف المفتوحة (كلها)</div>
-          <div className={`breeze-tile-value ${totalOpenAdvancesUsd > 0 ? 'warn' : 'good'}`}>
-            {loadingAdvances ? '...' : `${fmt(totalOpenAdvancesUsd)}$`}
-          </div>
-        </div>
-      </div>
-
-      {isForeignCurrency && (
-        <label className="breeze-fxrow" style={{ flexDirection: 'column', alignItems: 'stretch', gap: payInUsd ? '10px' : '0' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <input type="checkbox" checked={payInUsd} onChange={(e) => { setPayInUsd(e.target.checked); setCashboxId(''); }} />
-            تحويل الراتب إلى دولار والدفع من صندوق دولار
-          </span>
-          {payInUsd && (
-            <span className="breeze-fx-detail" onClick={(e) => e.stopPropagation()}>
-              <span style={{ flex: 1 }}>
-                <label style={{ display: 'block', fontSize: '11.5px', fontWeight: 700, marginBottom: '4px' }}>✏️ سعر الصرف (1$ = ؟ {employee.currency})</label>
-                <input type="number" min="0.01" step="0.01" className="breeze-input" value={usdRate} onChange={(e) => setUsdRate(e.target.value)} />
-              </span>
-              <span style={{ fontSize: '13px', fontWeight: 700, paddingBottom: '8px' }}>= {fmt(convertedUsdAmount)}$</span>
-            </span>
-          )}
-        </label>
-      )}
-
-      <div className="breeze-section">
-        <div className="breeze-section-head">
-          <span>سلف الموظف المفتوحة</span>
-          {!loadingAdvances && openAdvances.length > 0 && <span className="breeze-section-hint">حدّدي السلف التي تريدين خصمها الآن</span>}
-        </div>
-        {loadingAdvances ? (
-          <p className="breeze-note">جاري التحميل...</p>
-        ) : openAdvances.length === 0 ? (
-          <p className="breeze-note">لا توجد سلف مفتوحة لهذا الموظف.</p>
-        ) : (
-          <>
-            {openAdvances.map((a) => {
-              const checked = selectedAdvanceIds.has(a.id);
-              return (
-                <label key={a.id} className={`breeze-adv ${checked ? 'checked' : ''}`}>
-                  <span className="breeze-adv-label">
-                    <input type="checkbox" checked={checked} onChange={() => toggleAdvance(a.id)} />
-                    سلفة {a.advance_date?.split('T')[0]}
-                  </span>
-                  <span className="breeze-adv-amt">
-                    {fmt(Number(a.amount) - Number(a.repaid_amount))} {a.currency}
-                    <span className="breeze-adv-orig"> (أصل {fmt(a.amount)})</span>
-                  </span>
-                </label>
-              );
-            })}
-            <div className="breeze-selsum">
-              <span>سيُخصَم من هذا الراتب: {fmt(totalSelectedAdvancesUsd)}$</span>
-              {selectedAdvanceIds.size === 0 && <span className="muted">لم تُحدَّد أي سلفة بعد</span>}
+    <BreezeShell tag="تسليم راتب" title={employee.name} sub={`${employee.code}${employee.position ? ` · ${employee.position}` : ''}`} onClose={onClose} wide>
+      <div className="breeze-col">
+        <div className="breeze-tiles">
+          <div className="breeze-tile">
+            <div className="breeze-tile-label">الراتب الأساسي</div>
+            <div className="breeze-tile-value">
+              {fmt(employee.basic_salary)} {employee.currency}
+              {payInUsd && usdRateNum > 0 && <span style={{ fontSize: '12px', color: 'var(--breeze-accent)', fontWeight: 700 }}> = {fmt(convertedUsdAmount)}$</span>}
             </div>
-          </>
+          </div>
+          <div className="breeze-tile">
+            <div className="breeze-tile-label">السلف المفتوحة (كلها)</div>
+            <div className={`breeze-tile-value ${totalOpenAdvancesUsd > 0 ? 'warn' : 'good'}`}>
+              {loadingAdvances ? '...' : `${fmt(totalOpenAdvancesUsd)}$`}
+            </div>
+          </div>
+        </div>
+
+        {isForeignCurrency && (
+          <div className="breeze-fxrow">
+            <label className="breeze-fx-toggle">
+              <input type="checkbox" checked={payInUsd} onChange={(e) => { setPayInUsd(e.target.checked); setCashboxId(''); }} />
+              تحويل الراتب إلى دولار والدفع من صندوق دولار
+            </label>
+            {payInUsd && (
+              <div className="breeze-fx-detail">
+                <div className="breeze-field">
+                  <label>✏️ سعر الصرف (1$ = ؟ {employee.currency})</label>
+                  <input type="number" min="0.01" step="0.01" className="breeze-input" value={usdRate} onChange={(e) => setUsdRate(e.target.value)} />
+                </div>
+                <div className="breeze-fx-result">= {fmt(convertedUsdAmount)}$</div>
+              </div>
+            )}
+          </div>
         )}
+
+        <div className="breeze-field">
+          <label>خصم مخالفات / أخرى (اختياري)</label>
+          <input type="number" min="0" step="0.01" className="breeze-input" value={manualDeduction} onChange={(e) => setManualDeduction(e.target.value)} />
+        </div>
+
+        <div className="breeze-field">
+          <label>الصندوق</label>
+          <select className="breeze-select" value={cashboxId} onChange={(e) => setCashboxId(e.target.value)}>
+            <option value="">اختر...</option>
+            {eligibleCashboxes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          {eligibleCashboxes.length === 0 && (
+            <p style={{ color: '#dc2626', fontSize: '12.5px', marginTop: '4px' }}>لا يوجد أي صندوق نشط في النظام حالياً.</p>
+          )}
+          {currencyMismatchFallback && (
+            <p style={{ color: 'var(--breeze-warn)', fontSize: '12.5px', marginTop: '4px' }}>
+              ⚠ لا يوجد صندوق بعملة {targetCurrency} تحديداً — القائمة تعرض كل الصناديق النشطة، تأكدي من اختيار صندوق بهذه العملة فعلاً.
+            </p>
+          )}
+        </div>
+
+        <div className="breeze-net">
+          <span className="breeze-net-label">الصافي المقدَّر للاستلام</span>
+          <span className="breeze-net-value">{fmt(estimatedNet)} {payInUsd ? 'USD' : employee.currency}</span>
+        </div>
+
+        <div className="breeze-actions">
+          <button type="button" className="breeze-btn-cancel" onClick={onClose}>إلغاء</button>
+          <button type="button" className="breeze-btn-confirm" onClick={() => void confirmPay()} disabled={saving || !cashboxId}>
+            {saving ? 'جارٍ التسليم...' : 'تأكيد استلام'}
+          </button>
+        </div>
       </div>
 
-      <div className="breeze-field">
-        <label>خصم مخالفات / أخرى (اختياري)</label>
-        <input type="number" min="0" step="0.01" className="breeze-input" value={manualDeduction} onChange={(e) => setManualDeduction(e.target.value)} />
-      </div>
-
-      <div className="breeze-field">
-        <label>الصندوق</label>
-        <select className="breeze-select" value={cashboxId} onChange={(e) => setCashboxId(e.target.value)}>
-          <option value="">اختر...</option>
-          {eligibleCashboxes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        {eligibleCashboxes.length === 0 && (
-          <p style={{ color: '#dc2626', fontSize: '12.5px', marginTop: '4px' }}>لا يوجد أي صندوق نشط في النظام حالياً.</p>
-        )}
-        {currencyMismatchFallback && (
-          <p style={{ color: 'var(--breeze-warn)', fontSize: '12.5px', marginTop: '4px' }}>
-            ⚠ لا يوجد صندوق بعملة {targetCurrency} تحديداً — القائمة تعرض كل الصناديق النشطة، تأكدي من اختيار صندوق بهذه العملة فعلاً.
-          </p>
-        )}
-      </div>
-
-      <div className="breeze-net">
-        <span className="breeze-net-label">الصافي المقدَّر للاستلام</span>
-        <span className="breeze-net-value">{fmt(estimatedNet)} {payInUsd ? 'USD' : employee.currency}</span>
-      </div>
-
-      <div className="breeze-actions">
-        <button type="button" className="breeze-btn-cancel" onClick={onClose}>إلغاء</button>
-        <button type="button" className="breeze-btn-confirm" onClick={() => void confirmPay()} disabled={saving || !cashboxId}>
-          {saving ? 'جارٍ التسليم...' : 'تأكيد استلام'}
-        </button>
+      <div className="breeze-col">
+        <div className="breeze-section">
+          <div className="breeze-section-head">
+            <span>سلف الموظف المفتوحة</span>
+            {!loadingAdvances && openAdvances.length > 0 && <span className="breeze-section-hint">حدّدي السلف التي تريدين خصمها الآن</span>}
+          </div>
+          {loadingAdvances ? (
+            <p className="breeze-note">جاري التحميل...</p>
+          ) : openAdvances.length === 0 ? (
+            <p className="breeze-note">لا توجد سلف مفتوحة لهذا الموظف.</p>
+          ) : (
+            <>
+              {openAdvances.map((a) => {
+                const checked = selectedAdvanceIds.has(a.id);
+                return (
+                  <label key={a.id} className={`breeze-adv ${checked ? 'checked' : ''}`}>
+                    <span className="breeze-adv-label">
+                      <input type="checkbox" checked={checked} onChange={() => toggleAdvance(a.id)} />
+                      سلفة {a.advance_date?.split('T')[0]}
+                    </span>
+                    <span className="breeze-adv-amt">
+                      {fmt(Number(a.amount) - Number(a.repaid_amount))} {a.currency}
+                      <span className="breeze-adv-orig"> (أصل {fmt(a.amount)})</span>
+                    </span>
+                  </label>
+                );
+              })}
+              <div className="breeze-selsum">
+                <span>سيُخصَم من هذا الراتب: {fmt(totalSelectedAdvancesUsd)}$</span>
+                {selectedAdvanceIds.size === 0 && <span className="muted">لم تُحدَّد أي سلفة بعد</span>}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </BreezeShell>
   );
@@ -1116,122 +1121,126 @@ function WeeklySalaryPayModal({
   };
 
   return (
-    <BreezeShell tag="تسليم راتب أسبوعي" title={employee.name} sub={`${employee.code}${employee.position ? ` · ${employee.position}` : ''}`} onClose={onClose}>
-      <div className="breeze-tiles">
-        <div className="breeze-tile">
-          <div className="breeze-tile-label">أجرة الأسبوع</div>
-          <div className="breeze-tile-value">
-            {fmt(employee.basic_salary)} {employee.currency}
-            {payInUsd && usdRateNum > 0 && <span style={{ fontSize: '12px', color: 'var(--breeze-accent)', fontWeight: 700 }}> = {fmt(convertedUsdAmount)}$</span>}
+    <BreezeShell tag="تسليم راتب أسبوعي" title={employee.name} sub={`${employee.code}${employee.position ? ` · ${employee.position}` : ''}`} onClose={onClose} wide>
+      <div className="breeze-col">
+        <div className="breeze-tiles">
+          <div className="breeze-tile">
+            <div className="breeze-tile-label">أجرة الأسبوع</div>
+            <div className="breeze-tile-value">
+              {fmt(employee.basic_salary)} {employee.currency}
+              {payInUsd && usdRateNum > 0 && <span style={{ fontSize: '12px', color: 'var(--breeze-accent)', fontWeight: 700 }}> = {fmt(convertedUsdAmount)}$</span>}
+            </div>
+          </div>
+          <div className="breeze-tile">
+            <div className="breeze-tile-label">السلف المفتوحة (بالدولار)</div>
+            <div className={`breeze-tile-value ${totalOpenAdvancesUsd > 0 ? 'warn' : 'good'}`}>{fmt(totalOpenAdvancesUsd)}$</div>
           </div>
         </div>
-        <div className="breeze-tile">
-          <div className="breeze-tile-label">السلف المفتوحة (بالدولار)</div>
-          <div className={`breeze-tile-value ${totalOpenAdvancesUsd > 0 ? 'warn' : 'good'}`}>{fmt(totalOpenAdvancesUsd)}$</div>
-        </div>
-      </div>
 
-      {openAdvances.length > 0 && (
-        <div className="breeze-section">
-          <div className="breeze-section-head">
-            <span>سلف الموظف المفتوحة</span>
-            <span className="breeze-section-hint">حدّدي السلف لخصمها من كل أسبوع يُسلَّم الآن</span>
-          </div>
-          {openAdvances.map((a) => {
-            const checked = selectedAdvanceIds.has(a.id);
-            return (
-              <label key={a.id} className={`breeze-adv ${checked ? 'checked' : ''}`}>
-                <span className="breeze-adv-label">
-                  <input type="checkbox" checked={checked} onChange={() => toggleAdvance(a.id)} />
-                  سلفة {a.advance_date?.split('T')[0]}
-                </span>
-                <span className="breeze-adv-amt">
-                  {fmt(Number(a.amount) - Number(a.repaid_amount))} {a.currency}
-                  <span className="breeze-adv-orig"> (أصل {fmt(a.amount)})</span>
-                </span>
-              </label>
-            );
-          })}
-          <div className="breeze-selsum">
-            <span>سيُخصَم من كل أسبوع يُسلَّم الآن: {fmt(totalSelectedAdvancesUsd)}$</span>
-            {selectedAdvanceIds.size === 0 && <span className="muted">لم تُحدَّد أي سلفة بعد</span>}
-          </div>
-        </div>
-      )}
-
-      {isForeignCurrency && (
-        <label className="breeze-fxrow" style={{ flexDirection: 'column', alignItems: 'stretch', gap: payInUsd ? '10px' : '0' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <input type="checkbox" checked={payInUsd} onChange={(e) => { setPayInUsd(e.target.checked); setCashboxId(''); }} />
-            تحويل الراتب إلى دولار والدفع من صندوق دولار
-          </span>
-          {payInUsd && (
-            <span className="breeze-fx-detail" onClick={(e) => e.stopPropagation()}>
-              <span style={{ flex: 1 }}>
-                <label style={{ display: 'block', fontSize: '11.5px', fontWeight: 700, marginBottom: '4px' }}>✏️ سعر الصرف (1$ = ؟ {employee.currency})</label>
-                <input type="number" min="0.01" step="0.01" className="breeze-input" value={usdRate} onChange={(e) => setUsdRate(e.target.value)} />
-              </span>
-              <span style={{ fontSize: '13px', fontWeight: 700, paddingBottom: '8px' }}>= {fmt(convertedUsdAmount)}$</span>
-            </span>
-          )}
-        </label>
-      )}
-
-      <div className="breeze-field">
-        <label>خصم مخالفات / أخرى لكل أسبوع يُسلَّم الآن (اختياري)</label>
-        <input type="number" min="0" step="0.01" className="breeze-input" value={manualDeduction} onChange={(e) => setManualDeduction(e.target.value)} />
-      </div>
-
-      <div className="breeze-field">
-        <label>الصندوق</label>
-        <select className="breeze-select" value={cashboxId} onChange={(e) => setCashboxId(e.target.value)}>
-          <option value="">اختر...</option>
-          {eligibleCashboxes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        {currencyMismatchFallback && (
-          <p style={{ color: 'var(--breeze-warn)', fontSize: '12.5px', marginTop: '4px' }}>
-            ⚠ لا يوجد صندوق بعملة {targetCurrency} تحديداً — تأكدي من اختيار صندوق بهذه العملة فعلاً.
-          </p>
-        )}
-      </div>
-
-      <div className="breeze-section">
-        <div className="breeze-section-head"><span>أسابيع {MONTHS_AR[periodMonth - 1]}</span></div>
-        {loadingRecords ? (
-          <p className="breeze-note">جاري التحميل...</p>
-        ) : (
-          <div className="breeze-weeks">
-            {weekDates.map((date) => {
-              const rec = recordFor(date);
-              const paid = rec?.payment_status === 'paid';
-              return (
-                <div key={date} className="breeze-week">
-                  <span>
-                    أسبوع {date}
-                    {paid && <span className="breeze-week-status"> — مدفوع</span>}
-                  </span>
-                  <button
-                    type="button"
-                    className={`breeze-week-btn ${paid ? 'ghost' : ''}`}
-                    disabled={paid || payingDate === date || bulkPaying || !cashboxId}
-                    onClick={() => void handlePayWeek(date)}
-                  >
-                    {payingDate === date ? 'جارٍ...' : paid ? 'مدفوع' : 'تسليم'}
-                  </button>
+        {isForeignCurrency && (
+          <div className="breeze-fxrow">
+            <label className="breeze-fx-toggle">
+              <input type="checkbox" checked={payInUsd} onChange={(e) => { setPayInUsd(e.target.checked); setCashboxId(''); }} />
+              تحويل الراتب إلى دولار والدفع من صندوق دولار
+            </label>
+            {payInUsd && (
+              <div className="breeze-fx-detail">
+                <div className="breeze-field">
+                  <label>✏️ سعر الصرف (1$ = ؟ {employee.currency})</label>
+                  <input type="number" min="0.01" step="0.01" className="breeze-input" value={usdRate} onChange={(e) => setUsdRate(e.target.value)} />
                 </div>
+                <div className="breeze-fx-result">= {fmt(convertedUsdAmount)}$</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="breeze-field">
+          <label>خصم مخالفات / أخرى لكل أسبوع يُسلَّم الآن (اختياري)</label>
+          <input type="number" min="0" step="0.01" className="breeze-input" value={manualDeduction} onChange={(e) => setManualDeduction(e.target.value)} />
+        </div>
+
+        <div className="breeze-field">
+          <label>الصندوق</label>
+          <select className="breeze-select" value={cashboxId} onChange={(e) => setCashboxId(e.target.value)}>
+            <option value="">اختر...</option>
+            {eligibleCashboxes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          {currencyMismatchFallback && (
+            <p style={{ color: 'var(--breeze-warn)', fontSize: '12.5px', marginTop: '4px' }}>
+              ⚠ لا يوجد صندوق بعملة {targetCurrency} تحديداً — تأكدي من اختيار صندوق بهذه العملة فعلاً.
+            </p>
+          )}
+        </div>
+
+        <div className="breeze-actions">
+          <button type="button" className="breeze-btn-cancel" onClick={onClose}>إغلاق</button>
+          {unpaidDates.length > 1 ? (
+            <button type="button" className="breeze-btn-confirm" onClick={() => void handlePayAllOverdue()} disabled={bulkPaying || !cashboxId}>
+              {bulkPaying ? 'جارٍ تسليم الكل...' : `تسليم كل الأسابيع المتأخرة (${unpaidDates.length})`}
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="breeze-col">
+        {openAdvances.length > 0 && (
+          <div className="breeze-section">
+            <div className="breeze-section-head">
+              <span>سلف الموظف المفتوحة</span>
+              <span className="breeze-section-hint">حدّدي السلف لخصمها من كل أسبوع يُسلَّم الآن</span>
+            </div>
+            {openAdvances.map((a) => {
+              const checked = selectedAdvanceIds.has(a.id);
+              return (
+                <label key={a.id} className={`breeze-adv ${checked ? 'checked' : ''}`}>
+                  <span className="breeze-adv-label">
+                    <input type="checkbox" checked={checked} onChange={() => toggleAdvance(a.id)} />
+                    سلفة {a.advance_date?.split('T')[0]}
+                  </span>
+                  <span className="breeze-adv-amt">
+                    {fmt(Number(a.amount) - Number(a.repaid_amount))} {a.currency}
+                    <span className="breeze-adv-orig"> (أصل {fmt(a.amount)})</span>
+                  </span>
+                </label>
               );
             })}
+            <div className="breeze-selsum">
+              <span>سيُخصَم من كل أسبوع يُسلَّم الآن: {fmt(totalSelectedAdvancesUsd)}$</span>
+              {selectedAdvanceIds.size === 0 && <span className="muted">لم تُحدَّد أي سلفة بعد</span>}
+            </div>
           </div>
         )}
-      </div>
 
-      <div className="breeze-actions">
-        <button type="button" className="breeze-btn-cancel" onClick={onClose}>إغلاق</button>
-        {unpaidDates.length > 1 ? (
-          <button type="button" className="breeze-btn-confirm" onClick={() => void handlePayAllOverdue()} disabled={bulkPaying || !cashboxId}>
-            {bulkPaying ? 'جارٍ تسليم الكل...' : `تسليم كل الأسابيع المتأخرة (${unpaidDates.length})`}
-          </button>
-        ) : null}
+        <div className="breeze-section">
+          <div className="breeze-section-head"><span>أسابيع {MONTHS_AR[periodMonth - 1]}</span></div>
+          {loadingRecords ? (
+            <p className="breeze-note">جاري التحميل...</p>
+          ) : (
+            <div className="breeze-weeks">
+              {weekDates.map((date) => {
+                const rec = recordFor(date);
+                const paid = rec?.payment_status === 'paid';
+                return (
+                  <div key={date} className="breeze-week">
+                    <span>
+                      أسبوع {date}
+                      {paid && <span className="breeze-week-status"> — مدفوع</span>}
+                    </span>
+                    <button
+                      type="button"
+                      className={`breeze-week-btn ${paid ? 'ghost' : ''}`}
+                      disabled={paid || payingDate === date || bulkPaying || !cashboxId}
+                      onClick={() => void handlePayWeek(date)}
+                    >
+                      {payingDate === date ? 'جارٍ...' : paid ? 'مدفوع' : 'تسليم'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </BreezeShell>
   );

@@ -6116,6 +6116,21 @@ button.linkish {
   box-shadow: 0 30px 70px -20px rgba(14, 80, 60, 0.35), 0 2px 8px rgba(14, 80, 60, 0.08);
 }
 
+.breeze-card.wide { max-width: 900px; }
+
+.breeze-body-cols {
+  display: grid;
+  grid-template-columns: 1fr 1.05fr;
+  align-items: start;
+  gap: 20px;
+}
+
+.breeze-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+@media (max-width: 760px) {
+  .breeze-body-cols { grid-template-columns: 1fr; }
+}
+
 .breeze-head {
   position: relative;
   padding: 22px 24px 18px;
@@ -6197,9 +6212,6 @@ button.linkish {
 .breeze-tile-value.good { color: var(--breeze-good); }
 
 .breeze-fxrow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   background: var(--breeze-accent-soft);
   border: 1px solid #bfe9da;
   border-radius: 14px;
@@ -6207,17 +6219,20 @@ button.linkish {
   font-size: 12.5px;
   font-weight: 700;
   color: var(--breeze-accent-ink);
-  cursor: pointer;
 }
 
-.breeze-fxrow input { accent-color: var(--breeze-accent); width: 17px; height: 17px; }
+.breeze-fx-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.breeze-fx-toggle input { accent-color: var(--breeze-accent); width: 17px; height: 17px; flex: none; }
 
 .breeze-fx-detail {
   display: flex;
   align-items: flex-end;
-  gap: 10px;
-  margin-top: -6px;
+  gap: 12px;
+  margin-top: 10px;
 }
+
+.breeze-fx-detail > .breeze-field { flex: 1 1 auto; min-width: 140px; }
+.breeze-fx-detail > .breeze-fx-result { flex: none; font-size: 13px; font-weight: 800; padding-bottom: 10px; white-space: nowrap; }
 
 .breeze-section {
   border: 1px solid var(--breeze-border);
