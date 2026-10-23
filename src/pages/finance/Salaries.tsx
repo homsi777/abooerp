@@ -176,6 +176,33 @@ function Modal({ title, onClose, children, wide }: { title: string; onClose: () 
   );
 }
 
+// ─── "النسيم" — غلاف بطاقة تسليم الراتب ────────────────────────────────────
+
+function BreezeShell({
+  tag, title, sub, onClose, children,
+}: {
+  tag: string;
+  title: string;
+  sub: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  useRegisterEscape(onClose);
+  return (
+    <div className="breeze-overlay" onClick={onClose}>
+      <div className="breeze breeze-card" onClick={(e) => e.stopPropagation()}>
+        <div className="breeze-head">
+          <button type="button" className="breeze-head-x" onClick={onClose}>✕</button>
+          <div className="breeze-tag">{tag}</div>
+          <h2>{title}</h2>
+          <div className="breeze-sub">{sub}</div>
+        </div>
+        <div className="breeze-body">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 // ─── A5 salary receipt print ────────────────────────────────────────────────
 
 function escapeReceiptHtml(value: string | number | null | undefined): string {
@@ -785,130 +812,108 @@ function SalaryPayPanel({
   );
 
   return (
-    <Modal title={`تسليم راتب — ${employee.name}`} onClose={onClose}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-        <div style={{ display: 'flex', gap: '10px', background: 'linear-gradient(135deg,#f8fafc,#eef2ff)', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '14px' }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '11.5px', color: '#6b7280', fontWeight: 600 }}>الراتب الأساسي</div>
-            <div style={{ fontSize: '18px', fontWeight: 800 }}>
-              {fmt(employee.basic_salary)} {employee.currency}
-              {payInUsd && usdRateNum > 0 && (
-                <span style={{ fontSize: '12px', color: '#4f46e5', fontWeight: 700 }}> = {fmt(convertedUsdAmount)}$</span>
-              )}
-            </div>
-          </div>
-          <div style={{ width: '1px', background: '#e2e8f0' }} />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '11.5px', color: '#6b7280', fontWeight: 600 }}>السلف المفتوحة (كلها)</div>
-            <div style={{ fontSize: '18px', fontWeight: 800, color: totalOpenAdvancesUsd > 0 ? '#b45309' : '#166534' }}>
-              {loadingAdvances ? '...' : `${fmt(totalOpenAdvancesUsd)}$`}
-            </div>
+    <BreezeShell tag="تسليم راتب" title={employee.name} sub={`${employee.code}${employee.position ? ` · ${employee.position}` : ''}`} onClose={onClose}>
+      <div className="breeze-tiles">
+        <div className="breeze-tile">
+          <div className="breeze-tile-label">الراتب الأساسي</div>
+          <div className="breeze-tile-value">
+            {fmt(employee.basic_salary)} {employee.currency}
+            {payInUsd && usdRateNum > 0 && <span style={{ fontSize: '12px', color: 'var(--breeze-accent)', fontWeight: 700 }}> = {fmt(convertedUsdAmount)}$</span>}
           </div>
         </div>
-
-        {isForeignCurrency && (
-          <div style={{ background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '10px', padding: '12px' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
-              <input type="checkbox" checked={payInUsd} onChange={(e) => { setPayInUsd(e.target.checked); setCashboxId(''); }} />
-              تحويل الراتب إلى دولار والدفع من صندوق دولار
-            </label>
-            {payInUsd && (
-              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', marginTop: '8px' }}>
-                <div style={{ flex: 1 }}>
-                  <label className="form-label">✏️ سعر الصرف (1$ = ؟ {employee.currency})</label>
-                  <input
-                    type="number" min="0.01" step="0.01" className="form-input w-full"
-                    value={usdRate} onChange={(e) => setUsdRate(e.target.value)}
-                  />
-                </div>
-                <div style={{ fontSize: '13px', fontWeight: 700, paddingBottom: '8px' }}>
-                  = {fmt(convertedUsdAmount)}$
-                </div>
-              </div>
-            )}
+        <div className="breeze-tile">
+          <div className="breeze-tile-label">السلف المفتوحة (كلها)</div>
+          <div className={`breeze-tile-value ${totalOpenAdvancesUsd > 0 ? 'warn' : 'good'}`}>
+            {loadingAdvances ? '...' : `${fmt(totalOpenAdvancesUsd)}$`}
           </div>
-        )}
-
-        <div style={{ border: '1px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden' }}>
-          <div style={{ padding: '10px 12px', background: '#f9fafb', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '13px', fontWeight: 800 }}>سلف الموظف المفتوحة</span>
-            {!loadingAdvances && openAdvances.length > 0 && (
-              <span style={{ fontSize: '11.5px', color: '#6b7280' }}>حدّدي السلف التي تريدين خصمها الآن</span>
-            )}
-          </div>
-          {loadingAdvances ? (
-            <p style={{ padding: '12px', fontSize: '12.5px', color: '#6b7280' }}>جاري التحميل...</p>
-          ) : openAdvances.length === 0 ? (
-            <p style={{ padding: '12px', fontSize: '12.5px', color: '#9ca3af' }}>لا توجد سلف مفتوحة لهذا الموظف.</p>
-          ) : (
-            <div>
-              {openAdvances.map((a) => {
-                const checked = selectedAdvanceIds.has(a.id);
-                return (
-                  <label
-                    key={a.id}
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
-                      padding: '9px 12px', fontSize: '12.5px', cursor: 'pointer',
-                      background: checked ? '#fff7ed' : '#fff',
-                      borderBottom: '1px solid #f1f5f9',
-                    }}
-                  >
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <input type="checkbox" checked={checked} onChange={() => toggleAdvance(a.id)} />
-                      سلفة {a.advance_date?.split('T')[0]}
-                    </span>
-                    <span style={{ fontWeight: 700, color: checked ? '#b45309' : '#374151' }}>
-                      {fmt(Number(a.amount) - Number(a.repaid_amount))} {a.currency}
-                      <span style={{ color: '#9ca3af', fontWeight: 400 }}> (أصل {fmt(a.amount)})</span>
-                    </span>
-                  </label>
-                );
-              })}
-              <div style={{ padding: '8px 12px', fontSize: '12.5px', fontWeight: 700, background: '#fff7ed', color: '#b45309' }}>
-                سيُخصَم من هذا الراتب: {fmt(totalSelectedAdvancesUsd)}$
-                {selectedAdvanceIds.size === 0 && <span style={{ color: '#9ca3af', fontWeight: 400 }}> — لم تُحدَّد أي سلفة بعد</span>}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="form-group">
-          <label className="form-label">خصم مخالفات / أخرى (اختياري)</label>
-          <input type="number" min="0" step="0.01" className="form-input w-full" value={manualDeduction} onChange={(e) => setManualDeduction(e.target.value)} />
-        </div>
-
-        <div className="form-group">
-          <label className="form-label">الصندوق</label>
-          <select className="form-input w-full" value={cashboxId} onChange={(e) => setCashboxId(e.target.value)}>
-            <option value="">اختر...</option>
-            {eligibleCashboxes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-          {eligibleCashboxes.length === 0 && (
-            <p style={{ color: '#dc2626', fontSize: '12.5px', marginTop: '4px' }}>لا يوجد أي صندوق نشط في النظام حالياً.</p>
-          )}
-          {currencyMismatchFallback && (
-            <p style={{ color: '#b45309', fontSize: '12.5px', marginTop: '4px' }}>
-              ⚠ لا يوجد صندوق بعملة {targetCurrency} تحديداً — القائمة تعرض كل الصناديق النشطة، تأكدي من اختيار صندوق بهذه العملة فعلاً.
-            </p>
-          )}
-        </div>
-
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '10px', padding: '12px 14px' }}>
-          <span style={{ fontSize: '13px', fontWeight: 700, color: '#166534' }}>الصافي المقدَّر للاستلام</span>
-          <span style={{ fontSize: '19px', fontWeight: 800, color: '#166534' }}>
-            {fmt(estimatedNet)} {payInUsd ? 'USD' : employee.currency}
-          </span>
-        </div>
-
-        <div className="flex gap-2 justify-end pt-1">
-          <button type="button" className="toolbar-btn" onClick={onClose}>إلغاء</button>
-          <button type="button" className="toolbar-btn primary" onClick={() => void confirmPay()} disabled={saving || !cashboxId}>
-            {saving ? 'جارٍ التسليم...' : 'تأكيد استلام'}
-          </button>
         </div>
       </div>
-    </Modal>
+
+      {isForeignCurrency && (
+        <label className="breeze-fxrow" style={{ flexDirection: 'column', alignItems: 'stretch', gap: payInUsd ? '10px' : '0' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input type="checkbox" checked={payInUsd} onChange={(e) => { setPayInUsd(e.target.checked); setCashboxId(''); }} />
+            تحويل الراتب إلى دولار والدفع من صندوق دولار
+          </span>
+          {payInUsd && (
+            <span className="breeze-fx-detail" onClick={(e) => e.stopPropagation()}>
+              <span style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: '11.5px', fontWeight: 700, marginBottom: '4px' }}>✏️ سعر الصرف (1$ = ؟ {employee.currency})</label>
+                <input type="number" min="0.01" step="0.01" className="breeze-input" value={usdRate} onChange={(e) => setUsdRate(e.target.value)} />
+              </span>
+              <span style={{ fontSize: '13px', fontWeight: 700, paddingBottom: '8px' }}>= {fmt(convertedUsdAmount)}$</span>
+            </span>
+          )}
+        </label>
+      )}
+
+      <div className="breeze-section">
+        <div className="breeze-section-head">
+          <span>سلف الموظف المفتوحة</span>
+          {!loadingAdvances && openAdvances.length > 0 && <span className="breeze-section-hint">حدّدي السلف التي تريدين خصمها الآن</span>}
+        </div>
+        {loadingAdvances ? (
+          <p className="breeze-note">جاري التحميل...</p>
+        ) : openAdvances.length === 0 ? (
+          <p className="breeze-note">لا توجد سلف مفتوحة لهذا الموظف.</p>
+        ) : (
+          <>
+            {openAdvances.map((a) => {
+              const checked = selectedAdvanceIds.has(a.id);
+              return (
+                <label key={a.id} className={`breeze-adv ${checked ? 'checked' : ''}`}>
+                  <span className="breeze-adv-label">
+                    <input type="checkbox" checked={checked} onChange={() => toggleAdvance(a.id)} />
+                    سلفة {a.advance_date?.split('T')[0]}
+                  </span>
+                  <span className="breeze-adv-amt">
+                    {fmt(Number(a.amount) - Number(a.repaid_amount))} {a.currency}
+                    <span className="breeze-adv-orig"> (أصل {fmt(a.amount)})</span>
+                  </span>
+                </label>
+              );
+            })}
+            <div className="breeze-selsum">
+              <span>سيُخصَم من هذا الراتب: {fmt(totalSelectedAdvancesUsd)}$</span>
+              {selectedAdvanceIds.size === 0 && <span className="muted">لم تُحدَّد أي سلفة بعد</span>}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="breeze-field">
+        <label>خصم مخالفات / أخرى (اختياري)</label>
+        <input type="number" min="0" step="0.01" className="breeze-input" value={manualDeduction} onChange={(e) => setManualDeduction(e.target.value)} />
+      </div>
+
+      <div className="breeze-field">
+        <label>الصندوق</label>
+        <select className="breeze-select" value={cashboxId} onChange={(e) => setCashboxId(e.target.value)}>
+          <option value="">اختر...</option>
+          {eligibleCashboxes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        {eligibleCashboxes.length === 0 && (
+          <p style={{ color: '#dc2626', fontSize: '12.5px', marginTop: '4px' }}>لا يوجد أي صندوق نشط في النظام حالياً.</p>
+        )}
+        {currencyMismatchFallback && (
+          <p style={{ color: 'var(--breeze-warn)', fontSize: '12.5px', marginTop: '4px' }}>
+            ⚠ لا يوجد صندوق بعملة {targetCurrency} تحديداً — القائمة تعرض كل الصناديق النشطة، تأكدي من اختيار صندوق بهذه العملة فعلاً.
+          </p>
+        )}
+      </div>
+
+      <div className="breeze-net">
+        <span className="breeze-net-label">الصافي المقدَّر للاستلام</span>
+        <span className="breeze-net-value">{fmt(estimatedNet)} {payInUsd ? 'USD' : employee.currency}</span>
+      </div>
+
+      <div className="breeze-actions">
+        <button type="button" className="breeze-btn-cancel" onClick={onClose}>إلغاء</button>
+        <button type="button" className="breeze-btn-confirm" onClick={() => void confirmPay()} disabled={saving || !cashboxId}>
+          {saving ? 'جارٍ التسليم...' : 'تأكيد استلام'}
+        </button>
+      </div>
+    </BreezeShell>
   );
 }
 
@@ -1072,116 +1077,103 @@ function WeeklySalaryPayModal({
   };
 
   return (
-    <Modal title={`تسليم راتب أسبوعي — ${employee.name}`} onClose={onClose}>
-      <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '10px' }}>
-            <div style={{ fontSize: '11.5px', color: '#6b7280', fontWeight: 600 }}>أجرة الأسبوع</div>
-            <div style={{ fontSize: '16px', fontWeight: 800 }}>
-              {fmt(employee.basic_salary)} {employee.currency}
-              {payInUsd && usdRateNum > 0 && (
-                <span style={{ fontSize: '12px', color: '#4f46e5', fontWeight: 700 }}> = {fmt(convertedUsdAmount)}$</span>
-              )}
-            </div>
-          </div>
-          <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '10px' }}>
-            <div style={{ fontSize: '11.5px', color: '#6b7280', fontWeight: 600 }}>السلف المفتوحة (بالدولار)</div>
-            <div style={{ fontSize: '16px', fontWeight: 800, color: totalOpenAdvancesUsd > 0 ? '#b45309' : '#166534' }}>
-              {fmt(totalOpenAdvancesUsd)}$
-            </div>
+    <BreezeShell tag="تسليم راتب أسبوعي" title={employee.name} sub={`${employee.code}${employee.position ? ` · ${employee.position}` : ''}`} onClose={onClose}>
+      <div className="breeze-tiles">
+        <div className="breeze-tile">
+          <div className="breeze-tile-label">أجرة الأسبوع</div>
+          <div className="breeze-tile-value">
+            {fmt(employee.basic_salary)} {employee.currency}
+            {payInUsd && usdRateNum > 0 && <span style={{ fontSize: '12px', color: 'var(--breeze-accent)', fontWeight: 700 }}> = {fmt(convertedUsdAmount)}$</span>}
           </div>
         </div>
-
-        {openAdvances.length > 0 && (
-          <div style={{ border: '1px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden' }}>
-            <div style={{ padding: '10px 12px', background: '#f9fafb', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '13px', fontWeight: 800 }}>سلف الموظف المفتوحة</span>
-              <span style={{ fontSize: '11.5px', color: '#6b7280' }}>حدّدي السلف التي تريدين خصمها من كل أسبوع يُسلَّم الآن</span>
-            </div>
-            {openAdvances.map((a) => {
-              const checked = selectedAdvanceIds.has(a.id);
-              return (
-                <label
-                  key={a.id}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
-                    padding: '9px 12px', fontSize: '12.5px', cursor: 'pointer',
-                    background: checked ? '#fff7ed' : '#fff',
-                    borderBottom: '1px solid #f1f5f9',
-                  }}
-                >
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <input type="checkbox" checked={checked} onChange={() => toggleAdvance(a.id)} />
-                    سلفة {a.advance_date?.split('T')[0]}
-                  </span>
-                  <span style={{ fontWeight: 700, color: checked ? '#b45309' : '#374151' }}>
-                    {fmt(Number(a.amount) - Number(a.repaid_amount))} {a.currency}
-                    <span style={{ color: '#9ca3af', fontWeight: 400 }}> (أصل {fmt(a.amount)})</span>
-                  </span>
-                </label>
-              );
-            })}
-            <div style={{ padding: '8px 12px', fontSize: '12.5px', fontWeight: 700, background: '#fff7ed', color: '#b45309' }}>
-              سيُخصَم من كل أسبوع يُسلَّم الآن: {fmt(totalSelectedAdvancesUsd)}$
-              {selectedAdvanceIds.size === 0 && <span style={{ color: '#9ca3af', fontWeight: 400 }}> — لم تُحدَّد أي سلفة بعد</span>}
-            </div>
-          </div>
-        )}
-
-        {isForeignCurrency && (
-          <div style={{ background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '8px', padding: '10px' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
-              <input type="checkbox" checked={payInUsd} onChange={(e) => { setPayInUsd(e.target.checked); setCashboxId(''); }} />
-              تحويل الراتب إلى دولار والدفع من صندوق دولار
-            </label>
-            {payInUsd && (
-              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', marginTop: '8px' }}>
-                <div style={{ flex: 1 }}>
-                  <label className="form-label">✏️ سعر الصرف (1$ = ؟ {employee.currency})</label>
-                  <input type="number" min="0.01" step="0.01" className="form-input w-full" value={usdRate} onChange={(e) => setUsdRate(e.target.value)} />
-                </div>
-                <div style={{ fontSize: '13px', fontWeight: 700, paddingBottom: '8px' }}>= {fmt(convertedUsdAmount)}$</div>
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="form-group">
-          <label className="form-label">خصم مخالفات / أخرى لكل أسبوع يُسلَّم الآن (اختياري)</label>
-          <input type="number" min="0" step="0.01" className="form-input w-full" value={manualDeduction} onChange={(e) => setManualDeduction(e.target.value)} />
+        <div className="breeze-tile">
+          <div className="breeze-tile-label">السلف المفتوحة (بالدولار)</div>
+          <div className={`breeze-tile-value ${totalOpenAdvancesUsd > 0 ? 'warn' : 'good'}`}>{fmt(totalOpenAdvancesUsd)}$</div>
         </div>
+      </div>
 
-        <div className="form-group">
-          <label className="form-label">الصندوق</label>
-          <select className="form-input w-full" value={cashboxId} onChange={(e) => setCashboxId(e.target.value)}>
-            <option value="">اختر...</option>
-            {eligibleCashboxes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-          {currencyMismatchFallback && (
-            <p style={{ color: '#b45309', fontSize: '12.5px', marginTop: '4px' }}>
-              ⚠ لا يوجد صندوق بعملة {targetCurrency} تحديداً — تأكدي من اختيار صندوق بهذه العملة فعلاً.
-            </p>
+      {openAdvances.length > 0 && (
+        <div className="breeze-section">
+          <div className="breeze-section-head">
+            <span>سلف الموظف المفتوحة</span>
+            <span className="breeze-section-hint">حدّدي السلف لخصمها من كل أسبوع يُسلَّم الآن</span>
+          </div>
+          {openAdvances.map((a) => {
+            const checked = selectedAdvanceIds.has(a.id);
+            return (
+              <label key={a.id} className={`breeze-adv ${checked ? 'checked' : ''}`}>
+                <span className="breeze-adv-label">
+                  <input type="checkbox" checked={checked} onChange={() => toggleAdvance(a.id)} />
+                  سلفة {a.advance_date?.split('T')[0]}
+                </span>
+                <span className="breeze-adv-amt">
+                  {fmt(Number(a.amount) - Number(a.repaid_amount))} {a.currency}
+                  <span className="breeze-adv-orig"> (أصل {fmt(a.amount)})</span>
+                </span>
+              </label>
+            );
+          })}
+          <div className="breeze-selsum">
+            <span>سيُخصَم من كل أسبوع يُسلَّم الآن: {fmt(totalSelectedAdvancesUsd)}$</span>
+            {selectedAdvanceIds.size === 0 && <span className="muted">لم تُحدَّد أي سلفة بعد</span>}
+          </div>
+        </div>
+      )}
+
+      {isForeignCurrency && (
+        <label className="breeze-fxrow" style={{ flexDirection: 'column', alignItems: 'stretch', gap: payInUsd ? '10px' : '0' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input type="checkbox" checked={payInUsd} onChange={(e) => { setPayInUsd(e.target.checked); setCashboxId(''); }} />
+            تحويل الراتب إلى دولار والدفع من صندوق دولار
+          </span>
+          {payInUsd && (
+            <span className="breeze-fx-detail" onClick={(e) => e.stopPropagation()}>
+              <span style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: '11.5px', fontWeight: 700, marginBottom: '4px' }}>✏️ سعر الصرف (1$ = ؟ {employee.currency})</label>
+                <input type="number" min="0.01" step="0.01" className="breeze-input" value={usdRate} onChange={(e) => setUsdRate(e.target.value)} />
+              </span>
+              <span style={{ fontSize: '13px', fontWeight: 700, paddingBottom: '8px' }}>= {fmt(convertedUsdAmount)}$</span>
+            </span>
           )}
-        </div>
+        </label>
+      )}
 
-        <h4 style={{ fontSize: '14px', fontWeight: 800, margin: '4px 0' }}>أسابيع {MONTHS_AR[periodMonth - 1]}</h4>
+      <div className="breeze-field">
+        <label>خصم مخالفات / أخرى لكل أسبوع يُسلَّم الآن (اختياري)</label>
+        <input type="number" min="0" step="0.01" className="breeze-input" value={manualDeduction} onChange={(e) => setManualDeduction(e.target.value)} />
+      </div>
+
+      <div className="breeze-field">
+        <label>الصندوق</label>
+        <select className="breeze-select" value={cashboxId} onChange={(e) => setCashboxId(e.target.value)}>
+          <option value="">اختر...</option>
+          {eligibleCashboxes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        {currencyMismatchFallback && (
+          <p style={{ color: 'var(--breeze-warn)', fontSize: '12.5px', marginTop: '4px' }}>
+            ⚠ لا يوجد صندوق بعملة {targetCurrency} تحديداً — تأكدي من اختيار صندوق بهذه العملة فعلاً.
+          </p>
+        )}
+      </div>
+
+      <div className="breeze-section">
+        <div className="breeze-section-head"><span>أسابيع {MONTHS_AR[periodMonth - 1]}</span></div>
         {loadingRecords ? (
-          <p style={{ color: '#6b7280', fontSize: '13px' }}>جاري التحميل...</p>
+          <p className="breeze-note">جاري التحميل...</p>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <div className="breeze-weeks">
             {weekDates.map((date) => {
               const rec = recordFor(date);
               const paid = rec?.payment_status === 'paid';
               return (
-                <div key={date} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f9fafb', borderRadius: '8px', padding: '8px 12px' }}>
-                  <div style={{ fontSize: '13.5px', fontWeight: 600 }}>
+                <div key={date} className="breeze-week">
+                  <span>
                     أسبوع {date}
-                    {paid && <span style={{ color: '#15803d', fontWeight: 700 }}> — مدفوع</span>}
-                  </div>
+                    {paid && <span className="breeze-week-status"> — مدفوع</span>}
+                  </span>
                   <button
                     type="button"
-                    className={`toolbar-btn ${paid ? '' : 'primary'}`}
-                    style={{ fontSize: '12px', padding: '5px 10px' }}
+                    className={`breeze-week-btn ${paid ? 'ghost' : ''}`}
                     disabled={paid || payingDate === date || bulkPaying || !cashboxId}
                     onClick={() => void handlePayWeek(date)}
                   >
@@ -1192,17 +1184,17 @@ function WeeklySalaryPayModal({
             })}
           </div>
         )}
-
-        <div className="flex gap-2 justify-end pt-2">
-          <button type="button" className="toolbar-btn" onClick={onClose}>إغلاق</button>
-          {unpaidDates.length > 1 && (
-            <button type="button" className="toolbar-btn primary" onClick={() => void handlePayAllOverdue()} disabled={bulkPaying || !cashboxId}>
-              {bulkPaying ? 'جارٍ تسليم الكل...' : `تسليم كل الأسابيع المتأخرة (${unpaidDates.length})`}
-            </button>
-          )}
-        </div>
       </div>
-    </Modal>
+
+      <div className="breeze-actions">
+        <button type="button" className="breeze-btn-cancel" onClick={onClose}>إغلاق</button>
+        {unpaidDates.length > 1 ? (
+          <button type="button" className="breeze-btn-confirm" onClick={() => void handlePayAllOverdue()} disabled={bulkPaying || !cashboxId}>
+            {bulkPaying ? 'جارٍ تسليم الكل...' : `تسليم كل الأسابيع المتأخرة (${unpaidDates.length})`}
+          </button>
+        ) : null}
+      </div>
+    </BreezeShell>
   );
 }
 

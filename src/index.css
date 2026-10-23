@@ -6075,3 +6075,294 @@ button.linkish {
   margin-bottom: 8px;
   font-size: 0.92rem;
 }
+
+/* ─── "النسيم" — بطاقة تسليم الراتب ────────────────────────────────────────── */
+
+.breeze {
+  --breeze-bg: #f3f7f5;
+  --breeze-surface: #ffffff;
+  --breeze-text: #15221d;
+  --breeze-muted: #5e716a;
+  --breeze-border: #e1ebe6;
+  --breeze-accent: #0e9f7e;
+  --breeze-accent-ink: #065f46;
+  --breeze-accent-soft: #dcf5ec;
+  --breeze-warn: #b45309;
+  --breeze-warn-soft: #fff3db;
+  --breeze-good: #15803d;
+  --breeze-good-soft: #dcfce7;
+  font-family: 'Tajawal', 'Tahoma', 'Arial', sans-serif;
+  color: var(--breeze-text);
+}
+
+.breeze-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 35, 28, 0.45);
+  padding: 16px;
+}
+
+.breeze-card {
+  width: 100%;
+  max-width: 480px;
+  max-height: 92vh;
+  overflow-y: auto;
+  background: var(--breeze-surface);
+  border-radius: 26px;
+  box-shadow: 0 30px 70px -20px rgba(14, 80, 60, 0.35), 0 2px 8px rgba(14, 80, 60, 0.08);
+}
+
+.breeze-head {
+  position: relative;
+  padding: 22px 24px 18px;
+  background: linear-gradient(160deg, var(--breeze-accent-soft), var(--breeze-surface) 65%);
+  border-radius: 26px 26px 0 0;
+}
+
+.breeze-head-x {
+  position: absolute;
+  inset-inline-start: 18px;
+  top: 18px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--breeze-border);
+  color: var(--breeze-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.breeze-tag {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--breeze-accent-ink);
+  letter-spacing: 0.02em;
+}
+
+.breeze-head h2 {
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.breeze-sub {
+  font-size: 12.5px;
+  color: var(--breeze-muted);
+  margin-top: 2px;
+  font-weight: 600;
+}
+
+.breeze-body {
+  padding: 18px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.breeze-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.breeze-tile {
+  background: var(--breeze-bg);
+  border: 1px solid var(--breeze-border);
+  border-radius: 16px;
+  padding: 13px 14px;
+}
+
+.breeze-tile-label {
+  font-size: 11px;
+  color: var(--breeze-muted);
+  font-weight: 700;
+}
+
+.breeze-tile-value {
+  font-size: 17px;
+  font-weight: 800;
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.breeze-tile-value.warn { color: var(--breeze-warn); }
+.breeze-tile-value.good { color: var(--breeze-good); }
+
+.breeze-fxrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--breeze-accent-soft);
+  border: 1px solid #bfe9da;
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--breeze-accent-ink);
+  cursor: pointer;
+}
+
+.breeze-fxrow input { accent-color: var(--breeze-accent); width: 17px; height: 17px; }
+
+.breeze-fx-detail {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: -6px;
+}
+
+.breeze-section {
+  border: 1px solid var(--breeze-border);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.breeze-section-head {
+  padding: 11px 14px;
+  background: var(--breeze-bg);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12.5px;
+  font-weight: 800;
+}
+
+.breeze-section-hint {
+  font-weight: 600;
+  color: var(--breeze-muted);
+  font-size: 11px;
+}
+
+.breeze-adv {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px;
+  border-top: 1px solid var(--breeze-border);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.breeze-adv.checked { background: var(--breeze-warn-soft); }
+
+.breeze-adv-label { display: flex; align-items: center; gap: 9px; font-weight: 600; }
+.breeze-adv input { accent-color: var(--breeze-warn); width: 16px; height: 16px; }
+.breeze-adv-amt { font-weight: 800; font-variant-numeric: tabular-nums; }
+.breeze-adv.checked .breeze-adv-amt { color: var(--breeze-warn); }
+.breeze-adv-orig { font-weight: 500; color: var(--breeze-muted); }
+
+.breeze-selsum {
+  padding: 10px 14px;
+  background: var(--breeze-warn-soft);
+  border-top: 1px solid #f3d9a8;
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--breeze-warn);
+  display: flex;
+  justify-content: space-between;
+}
+
+.breeze-selsum .muted { color: var(--breeze-muted); font-weight: 500; }
+
+.breeze-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--breeze-muted);
+  margin-bottom: 6px;
+}
+
+.breeze-select,
+.breeze-input {
+  width: 100%;
+  border: 1.5px solid var(--breeze-border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--breeze-surface);
+  color: var(--breeze-text);
+}
+
+.breeze-select:focus,
+.breeze-input:focus {
+  outline: 2px solid var(--breeze-accent);
+  outline-offset: 1px;
+}
+
+.breeze-weeks { display: flex; flex-direction: column; gap: 8px; padding: 4px 14px 10px; }
+
+.breeze-week {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--breeze-bg);
+  border: 1px solid var(--breeze-border);
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.breeze-week-status { color: var(--breeze-good); font-weight: 800; }
+
+.breeze-week-btn {
+  border: none;
+  border-radius: 10px;
+  padding: 7px 16px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  font-family: inherit;
+  background: var(--breeze-accent);
+  color: #fff;
+}
+
+.breeze-week-btn.ghost { background: #eef2f0; color: var(--breeze-muted); cursor: default; }
+.breeze-week-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+
+.breeze-net {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--breeze-good-soft);
+  border: 1px solid #bbe8c7;
+  border-radius: 16px;
+  padding: 14px 16px;
+}
+
+.breeze-net-label { font-size: 13px; font-weight: 800; color: var(--breeze-good); }
+.breeze-net-value { font-size: 21px; font-weight: 800; color: var(--breeze-good); font-variant-numeric: tabular-nums; }
+
+.breeze-actions { display: flex; gap: 10px; }
+
+.breeze-actions button {
+  flex: 1;
+  border: none;
+  border-radius: 13px;
+  padding: 13px;
+  font-size: 13.5px;
+  font-weight: 800;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.breeze-btn-cancel { background: var(--breeze-bg); color: var(--breeze-muted); border: 1px solid var(--breeze-border); }
+.breeze-btn-confirm { background: var(--breeze-accent); color: #fff; box-shadow: 0 10px 20px -8px rgba(14, 159, 126, 0.6); }
+.breeze-btn-confirm:disabled,
+.breeze-week-btn:disabled.breeze-week-btn:not(.ghost) { opacity: 0.6; cursor: not-allowed; box-shadow: none; }
+
+.breeze-note {
+  font-size: 12px;
+  color: var(--breeze-muted);
+  padding: 10px 14px;
+}
