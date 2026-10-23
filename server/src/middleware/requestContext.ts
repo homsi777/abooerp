@@ -7,6 +7,18 @@ import { env } from '../config/env.js';
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+// Endpoints meant to be public regardless of auth state (checked before
+// login, or on every app launch by a client that may be carrying a stale/
+// expired token from a previous session). This middleware must never
+// reject these outright just because a Bearer header happens to be
+// present and invalid — that defeats the whole point of being public.
+const PUBLIC_PATHS = new Set([
+  '/api/v1/app/version',
+  '/api/v1/system/lan-health',
+  // شاشة تتبّع الزبون قبل تسجيل الدخول — بحث برقم الإيصال فقط، بيانات غير حساسة.
+  '/api/v1/public/tracking',
+]);
+
 function isLoopbackIp(ip: string | undefined) {
   if (!ip) return false;
   const normalized = ip.trim();
@@ -29,6 +41,11 @@ async function validateActiveCompanyBranch(branchId: string, companyId: string):
 }
 
 export async function requestContextMiddleware(req: Request, res: Response, next: NextFunction) {
+  if (PUBLIC_PATHS.has(req.path)) {
+    next();
+    return;
+  }
+
   const requestedBranchHeader = req.headers['x-branch-id'];
   const requestedBranchId = Array.isArray(requestedBranchHeader) ? requestedBranchHeader[0] : requestedBranchHeader;
   if (requestedBranchId && !uuidRegex.test(requestedBranchId)) {

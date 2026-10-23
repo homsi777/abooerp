@@ -1,0 +1,8 @@
+{
+  "name": "عبو المحمود",
+  "description": "تطبيق السائق لتتبع الرحلات وأسطر الشحنات وإرسال الموقع - شركة عبو المحمود للنقل والخدمات اللوجستية",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

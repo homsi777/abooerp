@@ -13,6 +13,27 @@
       "Bash(node server/scripts/_tmp_verify/browserVerify.mjs)",
       "Bash(node server/scripts/_tmp_verify/debugEdit.mjs)",
       "Bash(node server/scripts/_tmp_verify/debug400.mjs)"
+    ],
+    "deny": [
+      "Bash(rm *)",
+      "Bash(rm)",
+      "Bash(sudo rm *)",
+      "Bash(rmdir *)",
+      "Bash(sudo rmdir *)",
+      "Bash(shred *)",
+      "Bash(sudo shred *)",
+      "Bash(dd *)",
+      "Bash(sudo dd *)",
+      "Bash(mkfs*)",
+      "Bash(sudo mkfs*)",
+      "Bash(truncate *)",
+      "Bash(sudo truncate *)",
+      "Bash(find * -delete*)",
+      "Bash(find * -exec rm*)",
+      "Bash(rsync *--delete*)",
+      "Bash(git clean*)",
+      "Bash(docker system prune*)",
+      "Bash(docker volume rm*)"
     ]
   }
 }

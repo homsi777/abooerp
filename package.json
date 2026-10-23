@@ -1,7 +1,7 @@
 {
   "name": "shahn",
-  "description": "شركة عبو المحمود لنقل والخدمات الوجستية",
-  "author": "شركة عبو المحمود لنقل والخدمات الوجستية",
+  "description": "شركة عبو المحمود للنقل والخدمات اللوجستية",
+  "author": "شركة عبو المحمود للنقل والخدمات اللوجستية",
   "private": true,
   "version": "1.0.5",
   "type": "module",
@@ -104,7 +104,7 @@
     "autoprefixer": "^10.5.0",
     "concurrently": "^9.2.1",
     "electron": "^41.2.2",
-    "electron-builder": "^26.8.1",
+    "electron-builder": "^26.5.0",
     "esbuild": "^0.28.0",
     "kill-port": "^2.0.1",
     "postcss": "^8.5.10",
@@ -119,6 +119,7 @@
     "@types/react": "^19.2.14",
     "@types/react-data-grid": "^4.0.12",
     "@types/react-dom": "^19.2.3",
+    "@wppconnect-team/wppconnect": "^2.3.5",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
@@ -128,7 +129,7 @@
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^1.8.0",
     "pg": "^8.20.0",
-    "puppeteer-core": "^24.36.0",
+    "puppeteer-core": "^25.14.0",
     "react": "^19.2.5",
     "react-data-grid": "^7.0.0-beta.59",
     "react-dom": "^19.2.5",
@@ -137,7 +138,7 @@
   },
   "build": {
     "appId": "com.abualmahmoud.logistics",
-    "productName": "شركة عبو المحمود لنقل والخدمات الوجستية",
+    "productName": "شركة عبو المحمود للنقل والخدمات اللوجستية",
     "asar": true,
     "directories": {
       "output": "dist-release"
@@ -182,7 +183,7 @@
       "perMachine": false,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
-      "shortcutName": "شركة عبو المحمود لنقل والخدمات الوجستية",
+      "shortcutName": "شركة عبو المحمود لنقل والخدمات اللوجستية",
       "deleteAppDataOnUninstall": false
     }
   }

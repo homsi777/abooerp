@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { httpClient } from '../lib/api/httpClient';
+import { useAuth } from '../context/AuthProvider';
 
 type UserType = 'admin' | 'employee' | 'agent' | 'accountant' | 'branch_supervisor' | 'delivery' | 'viewer';
 type UserRow = {
@@ -63,7 +64,7 @@ const simplifiedUserTypeChoices: Array<{ value: UserType; label: string }> = [
   { value: 'viewer', label: 'مشاهدة فقط' },
 ];
 
-const mainRoleCodes = new Set(['admin', 'agent_user', 'accountant', 'data_entry', 'shipment_auditor', 'viewer']);
+const mainRoleCodes = new Set(['admin', 'agent_user', 'accountant', 'data_entry', 'data_entry_mobile', 'shipment_auditor', 'viewer']);
 const legacyRoleCodes = new Set(['general_manager', 'branch_manager', 'field_accountant']);
 
 const categoryOrder = [
@@ -391,6 +392,14 @@ function emptyUserForm(defaultRoleId = ''): UserForm {
 
 export default function PermissionsCenter() {
   const navigate = useNavigate();
+  const { hasPermission, user: currentUser } = useAuth();
+  // Accountants/branch supervisors can reach this page now to create or
+  // edit "مدخل بيانات" accounts only (settings.users.manage_data_entry),
+  // not the full admin permission (settings.users.write) — restrict them
+  // to just the Users tab; Roles/Permissions/Templates/Scopes/Agents stay
+  // admin-only, and the Users tab's inline edit form already covers scope
+  // changes for the accounts they're allowed to touch.
+  const isRestrictedUserManager = hasPermission('settings.users.manage_data_entry') && !hasPermission('settings.users.write');
   const [tab, setTab] = useState<'users' | 'roles' | 'permissions' | 'templates' | 'scopes' | 'agents'>('users');
   const [users, setUsers] = useState<UserRow[]>([]);
   const [roles, setRoles] = useState<RoleRow[]>([]);
@@ -448,8 +457,19 @@ export default function PermissionsCenter() {
   const scopeUser = users.find((user) => user.id === scopeUserId) || null;
   const mainRoleOptions = useMemo(() => {
     const currentRoleId = userForm?.role_id || scopeUser?.role_id || '';
+    // A restricted manager (settings.users.manage_data_entry only) can
+    // only ever pick "مدخل بيانات — تطبيق أندرويد" (the narrow-permission
+    // role for the tablet app) — matches what the server enforces, so
+    // they never see an option that would fail on save. The broad desktop
+    // "مدخل بيانات" role stays admin-only.
+    if (isRestrictedUserManager) return roles.filter((role) => role.code === 'data_entry_mobile');
     return roles.filter((role) => mainRoleCodes.has(role.code) || role.id === currentRoleId);
-  }, [roles, userForm?.role_id, scopeUser?.role_id]);
+  }, [roles, userForm?.role_id, scopeUser?.role_id, isRestrictedUserManager]);
+  const selectableBranches = useMemo(() => {
+    if (!isRestrictedUserManager) return branches;
+    const allowed = new Set(currentUser?.allowedBranchIds ?? []);
+    return branches.filter((b) => allowed.has(b.id));
+  }, [branches, isRestrictedUserManager, currentUser?.allowedBranchIds]);
   const groupedPermissions = useMemo(() => {
     const rows = permissionCodes.map((code) => permissionRows.find((row) => row.code === code) || { code });
     const grouped = new Map<string, PermissionRow[]>();
@@ -728,11 +748,15 @@ export default function PermissionsCenter() {
 
       <div className="card mb-3"><div className="flex gap-2">
         <button className={`toolbar-btn ${tab === 'users' ? 'primary' : ''}`} onClick={() => setTab('users')}>المستخدمون</button>
-        <button className={`toolbar-btn ${tab === 'roles' ? 'primary' : ''}`} onClick={() => setTab('roles')}>الأدوار</button>
-        <button className={`toolbar-btn ${tab === 'permissions' ? 'primary' : ''}`} onClick={() => setTab('permissions')}>الصلاحيات</button>
-        <button className={`toolbar-btn ${tab === 'templates' ? 'primary' : ''}`} onClick={() => setTab('templates')}>قوالب الصلاحيات</button>
-        <button className={`toolbar-btn ${tab === 'scopes' ? 'primary' : ''}`} onClick={() => setTab('scopes')}>نطاقات الوصول</button>
-        <button className={`toolbar-btn ${tab === 'agents' ? 'primary' : ''}`} onClick={() => setTab('agents')}>وكلاء النظام</button>
+        {!isRestrictedUserManager && (
+          <>
+            <button className={`toolbar-btn ${tab === 'roles' ? 'primary' : ''}`} onClick={() => setTab('roles')}>الأدوار</button>
+            <button className={`toolbar-btn ${tab === 'permissions' ? 'primary' : ''}`} onClick={() => setTab('permissions')}>الصلاحيات</button>
+            <button className={`toolbar-btn ${tab === 'templates' ? 'primary' : ''}`} onClick={() => setTab('templates')}>قوالب الصلاحيات</button>
+            <button className={`toolbar-btn ${tab === 'scopes' ? 'primary' : ''}`} onClick={() => setTab('scopes')}>نطاقات الوصول</button>
+            <button className={`toolbar-btn ${tab === 'agents' ? 'primary' : ''}`} onClick={() => setTab('agents')}>وكلاء النظام</button>
+          </>
+        )}
       </div></div>
 
       <div className="card flex-1 overflow-auto">
@@ -749,10 +773,10 @@ export default function PermissionsCenter() {
               <label className="form-group"><span className="form-label">الاسم الكامل</span><input className="form-input" value={userForm.full_name} onChange={(e) => setUserForm({ ...userForm, full_name: e.target.value })} /></label>
               <label className="form-group"><span className="form-label">{userForm.id ? 'كلمة مرور جديدة' : 'كلمة المرور'}</span><input type="password" className="form-input" value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} /></label>
               <label className="form-group"><span className="form-label">الدور</span><select className="form-select" value={userForm.role_id} onChange={(e) => setUserForm({ ...userForm, role_id: e.target.value })}>{mainRoleOptions.map((role) => <option key={role.id} value={role.id}>{role.name} ({role.code}){legacyRoleCodes.has(role.code) ? ' - قديم' : ''}</option>)}</select></label>
-              <label className="form-group"><span className="form-label">نوع الحساب</span><select className="form-select" value={userForm.user_type} onChange={(e) => changeUserType(e.target.value as UserType)}>{simplifiedUserTypeChoices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}</select></label>
+              <label className="form-group"><span className="form-label">نوع الحساب</span><select className="form-select" value={userForm.user_type} disabled={isRestrictedUserManager} onChange={(e) => changeUserType(e.target.value as UserType)}>{(isRestrictedUserManager ? simplifiedUserTypeChoices.filter((c) => c.value === 'employee') : simplifiedUserTypeChoices).map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}</select></label>
               <label className="form-group"><span className="form-label">الوكيل المرتبط</span><select className="form-select" disabled={userForm.user_type !== 'agent'} value={userForm.agent_id} onChange={(e) => setUserForm({ ...userForm, agent_id: e.target.value })}><option value="">اختر الوكيل</option>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.code} - {agent.name}</option>)}</select></label>
               <label className="form-group"><span className="form-label">الحالة</span><select className="form-select" value={userForm.status} onChange={(e) => setUserForm({ ...userForm, status: e.target.value as UserForm['status'] })}><option value="active">نشط</option><option value="inactive">معطل</option><option value="locked">مقفل</option></select></label>
-              <div className="form-group"><span className="form-label">الفروع المسموحة</span><div className="grid grid-cols-2 gap-1">{branches.map((branch) => branchCheckbox(branch, userForm.branch_ids, (next) => setUserForm({ ...userForm, branch_ids: next })))}</div></div>
+              <div className="form-group"><span className="form-label">الفروع المسموحة</span><div className="grid grid-cols-2 gap-1">{selectableBranches.map((branch) => branchCheckbox(branch, userForm.branch_ids, (next) => setUserForm({ ...userForm, branch_ids: next })))}</div></div>
             </div>
             {userForm.user_type === 'agent' && !userForm.agent_id ? <div className="mt-2 text-sm text-amber-700">هذا المستخدم من نوع وكيل لكنه غير مرتبط بأي وكيل.</div> : null}
             {selectedUserTemplate ? <div className="mt-2 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">القالب المقترح: {selectedUserTemplate.name} - {selectedUserTemplate.description}</div> : null}
@@ -762,7 +786,7 @@ export default function PermissionsCenter() {
 
         {tab === 'users' ? (
           <table className="data-grid"><thead><tr><th>#</th><th>اسم المستخدم</th><th>الاسم الكامل</th><th>الدور</th><th>النوع</th><th>الفرع الافتراضي</th><th>الفروع</th><th>الوكيل</th><th>الحالة</th><th>آخر دخول</th><th>إجراءات</th></tr></thead>
-            <tbody>{users.map((u, idx) => <tr key={u.id}><td>{idx + 1}</td><td>{u.username}</td><td>{u.full_name}</td><td>{u.role_name}</td><td>{userTypeAr[u.user_type] || u.user_type}</td><td>{u.default_branch_id ? branchNameById.get(u.default_branch_id) || '-' : '-'}</td><td>{u.branch_ids.length}</td><td>{u.agent_name || '-'}</td><td>{u.status}</td><td>{u.last_login_at ? new Date(u.last_login_at).toLocaleString('ar-SY') : '-'}</td><td><div className="flex gap-2 text-xs"><button className="text-indigo-700" onClick={() => startEditUser(u)}>تعديل</button><button className="text-amber-700" onClick={() => void toggleUser(u)}>{u.status === 'active' ? 'تعطيل' : 'تفعيل'}</button><button className="text-indigo-700" onClick={() => { setScopeUserId(u.id); setTab('scopes'); }}>إدارة النطاق</button></div></td></tr>)}
+            <tbody>{users.map((u, idx) => <tr key={u.id}><td>{idx + 1}</td><td>{u.username}</td><td>{u.full_name}</td><td>{u.role_name}</td><td>{userTypeAr[u.user_type] || u.user_type}</td><td>{u.default_branch_id ? branchNameById.get(u.default_branch_id) || '-' : '-'}</td><td>{u.branch_ids.length}</td><td>{u.agent_name || '-'}</td><td>{u.status}</td><td>{u.last_login_at ? new Date(u.last_login_at).toLocaleString('ar-SY') : '-'}</td><td><div className="flex gap-2 text-xs"><button className="text-indigo-700" onClick={() => startEditUser(u)}>تعديل</button><button className="text-amber-700" onClick={() => void toggleUser(u)}>{u.status === 'active' ? 'تعطيل' : 'تفعيل'}</button>{!isRestrictedUserManager && <button className="text-indigo-700" onClick={() => { setScopeUserId(u.id); setTab('scopes'); }}>إدارة النطاق</button>}</div></td></tr>)}
             {!loading && users.length === 0 ? <tr><td colSpan={11} className="p-6 text-center text-gray-500">لا توجد بيانات بعد. ابدأ بإضافة مستخدم جديد.</td></tr> : null}</tbody></table>
         ) : null}
 

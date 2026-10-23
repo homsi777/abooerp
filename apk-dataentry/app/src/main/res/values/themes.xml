@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.DataEntry" parent="android:Theme.DeviceDefault.NoActionBar">
+        <item name="android:statusBarColor">@color/splash_background</item>
+        <item name="android:navigationBarColor">@color/launcher_background</item>
+    </style>
+
+    <style name="Theme.DataEntry.Splash" parent="Theme.DataEntry">
+        <item name="android:windowBackground">@drawable/splash_screen</item>
+    </style>
+</resources>

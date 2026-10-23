@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 import { Router } from 'express';
 import { z } from 'zod';
-import { requirePermissions } from '../middleware/authorization.js';
+import { requireAnyPermissions, requirePermissions } from '../middleware/authorization.js';
 import { UserRepository } from '../repositories/userRepository.js';
 import { asyncHandler } from '../utils/http.js';
 import { HttpError } from '../utils/errors.js';
@@ -65,23 +65,73 @@ function parsePayload<T>(schema: z.ZodSchema<T>, body: unknown): T {
   return parsed.data;
 }
 
+/**
+ * Accountants and branch supervisors can create/edit users too, but only
+ * "مدخل بيانات — تطبيق أندرويد" (data_entry_mobile — the narrow-permission
+ * role meant for the tablet app) within their own branch — not the broad
+ * desktop "مدخل بيانات" (data_entry) role, which stays admin-only. They
+ * don't have full settings.users.write, only the narrower
+ * settings.users.manage_data_entry. This enforces that narrower scope
+ * server-side (not just hidden in the UI) whenever the requester lacks the
+ * full permission. Throws if the attempted role/branch/user_type falls
+ * outside what they're allowed to touch.
+ */
+async function enforceDataEntryScopeIfRestricted(
+  req: any,
+  repository: UserRepository,
+  attempt: { roleId?: string; branchIds?: string[]; userType?: string },
+): Promise<void> {
+  const permissions: string[] = req.requestUserContext?.permissions ?? [];
+  if (permissions.includes('settings.users.write')) return; // full power, no restriction
+
+  if (attempt.roleId) {
+    const roleCode = await repository.getRoleCodeById(attempt.roleId);
+    if (roleCode !== 'data_entry_mobile') {
+      throw new HttpError(403, 'يمكنك فقط إنشاء أو تعديل حسابات "مدخل بيانات — تطبيق أندرويد" — لا تملكين صلاحية إدارة أنواع حسابات أخرى.');
+    }
+  }
+  if (attempt.userType && attempt.userType !== 'employee') {
+    throw new HttpError(403, 'يمكنك فقط إنشاء أو تعديل حسابات "مدخل بيانات — تطبيق أندرويد".');
+  }
+  if (attempt.branchIds) {
+    const allowedBranchIds: string[] = req.requestUserContext?.allowedBranchIds ?? [];
+    const allowedSet = new Set(allowedBranchIds);
+    if (attempt.branchIds.length === 0 || attempt.branchIds.some((id) => !allowedSet.has(id))) {
+      throw new HttpError(403, 'يمكنك فقط إنشاء أو تعديل حسابات ضمن فرعك المخوَّل.');
+    }
+  }
+}
+
 export function createUserRouter(repository: UserRepository) {
   const router = Router();
   const auditService = new AuditService();
 
   router.get(
     '/',
-    requirePermissions(['settings.users.read']),
+    requireAnyPermissions(['settings.users.read', 'settings.users.manage_data_entry']),
     asyncHandler(async (req, res) => {
       const companyId = requireCompanyId(req);
       const users = await repository.listUsers(companyId);
-      res.json({ success: true, data: users });
+      const permissions: string[] = (req as any).requestUserContext?.permissions ?? [];
+      if (permissions.includes('settings.users.write') || permissions.includes('settings.users.read')) {
+        res.json({ success: true, data: users });
+        return;
+      }
+      // Restricted viewer (manage_data_entry only, no settings.users.read):
+      // only ever see data_entry accounts within their own branch — not
+      // every employee/admin in the company.
+      const allowedBranchIds: string[] = (req as any).requestUserContext?.allowedBranchIds ?? [];
+      const allowedSet = new Set(allowedBranchIds);
+      const scoped = users.filter(
+        (u: any) => u.role_code === 'data_entry_mobile' && (u.branch_ids ?? []).some((b: string) => allowedSet.has(b)),
+      );
+      res.json({ success: true, data: scoped });
     }),
   );
 
   router.post(
     '/',
-    requirePermissions(['settings.users.write']),
+    requireAnyPermissions(['settings.users.write', 'settings.users.manage_data_entry']),
     asyncHandler(async (req, res) => {
       const companyId = requireCompanyId(req);
       const payload = parsePayload(createUserSchema, req.body);
@@ -92,6 +142,11 @@ export function createUserRouter(repository: UserRepository) {
       if (payload.user_type !== 'admin' && payload.branch_ids.length === 0) {
         throw new HttpError(400, 'يجب تحديد فرع واحد على الأقل للمستخدم غير الإداري.');
       }
+      await enforceDataEntryScopeIfRestricted(req, repository, {
+        roleId: payload.role_id,
+        branchIds: payload.branch_ids,
+        userType: payload.user_type,
+      });
 
       const roleAllowed = await repository.isRoleAllowedForCompany(payload.role_id, companyId);
       if (!roleAllowed) {
@@ -134,10 +189,34 @@ export function createUserRouter(repository: UserRepository) {
 
   router.put(
     '/:id',
-    requirePermissions(['settings.users.write']),
+    requireAnyPermissions(['settings.users.write', 'settings.users.manage_data_entry']),
     asyncHandler(async (req, res) => {
       const companyId = requireCompanyId(req);
       const payload = parsePayload(updateUserSchema, req.body);
+      const targetId = String(req.params.id);
+
+      const permissions: string[] = (req as any).requestUserContext?.permissions ?? [];
+      if (!permissions.includes('settings.users.write')) {
+        // Restricted manager: the TARGET user (as it stands today) must
+        // already be a data_entry account within their branch — checked
+        // regardless of what this particular payload changes, so they
+        // can't reuse this endpoint to touch an admin/accountant account
+        // just because this request happens not to include role_id.
+        const existing = await repository.getUserById(targetId, companyId);
+        if (!existing) {
+          res.status(404).json({ success: false, error: 'User not found.' });
+          return;
+        }
+        await enforceDataEntryScopeIfRestricted(req, repository, {
+          roleId: (existing as any).role_id,
+          branchIds: (existing as any).branch_ids ?? [],
+          userType: (existing as any).user_type,
+        });
+        await enforceDataEntryScopeIfRestricted(req, repository, {
+          roleId: payload.role_id,
+          userType: payload.user_type,
+        });
+      }
 
       if (payload.role_id) {
         const roleAllowed = await repository.isRoleAllowedForCompany(payload.role_id, companyId);
@@ -146,7 +225,7 @@ export function createUserRouter(repository: UserRepository) {
         }
       }
 
-      const data = await repository.updateUser(String(req.params.id), companyId, {
+      const data = await repository.updateUser(targetId, companyId, {
         username: payload.username,
         full_name: payload.full_name,
         email: payload.email,
@@ -211,7 +290,7 @@ export function createUserRouter(repository: UserRepository) {
 
   router.post(
     '/:id/access-scope',
-    requirePermissions(['settings.users.write']),
+    requireAnyPermissions(['settings.users.write', 'settings.users.manage_data_entry']),
     asyncHandler(async (req, res) => {
       const companyId = requireCompanyId(req);
       const payload = parsePayload(accessScopeSchema, req.body);
@@ -221,6 +300,24 @@ export function createUserRouter(repository: UserRepository) {
         res.status(404).json({ success: false, error: 'User not found.' });
         return;
       }
+
+      const permissions: string[] = (req as any).requestUserContext?.permissions ?? [];
+      if (!permissions.includes('settings.users.write')) {
+        // Same rule as PUT /:id: the existing account must already be
+        // data_entry within their branch, and whatever they're changing it
+        // to must stay within that same restriction.
+        await enforceDataEntryScopeIfRestricted(req, repository, {
+          roleId: (user as any).role_id,
+          branchIds: (user as any).branch_ids ?? [],
+          userType: (user as any).user_type,
+        });
+        await enforceDataEntryScopeIfRestricted(req, repository, {
+          roleId: payload.role_id,
+          branchIds: payload.branchIds,
+          userType: payload.user_type,
+        });
+      }
+
       const nextUserType = payload.user_type ?? user.user_type;
       const nextAgentId = typeof payload.agent_id === 'undefined' ? user.agent_id : payload.agent_id;
       if (nextUserType === 'agent' && !nextAgentId) {

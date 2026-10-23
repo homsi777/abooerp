@@ -1,0 +1,75 @@
+<resources>
+    <string name="app_name">عبو المحمود</string>
+    <string name="company_name">شركة عبو المحمود للنقل والخدمات اللوجستية</string>
+    <string name="company_tagline">بوابة السائق — تتبّع الرحلات والشحنات</string>
+    
+    <!-- Login Screen -->
+    <string name="login_title">تسجيل الدخول</string>
+    <string name="username_label">اسم المستخدم</string>
+    <string name="username_hint">أدخل اسم المستخدم (مثال: driver_omar)</string>
+    <string name="password_label">كلمة المرور</string>
+    <string name="password_hint">أدخل كلمة المرور</string>
+    <string name="login_button">تسجيل الدخول</string>
+    <string name="login_demo_button">تجربة بحساب تجريبي (بدون إنترنت)</string>
+    <string name="server_settings">إعدادات الخادم</string>
+    <string name="server_url_label">عنوان الخادم (API Base URL)</string>
+    <string name="save_settings">حفظ الإعدادات</string>
+    <string name="error_invalid_credentials">اسم المستخدم أو كلمة المرور غير صحيحة</string>
+    <string name="error_connection_failed">تعذّر الاتصال بالخادم. يرجى التحقق من الشبكة</string>
+    <string name="error_empty_fields">يرجى إدخال اسم المستخدم وكلمة المرور</string>
+    <string name="session_expired">انتهت صلاحية الجلسة، يرجى تسجيل الدخول مجدداً</string>
+    <string name="demo_mode_banner_title">⚠️ وضع تجريبي — لا بيانات حقيقية</string>
+    <string name="demo_mode_banner_desc">أنت الآن في وضع الحساب التجريبي. البيانات المعروضة استرشادية فقط ولا يتم إرسال موقعك للخادم.</string>
+
+    <!-- Trip Screen -->
+    <string name="current_trip_title">رحلتي الحالية</string>
+    <string name="welcome_driver">مرحباً بك،</string>
+    <string name="logout">تسجيل الخروج</string>
+    <string name="trip_number">رقم الرحلة</string>
+    <string name="trip_route">مسار الرحلة المخطط</string>
+    <string name="shipments_count">عدد الشحنات</string>
+    <string name="tracking_active">التتبّع نشط</string>
+    <string name="tracking_inactive">التتبّع متوقف</string>
+    <string name="start_tracking">بدء تتبّع الرحلة</string>
+    <string name="stop_tracking">إيقاف التتبّع — إنهاء الرحلة</string>
+    <string name="shipments_list_title">قائمة أسطر الشحنات</string>
+    <string name="shipments_list_subtitle">بيانات استرشادية للعرض فقط</string>
+    <string name="receipt_no">إيصال رقم</string>
+    <string name="sender">المرسل</string>
+    <string name="receiver">المستلم</string>
+    <string name="destination">الوجهة</string>
+    <string name="parcels_weight">الطرود / الوزن</string>
+    <string name="status_pending">بانتظار التسليم</string>
+    <string name="status_in_transit">جارٍ النقل</string>
+    <string name="status_delivered">تم التسليم</string>
+    <string name="no_active_trip">لا توجد رحلة نشطة حالياً</string>
+    <string name="refresh_trip">تحديث بيانات الرحلة</string>
+
+    <!-- Tracking & Offline Queue -->
+    <string name="offline_pings_queued">نبضات موقع بانتظار الإرسال</string>
+    <string name="all_synced">تمت مزامنة جميع المواقع</string>
+    <string name="last_ping_time">آخر نبضة موقع</string>
+    <string name="accuracy_meters">الدقة</string>
+
+    <!-- Foreground Notification -->
+    <string name="notification_channel_name">خدمة تتبّع موقع السائق</string>
+    <string name="notification_channel_desc">إشعار دائم يوضح استمرار خدمة إرسال موقع الشاحنة أثناء الرحلة</string>
+    <string name="notification_title">عبو المحمود — جارٍ تتبّع رحلتك</string>
+    <string name="notification_desc">الخدمة تعمل في الخلفية لإرسال إحداثيات GPS للرحلة</string>
+    <string name="notification_open_app">فتح التطبيق</string>
+
+    <!-- Permissions Dialogs -->
+    <string name="permission_required_title">أذونات ضرورية لتشغيل التطبيق</string>
+    <string name="permission_notification_title">إذن الإشعارات (إلزامي)</string>
+    <string name="permission_notification_desc">يتطلب أندرويد إظهار إشعار دائم وواضح أثناء تتبع الموقع في الخلفية لحماية خصوصيتك ولضمان عدم إيقاف الخدمة.</string>
+    <string name="permission_location_title">إذن الموقع أثناء الاستخدام (إلزامي)</string>
+    <string name="permission_location_desc">يحتاج التطبيق للوصول إلى إحداثيات GPS لإرسال موقع الشاحنة على الخريطة طوال مسار الرحلة.</string>
+    <string name="permission_background_title">إذن الموقع طوال الوقت / في الخلفية (إلزامي)</string>
+    <string name="permission_background_desc">لضمان استمرار تسجيل موقعك أثناء إغلاق الشاشة أو وضع الهاتف في جيبك أثناء القيادة، يرجى اختيار \"السماح طوال الوقت\" في الخطوة التالية.</string>
+    <string name="grant_permission">متابعة ومنح الإذن</string>
+    <string name="open_settings">فتح إعدادات النظام</string>
+    <string name="battery_optimization_title">تحسين استهلاك البطارية</string>
+    <string name="battery_optimization_desc">قد يقوم أندرويد بإيقاف تطبيق السائق لتوفير البطارية على الطرق الطويلة. يُرجى استثناء التطبيق من تحسين البطارية لضمان دقة التتبّع.</string>
+    <string name="battery_optimization_action">استثناء من تحسين البطارية</string>
+    <string name="understood">تم الفهم</string>
+</resources>

@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
@@ -48,14 +49,19 @@ fun UpdateGate(apiService: ApiService) {
     var downloadedFile by remember { mutableStateOf<File?>(null) }
 
     LaunchedEffect(Unit) {
+        Log.d("UpdateGate", "Checking for update. Installed versionCode=${BuildConfig.VERSION_CODE}")
         try {
             val response = apiService.getAppVersion("android")
             val info = response.data
+            Log.d("UpdateGate", "Response success=${response.success} data=$info")
             if (response.success && info != null && info.versionCode > BuildConfig.VERSION_CODE) {
+                Log.d("UpdateGate", "Update available: ${info.versionCode} > ${BuildConfig.VERSION_CODE}")
                 state = UpdateState.Available(info)
+            } else {
+                Log.d("UpdateGate", "No update needed.")
             }
-        } catch (_: Exception) {
-            // No update-check on this run is fine — never block the app over this.
+        } catch (e: Exception) {
+            Log.e("UpdateGate", "Version check failed", e)
         }
     }
 

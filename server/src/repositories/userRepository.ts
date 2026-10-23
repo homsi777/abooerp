@@ -137,6 +137,11 @@ export class UserRepository {
     return result.rows[0] ?? null;
   }
 
+  async getRoleCodeById(roleId: string): Promise<string | null> {
+    const result = await pool.query<{ code: string }>('select code from roles where id = $1', [roleId]);
+    return result.rows[0]?.code ?? null;
+  }
+
   async isRoleAllowedForCompany(roleId: string, companyId: string): Promise<boolean> {
     const result = await pool.query(
       `

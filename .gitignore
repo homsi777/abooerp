@@ -25,3 +25,15 @@ tmp/
 .env.*
 !server/.env.example
 node_modules
+
+# Android apps (apk-dataentry, apk-driver) — build/cache artifacts only,
+# source stays tracked
+apk-dataentry/.gradle/
+apk-dataentry/.kotlin/
+apk-dataentry/build/
+apk-dataentry/app/build/
+apk-dataentry/local.properties
+apk-driver/.gradle/
+apk-driver/build/
+apk-driver/app/build/
+apk-driver/local.properties
