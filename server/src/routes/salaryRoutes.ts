@@ -48,6 +48,9 @@ const salaryUpdateSchema = z.object({
 
 const salaryPaySchema = z.object({
   cashboxId: z.string().uuid(),
+  /** سلف محدَّدة يختارها المحاسب لخصمها من هذه الدفعة فقط — بدلاً من خصم كل
+   *  السلف المفتوحة تلقائياً. مصفوفة فارغة = لا تُخصَم أي سلفة الآن. */
+  advanceIds: z.array(z.string().uuid()).optional(),
 });
 
 // ── Advance schemas ─────────────────────────────────────────────────────────
@@ -293,7 +296,7 @@ export function createSalaryRouter(
       const data = await repository.paySalary(
         String(req.params.id),
         companyId,
-        { cashboxId: body.cashboxId, paidByUserId: userId(req), salaryExchangeRateToUsd },
+        { cashboxId: body.cashboxId, paidByUserId: userId(req), salaryExchangeRateToUsd, advanceIds: body.advanceIds },
         financeRepository,
       );
       auditService.logAsync({

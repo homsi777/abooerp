@@ -571,7 +571,7 @@ export class SalaryRepository {
   async paySalary(
     id: string,
     companyId: string,
-    input: { cashboxId: string; paidByUserId?: string; salaryExchangeRateToUsd?: number },
+    input: { cashboxId: string; paidByUserId?: string; salaryExchangeRateToUsd?: number; advanceIds?: string[] },
     financeRepository: FinanceRepository,
   ) {
     const client = await pool.connect();
@@ -616,10 +616,19 @@ export class SalaryRepository {
       );
 
       const manualDeductions = Number(salary.manual_deductions ?? salary.deductions ?? 0);
-      let advanceDeductions = Number(salary.advance_deductions ?? 0);
+      // تُحسَب خصومات السلف من الصفر هنا دوماً — القيمة المخزَّنة في العمود
+      // وقت إنشاء السجل (قبل الدفع) مجرَّد تقدير عرضي، ولم تُطبَّق فعلياً على
+      // أي سلفة بعد؛ اعتمادها كقيمة بداية هنا كان يُضاعف الخصم فعلياً (كل سلفة
+      // تُخصَم مرّتين من صافي الراتب المدفوع) دون أي تكرار حقيقي في جدول
+      // السلف نفسه — وهو ما كان يُظلم الموظف بخصم مضاعف من صافي راتبه.
+      let advanceDeductions = 0;
       const grossAfterManual = Math.max(0, Number(salary.basic_amount) + Number(salary.bonuses) - manualDeductions);
 
-      if (Number(existingDeductions.rows[0]?.count ?? 0) === 0 && grossAfterManual > 0) {
+      // لو مرّر المحاسب قائمة سلف محدَّدة (عبر مربعات التحديد في الواجهة)
+      // تُخصَم هذه السلف فقط — مصفوفة فارغة تعني عدم خصم أي سلفة في هذه
+      // الدفعة. بدونها (undefined) يبقى السلوك القديم: خصم كل السلف المفتوحة.
+      const restrictToAdvanceIds = input.advanceIds;
+      if (Number(existingDeductions.rows[0]?.count ?? 0) === 0 && grossAfterManual > 0 && (!restrictToAdvanceIds || restrictToAdvanceIds.length > 0)) {
         let remainingSalaryCapacity = grossAfterManual;
         const salaryRateToUsd = input.salaryExchangeRateToUsd && input.salaryExchangeRateToUsd > 0 ? input.salaryExchangeRateToUsd : 1;
         const advances = await client.query(
@@ -631,10 +640,11 @@ export class SalaryRepository {
             and deleted_at is null
             and status in ('pending', 'partially_repaid')
             and amount > repaid_amount
+            and ($3::uuid[] is null or id = any($3::uuid[]))
           order by advance_date asc, created_at asc, id asc
           for update
           `,
-          [companyId, salary.employee_id],
+          [companyId, salary.employee_id, restrictToAdvanceIds ?? null],
         );
 
         for (const adv of advances.rows) {

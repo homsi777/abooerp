@@ -671,9 +671,18 @@ function SalaryPayPanel({
   const { showToast } = useToast();
   const [openAdvances, setOpenAdvances] = useState<Advance[]>([]);
   const [loadingAdvances, setLoadingAdvances] = useState(true);
+  const [selectedAdvanceIds, setSelectedAdvanceIds] = useState<Set<string>>(new Set());
   const [manualDeduction, setManualDeduction] = useState(String(currentRecord?.manual_deductions ?? currentRecord?.deductions ?? 0));
   const [cashboxId, setCashboxId] = useState('');
   const [saving, setSaving] = useState(false);
+
+  const toggleAdvance = (advanceId: string) => {
+    setSelectedAdvanceIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(advanceId)) next.delete(advanceId); else next.add(advanceId);
+      return next;
+    });
+  };
 
   const isForeignCurrency = employee.currency?.trim().toUpperCase() !== 'USD';
   const [payInUsd, setPayInUsd] = useState(false);
@@ -707,6 +716,9 @@ function SalaryPayPanel({
   const eligibleCashboxes = sameCurrencyCashboxes.length > 0 ? sameCurrencyCashboxes : activeCashboxes;
   const currencyMismatchFallback = sameCurrencyCashboxes.length === 0 && activeCashboxes.length > 0;
   const totalOpenAdvancesUsd = openAdvances.reduce((sum, a) => sum + Number(a.outstanding_usd_equivalent ?? 0), 0);
+  const totalSelectedAdvancesUsd = openAdvances
+    .filter((a) => selectedAdvanceIds.has(a.id))
+    .reduce((sum, a) => sum + Number(a.outstanding_usd_equivalent ?? 0), 0);
 
   // صندوق افتراضي: "صندوق رئيسي" إن وُجد ضمن الصناديق المؤهَّلة، ليوفّر على
   // المحاسب اختياره يدوياً كل مرة — تبقى بقية الصناديق متاحة للاختيار.
@@ -757,7 +769,7 @@ function SalaryPayPanel({
       } else if (manualNum !== Number(currentRecord?.manual_deductions ?? currentRecord?.deductions ?? 0)) {
         await httpClient.put(`/salary-records/${recordId}`, { deductions: manualNum });
       }
-      await httpClient.post(`/salary-records/${recordId}/pay`, { cashboxId });
+      await httpClient.post(`/salary-records/${recordId}/pay`, { cashboxId, advanceIds: Array.from(selectedAdvanceIds) });
       showToast('تم تسليم الراتب بنجاح', 'success');
       onPaid();
     } catch (e) {
@@ -767,29 +779,35 @@ function SalaryPayPanel({
     }
   };
 
+  const estimatedNet = Math.max(
+    0,
+    (payInUsd ? convertedUsdAmount : (parseFloat(employee.basic_salary) || 0)) - (Number(manualDeduction) || 0) - totalSelectedAdvancesUsd,
+  );
+
   return (
     <Modal title={`تسليم راتب — ${employee.name}`} onClose={onClose}>
-      <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '10px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <div style={{ display: 'flex', gap: '10px', background: 'linear-gradient(135deg,#f8fafc,#eef2ff)', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '14px' }}>
+          <div style={{ flex: 1 }}>
             <div style={{ fontSize: '11.5px', color: '#6b7280', fontWeight: 600 }}>الراتب الأساسي</div>
-            <div style={{ fontSize: '16px', fontWeight: 800 }}>
+            <div style={{ fontSize: '18px', fontWeight: 800 }}>
               {fmt(employee.basic_salary)} {employee.currency}
               {payInUsd && usdRateNum > 0 && (
                 <span style={{ fontSize: '12px', color: '#4f46e5', fontWeight: 700 }}> = {fmt(convertedUsdAmount)}$</span>
               )}
             </div>
           </div>
-          <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '10px' }}>
-            <div style={{ fontSize: '11.5px', color: '#6b7280', fontWeight: 600 }}>السلف المفتوحة (ما يعادله بالدولار)</div>
-            <div style={{ fontSize: '16px', fontWeight: 800, color: totalOpenAdvancesUsd > 0 ? '#b45309' : '#166534' }}>
+          <div style={{ width: '1px', background: '#e2e8f0' }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '11.5px', color: '#6b7280', fontWeight: 600 }}>السلف المفتوحة (كلها)</div>
+            <div style={{ fontSize: '18px', fontWeight: 800, color: totalOpenAdvancesUsd > 0 ? '#b45309' : '#166534' }}>
               {loadingAdvances ? '...' : `${fmt(totalOpenAdvancesUsd)}$`}
             </div>
           </div>
         </div>
 
         {isForeignCurrency && (
-          <div style={{ background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '8px', padding: '10px' }}>
+          <div style={{ background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '10px', padding: '12px' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
               <input type="checkbox" checked={payInUsd} onChange={(e) => { setPayInUsd(e.target.checked); setCashboxId(''); }} />
               تحويل الراتب إلى دولار والدفع من صندوق دولار
@@ -811,17 +829,49 @@ function SalaryPayPanel({
           </div>
         )}
 
-        {!loadingAdvances && openAdvances.length > 0 && (
-          <div style={{ fontSize: '12.5px', color: '#374151', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '8px 10px' }}>
-            {openAdvances.map((a) => (
-              <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
-                <span>سلفة {a.advance_date?.split('T')[0]}</span>
-                <span>{fmt(a.amount)} {a.currency} (متبقٍ {fmt(Number(a.amount) - Number(a.repaid_amount))})</span>
-              </div>
-            ))}
-            <div style={{ marginTop: '4px', fontWeight: 700 }}>ستُخصَم هذه السلف تلقائياً من الراتب حسب الترتيب الزمني.</div>
+        <div style={{ border: '1px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden' }}>
+          <div style={{ padding: '10px 12px', background: '#f9fafb', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '13px', fontWeight: 800 }}>سلف الموظف المفتوحة</span>
+            {!loadingAdvances && openAdvances.length > 0 && (
+              <span style={{ fontSize: '11.5px', color: '#6b7280' }}>حدّدي السلف التي تريدين خصمها الآن</span>
+            )}
           </div>
-        )}
+          {loadingAdvances ? (
+            <p style={{ padding: '12px', fontSize: '12.5px', color: '#6b7280' }}>جاري التحميل...</p>
+          ) : openAdvances.length === 0 ? (
+            <p style={{ padding: '12px', fontSize: '12.5px', color: '#9ca3af' }}>لا توجد سلف مفتوحة لهذا الموظف.</p>
+          ) : (
+            <div>
+              {openAdvances.map((a) => {
+                const checked = selectedAdvanceIds.has(a.id);
+                return (
+                  <label
+                    key={a.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
+                      padding: '9px 12px', fontSize: '12.5px', cursor: 'pointer',
+                      background: checked ? '#fff7ed' : '#fff',
+                      borderBottom: '1px solid #f1f5f9',
+                    }}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <input type="checkbox" checked={checked} onChange={() => toggleAdvance(a.id)} />
+                      سلفة {a.advance_date?.split('T')[0]}
+                    </span>
+                    <span style={{ fontWeight: 700, color: checked ? '#b45309' : '#374151' }}>
+                      {fmt(Number(a.amount) - Number(a.repaid_amount))} {a.currency}
+                      <span style={{ color: '#9ca3af', fontWeight: 400 }}> (أصل {fmt(a.amount)})</span>
+                    </span>
+                  </label>
+                );
+              })}
+              <div style={{ padding: '8px 12px', fontSize: '12.5px', fontWeight: 700, background: '#fff7ed', color: '#b45309' }}>
+                سيُخصَم من هذا الراتب: {fmt(totalSelectedAdvancesUsd)}$
+                {selectedAdvanceIds.size === 0 && <span style={{ color: '#9ca3af', fontWeight: 400 }}> — لم تُحدَّد أي سلفة بعد</span>}
+              </div>
+            </div>
+          )}
+        </div>
 
         <div className="form-group">
           <label className="form-label">خصم مخالفات / أخرى (اختياري)</label>
@@ -844,7 +894,14 @@ function SalaryPayPanel({
           )}
         </div>
 
-        <div className="flex gap-2 justify-end pt-2">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '10px', padding: '12px 14px' }}>
+          <span style={{ fontSize: '13px', fontWeight: 700, color: '#166534' }}>الصافي المقدَّر للاستلام</span>
+          <span style={{ fontSize: '19px', fontWeight: 800, color: '#166534' }}>
+            {fmt(estimatedNet)} {payInUsd ? 'USD' : employee.currency}
+          </span>
+        </div>
+
+        <div className="flex gap-2 justify-end pt-1">
           <button type="button" className="toolbar-btn" onClick={onClose}>إلغاء</button>
           <button type="button" className="toolbar-btn primary" onClick={() => void confirmPay()} disabled={saving || !cashboxId}>
             {saving ? 'جارٍ التسليم...' : 'تأكيد استلام'}
@@ -876,10 +933,19 @@ function WeeklySalaryPayModal({
   const [records, setRecords] = useState<SalaryRecord[]>([]);
   const [loadingRecords, setLoadingRecords] = useState(true);
   const [openAdvances, setOpenAdvances] = useState<Advance[]>([]);
+  const [selectedAdvanceIds, setSelectedAdvanceIds] = useState<Set<string>>(new Set());
   const [manualDeduction, setManualDeduction] = useState('0');
   const [cashboxId, setCashboxId] = useState('');
   const [payingDate, setPayingDate] = useState<string | null>(null);
   const [bulkPaying, setBulkPaying] = useState(false);
+
+  const toggleAdvance = (advanceId: string) => {
+    setSelectedAdvanceIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(advanceId)) next.delete(advanceId); else next.add(advanceId);
+      return next;
+    });
+  };
 
   const isForeignCurrency = employee.currency?.trim().toUpperCase() !== 'USD';
   const [payInUsd, setPayInUsd] = useState(false);
@@ -923,6 +989,9 @@ function WeeklySalaryPayModal({
   const eligibleCashboxes = sameCurrencyCashboxes.length > 0 ? sameCurrencyCashboxes : activeCashboxes;
   const currencyMismatchFallback = sameCurrencyCashboxes.length === 0 && activeCashboxes.length > 0;
   const totalOpenAdvancesUsd = openAdvances.reduce((sum, a) => sum + Number(a.outstanding_usd_equivalent ?? 0), 0);
+  const totalSelectedAdvancesUsd = openAdvances
+    .filter((a) => selectedAdvanceIds.has(a.id))
+    .reduce((sum, a) => sum + Number(a.outstanding_usd_equivalent ?? 0), 0);
 
   useEffect(() => {
     if (cashboxId) return;
@@ -962,7 +1031,7 @@ function WeeklySalaryPayModal({
     } else if (manualNum !== Number(existing?.manual_deductions ?? existing?.deductions ?? 0)) {
       await httpClient.put(`/salary-records/${recordId}`, { deductions: manualNum });
     }
-    await httpClient.post(`/salary-records/${recordId}/pay`, { cashboxId });
+    await httpClient.post(`/salary-records/${recordId}/pay`, { cashboxId, advanceIds: Array.from(selectedAdvanceIds) });
   };
 
   const handlePayWeek = async (date: string) => {
@@ -1022,6 +1091,42 @@ function WeeklySalaryPayModal({
             </div>
           </div>
         </div>
+
+        {openAdvances.length > 0 && (
+          <div style={{ border: '1px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden' }}>
+            <div style={{ padding: '10px 12px', background: '#f9fafb', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '13px', fontWeight: 800 }}>سلف الموظف المفتوحة</span>
+              <span style={{ fontSize: '11.5px', color: '#6b7280' }}>حدّدي السلف التي تريدين خصمها من كل أسبوع يُسلَّم الآن</span>
+            </div>
+            {openAdvances.map((a) => {
+              const checked = selectedAdvanceIds.has(a.id);
+              return (
+                <label
+                  key={a.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
+                    padding: '9px 12px', fontSize: '12.5px', cursor: 'pointer',
+                    background: checked ? '#fff7ed' : '#fff',
+                    borderBottom: '1px solid #f1f5f9',
+                  }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <input type="checkbox" checked={checked} onChange={() => toggleAdvance(a.id)} />
+                    سلفة {a.advance_date?.split('T')[0]}
+                  </span>
+                  <span style={{ fontWeight: 700, color: checked ? '#b45309' : '#374151' }}>
+                    {fmt(Number(a.amount) - Number(a.repaid_amount))} {a.currency}
+                    <span style={{ color: '#9ca3af', fontWeight: 400 }}> (أصل {fmt(a.amount)})</span>
+                  </span>
+                </label>
+              );
+            })}
+            <div style={{ padding: '8px 12px', fontSize: '12.5px', fontWeight: 700, background: '#fff7ed', color: '#b45309' }}>
+              سيُخصَم من كل أسبوع يُسلَّم الآن: {fmt(totalSelectedAdvancesUsd)}$
+              {selectedAdvanceIds.size === 0 && <span style={{ color: '#9ca3af', fontWeight: 400 }}> — لم تُحدَّد أي سلفة بعد</span>}
+            </div>
+          </div>
+        )}
 
         {isForeignCurrency && (
           <div style={{ background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '8px', padding: '10px' }}>
