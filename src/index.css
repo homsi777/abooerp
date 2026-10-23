@@ -6118,17 +6118,17 @@ button.linkish {
 
 .breeze-card.wide { max-width: 900px; }
 
-.breeze-body-cols {
+.breeze-body.breeze-body-cols {
   display: grid;
   grid-template-columns: 1fr 1.05fr;
   align-items: start;
   gap: 20px;
 }
 
-.breeze-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.breeze-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; width: 100%; }
 
 @media (max-width: 760px) {
-  .breeze-body-cols { grid-template-columns: 1fr; }
+  .breeze-body.breeze-body-cols { grid-template-columns: 1fr; }
 }
 
 .breeze-head {
