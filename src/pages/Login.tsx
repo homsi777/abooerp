@@ -13,6 +13,20 @@ type LoginBranch = {
   name: string;
 };
 
+type AppVersionInfo = {
+  versionCode: number;
+  versionName: string;
+  apkUrl: string;
+  changelog: string | null;
+  mandatory: boolean;
+};
+
+const APP_DOWNLOAD_PLATFORMS: { platform: string; label: string; icon: string }[] = [
+  { platform: 'android', label: 'تطبيق الوكيل / المندوب', icon: '📦' },
+  { platform: 'android-driver', label: 'تطبيق السائق', icon: '🚚' },
+  { platform: 'android-dataentry', label: 'تطبيق إدخال البيانات', icon: '⌨️' },
+];
+
 const features = [
   {
     icon: '🚚',
@@ -65,6 +79,11 @@ export default function Login() {
   const [showLan, setShowLan] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const gearRef = useRef<HTMLDivElement>(null);
+
+  // Apps download dropdown
+  const [appsOpen, setAppsOpen] = useState(false);
+  const [appVersions, setAppVersions] = useState<Record<string, AppVersionInfo | null | 'loading'>>({});
+  const appsRef = useRef<HTMLDivElement>(null);
   const [lanState, setLanState] = useState(() => getLanState());
   const [localConnected, setLocalConnected] = useState(false);
   const [cloudConnected, setCloudConnected] = useState(() => navigator.onLine);
@@ -141,6 +160,30 @@ export default function Login() {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [gearOpen]);
+
+  // Close apps dropdown on outside click
+  useEffect(() => {
+    if (!appsOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (appsRef.current && !appsRef.current.contains(e.target as Node)) setAppsOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [appsOpen]);
+
+  // Fetch each app's latest release once, the first time the dropdown opens
+  useEffect(() => {
+    if (!appsOpen) return;
+    for (const { platform } of APP_DOWNLOAD_PLATFORMS) {
+      if (appVersions[platform] !== undefined) continue;
+      setAppVersions((prev) => ({ ...prev, [platform]: 'loading' }));
+      httpClient
+        .get<AppVersionInfo | null>(`/app/version?platform=${platform}`)
+        .then((info) => setAppVersions((prev) => ({ ...prev, [platform]: info })))
+        .catch(() => setAppVersions((prev) => ({ ...prev, [platform]: null })));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appsOpen]);
 
   useEffect(() => {
     const onConnectivity = (event: Event) => {
@@ -250,6 +293,78 @@ export default function Login() {
       >
         ?
       </button>
+
+      {/* ── DOWNLOAD APPS BUTTON — next to the gear button ── */}
+      <div ref={appsRef} style={{ position: 'absolute', top: '20px', left: '124px', zIndex: 50 }}>
+        <button
+          onClick={() => setAppsOpen((v) => !v)}
+          title="تحميل تطبيقات الموبايل"
+          style={{
+            height: '42px', padding: '0 16px', borderRadius: '12px',
+            background: appsOpen ? 'rgba(124,58,237,.35)' : 'rgba(255,255,255,.1)',
+            border: '1px solid rgba(255,255,255,.15)',
+            color: '#fff', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: '8px',
+            backdropFilter: 'blur(8px)', transition: 'background .2s',
+          }}
+        >
+          <span>📥</span>
+          <span>تحميل تطبيقات</span>
+        </button>
+
+        {appsOpen && (
+          <div style={{
+            position: 'absolute', top: '50px', left: 0,
+            width: '300px', background: '#1e1b3a',
+            border: '1px solid rgba(255,255,255,.12)',
+            borderRadius: '14px', padding: '10px',
+            boxShadow: '0 16px 40px rgba(0,0,0,.5)',
+            animation: 'fadeUp .15s ease both',
+          }}>
+            <div style={{ fontSize: '11.5px', color: 'rgba(255,255,255,.4)', padding: '2px 8px 8px' }}>
+              آخر إصدار من كل تطبيق — للموظفين المعنيين فقط
+            </div>
+            {APP_DOWNLOAD_PLATFORMS.map(({ platform, label, icon }) => {
+              const info = appVersions[platform];
+              return (
+                <div
+                  key={platform}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '10px',
+                    padding: '10px 10px', borderRadius: '10px',
+                    background: 'rgba(255,255,255,.03)', marginBottom: '6px',
+                  }}
+                >
+                  <span style={{ fontSize: '18px', flexShrink: 0 }}>{icon}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: '#f1f5f9', fontSize: '12.5px', fontWeight: 600 }}>{label}</div>
+                    <div style={{ color: 'rgba(255,255,255,.4)', fontSize: '11px', marginTop: '2px' }}>
+                      {info === 'loading' || info === undefined
+                        ? 'جارٍ التحقق...'
+                        : info === null
+                          ? 'لا يوجد إصدار منشور بعد'
+                          : `إصدار ${info.versionName}`}
+                    </div>
+                  </div>
+                  {info && info !== 'loading' && (
+                    <a
+                      href={info.apkUrl}
+                      download
+                      style={{
+                        flexShrink: 0, background: 'linear-gradient(135deg,#7c3aed,#4f46e5)',
+                        color: '#fff', fontSize: '11.5px', fontWeight: 700,
+                        padding: '7px 14px', borderRadius: '8px', textDecoration: 'none',
+                      }}
+                    >
+                      تحميل
+                    </a>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* ── GEAR BUTTON (top-left corner) ── */}
       <div ref={gearRef} style={{ position: 'absolute', top: '20px', left: '20px', zIndex: 50 }}>

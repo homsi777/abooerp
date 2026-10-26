@@ -50,10 +50,34 @@ class AuthStorage(context: Context) {
         sharedPreferences.edit()
             .putString("printer_address", address)
             .putString("printer_name", name)
+            .putString("printer_type", PRINTER_TYPE_BLUETOOTH)
             .apply()
     }
     fun getPrinterAddress(): String? = sharedPreferences.getString("printer_address", null)
     fun getPrinterName(): String? = sharedPreferences.getString("printer_name", null)
+
+    fun saveNetworkPrinter(host: String, port: Int, name: String) {
+        sharedPreferences.edit()
+            .putString("network_printer_host", host)
+            .putInt("network_printer_port", port)
+            .putString("network_printer_name", name)
+            .putString("printer_type", PRINTER_TYPE_NETWORK)
+            .apply()
+    }
+    fun getNetworkPrinterHost(): String? = sharedPreferences.getString("network_printer_host", null)
+    fun getNetworkPrinterPort(): Int = sharedPreferences.getInt("network_printer_port", 9100)
+    fun getNetworkPrinterName(): String? = sharedPreferences.getString("network_printer_name", null)
+
+    /** Which printer connection — [PRINTER_TYPE_BLUETOOTH] or
+     *  [PRINTER_TYPE_NETWORK] — is active, i.e. which one the last
+     *  "تعيين كافتراضية" tap set. Printing uses whichever this says, even
+     *  if both a Bluetooth and a network printer were saved at some point. */
+    fun getPrinterType(): String = sharedPreferences.getString("printer_type", PRINTER_TYPE_BLUETOOTH) ?: PRINTER_TYPE_BLUETOOTH
+
+    companion object {
+        const val PRINTER_TYPE_BLUETOOTH = "bluetooth"
+        const val PRINTER_TYPE_NETWORK = "network"
+    }
 
     fun clear() {
         sharedPreferences.edit().clear().apply()

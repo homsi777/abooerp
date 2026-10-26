@@ -18,6 +18,7 @@ import com.abooerp.dataentry.data.ShiftStatus
 import com.abooerp.dataentry.data.UpsertLedgerRowRequest
 import com.abooerp.dataentry.network.ApiService
 import com.abooerp.dataentry.printer.BluetoothPrinterManager
+import com.abooerp.dataentry.printer.NetworkPrinterManager
 import com.abooerp.dataentry.printer.PrintResult
 import com.abooerp.dataentry.printer.ReceiptData
 import com.abooerp.dataentry.printer.ReceiptRenderer
@@ -67,6 +68,7 @@ class ShiftViewModel(
     private val authStorage: AuthStorage,
     private val queueStorage: LedgerQueueStorage,
     private val printerManager: BluetoothPrinterManager,
+    private val networkPrinterManager: NetworkPrinterManager,
 ) : ViewModel() {
     private val timeFormat = SimpleDateFormat("HH:mm", Locale("ar"))
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
@@ -90,7 +92,11 @@ class ShiftViewModel(
     private suspend fun printRow(row: LedgerRow) {
         // No printer configured yet is not an error — printing is opt-in
         // per device until every tablet has one, so we just skip silently.
-        val address = authStorage.getPrinterAddress() ?: return
+        val isNetwork = authStorage.getPrinterType() == AuthStorage.PRINTER_TYPE_NETWORK
+        val networkHost = if (isNetwork) authStorage.getNetworkPrinterHost() else null
+        val bluetoothAddress = if (!isNetwork) authStorage.getPrinterAddress() else null
+        if (isNetwork && networkHost == null) return
+        if (!isNetwork && bluetoothAddress == null) return
         val data = ReceiptData(
             companyName = "شركة عبو المحمود لنقل والخدمات اللوجستية",
             branchLabel = authStorage.getBranchLabel() ?: "-",
@@ -111,7 +117,12 @@ class ShiftViewModel(
             notes = row.notes,
         )
         val bitmap = ReceiptRenderer.render(data)
-        when (val result = printerManager.printBitmap(address, bitmap)) {
+        val result = if (isNetwork) {
+            networkPrinterManager.printBitmap(networkHost!!, authStorage.getNetworkPrinterPort(), bitmap)
+        } else {
+            printerManager.printBitmap(bluetoothAddress!!, bitmap)
+        }
+        when (result) {
             is PrintResult.Failure -> _printError.value = result.message
             PrintResult.Success -> {}
         }
@@ -585,9 +596,10 @@ class ShiftViewModel(
         private val authStorage: AuthStorage,
         private val queueStorage: LedgerQueueStorage,
         private val printerManager: BluetoothPrinterManager,
+        private val networkPrinterManager: NetworkPrinterManager,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            ShiftViewModel(employeeName, apiService, authStorage, queueStorage, printerManager) as T
+            ShiftViewModel(employeeName, apiService, authStorage, queueStorage, printerManager, networkPrinterManager) as T
     }
 }
