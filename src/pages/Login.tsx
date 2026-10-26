@@ -376,7 +376,7 @@ export default function Login() {
 
           {appsOpen && (
             <div style={{
-              position: 'absolute', top: '50px', insetInlineStart: 0,
+              position: 'absolute', top: '50px', insetInlineEnd: 0,
               width: '300px', maxWidth: '85vw', background: '#1e1b3a',
             border: '1px solid rgba(255,255,255,.12)',
             borderRadius: '14px', padding: '10px',
