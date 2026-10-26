@@ -275,47 +275,109 @@ export default function Login() {
       <div style={{ ...styles.blob, top: '-120px', right: '-80px', background: 'radial-gradient(circle,rgba(124,58,237,.35) 0%,transparent 70%)' }} />
       <div style={{ ...styles.blob, bottom: '-100px', left: '-60px', background: 'radial-gradient(circle,rgba(79,70,229,.3) 0%,transparent 70%)' }} />
 
-      {/* ── HELP BUTTON (?) — بجانب زر الإعدادات ── */}
-      <button
-        onClick={() => setShowHelp(true)}
-        title="دليل التثبيت وإعداد النظام"
-        style={{
-          position: 'absolute', top: '20px', left: '72px', zIndex: 50,
-          width: '42px', height: '42px', borderRadius: '12px',
-          background: 'rgba(255,255,255,.1)',
-          border: '1px solid rgba(255,255,255,.15)',
-          color: '#fff', fontSize: '18px', fontWeight: 700, cursor: 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          backdropFilter: 'blur(8px)', transition: 'background .2s',
-        }}
-        onMouseEnter={e => Object.assign(e.currentTarget.style, { background: 'rgba(124,58,237,.35)' })}
-        onMouseLeave={e => Object.assign(e.currentTarget.style, { background: 'rgba(255,255,255,.1)' })}
-      >
-        ?
-      </button>
+      {/* ── TOP-LEFT CONTROL CLUSTER — إعدادات / مساعدة / تحميل تطبيقات، كصف
+          واحد يلتفّ (wrap) على الشاشات الضيقة بدل التراكب فوق بعضه ── */}
+      <div className="login-topbar-left">
+        <div ref={gearRef} style={{ position: 'relative' }}>
+          <button
+            onClick={() => setGearOpen((v) => !v)}
+            title="إعدادات النظام"
+            style={{
+              width: '42px', height: '42px', borderRadius: '12px',
+              background: gearOpen ? 'rgba(124,58,237,.35)' : 'rgba(255,255,255,.1)',
+              border: '1px solid rgba(255,255,255,.15)',
+              color: '#fff', fontSize: '20px', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              backdropFilter: 'blur(8px)', transition: 'background .2s',
+            }}
+          >
+            ⚙️
+          </button>
 
-      {/* ── DOWNLOAD APPS BUTTON — next to the gear button ── */}
-      <div ref={appsRef} style={{ position: 'absolute', top: '20px', left: '124px', zIndex: 50 }}>
+          {gearOpen && (
+            <div style={{
+              position: 'absolute', top: '50px', insetInlineStart: 0,
+              width: '200px', background: '#1e1b3a',
+              border: '1px solid rgba(255,255,255,.12)',
+              borderRadius: '14px', padding: '8px',
+              boxShadow: '0 16px 40px rgba(0,0,0,.5)',
+              animation: 'fadeUp .15s ease both',
+            }}>
+              {/* ربط محلي */}
+              <button
+                onClick={() => { setGearOpen(false); setShowLan(true); }}
+                style={{
+                  width: '100%', padding: '10px 14px', background: 'none',
+                  border: 'none', borderRadius: '8px', color: '#f1f5f9',
+                  fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px',
+                  textAlign: 'right',
+                }}
+                onMouseEnter={(e) => Object.assign(e.currentTarget.style, { background: 'rgba(255,255,255,.08)' })}
+                onMouseLeave={(e) => Object.assign(e.currentTarget.style, { background: 'none' })}
+              >
+                <span>🌐</span>
+                <span style={{ flex: 1 }}>ربط محلي</span>
+                {lanState.serverIp && <span style={{ fontSize: '10px', color: '#38bdf8', background: 'rgba(14,165,233,.15)', padding: '2px 6px', borderRadius: '20px' }}>{lanState.serverIp}</span>}
+              </button>
+
+              {/* ربط سحابي — disabled */}
+              <div
+                title="هذه الميزة متاحة لاحقاً ضمن التفعيل السحابي"
+                style={{
+                  width: '100%', padding: '10px 14px',
+                  borderRadius: '8px', color: 'rgba(255,255,255,.3)',
+                  fontSize: '13px', display: 'flex', alignItems: 'center', gap: '10px',
+                  cursor: 'not-allowed',
+                }}
+              >
+                <span>☁️</span>
+                <span style={{ flex: 1 }}>ربط سحابي</span>
+                <span style={{ fontSize: '10px', color: 'rgba(255,255,255,.3)', background: 'rgba(255,255,255,.05)', padding: '2px 6px', borderRadius: '20px' }}>قريباً</span>
+              </div>
+            </div>
+          )}
+        </div>
+
         <button
-          onClick={() => setAppsOpen((v) => !v)}
-          title="تحميل تطبيقات الموبايل"
+          onClick={() => setShowHelp(true)}
+          title="دليل التثبيت وإعداد النظام"
           style={{
-            height: '42px', padding: '0 16px', borderRadius: '12px',
-            background: appsOpen ? 'rgba(124,58,237,.35)' : 'rgba(255,255,255,.1)',
+            width: '42px', height: '42px', borderRadius: '12px',
+            background: 'rgba(255,255,255,.1)',
             border: '1px solid rgba(255,255,255,.15)',
-            color: '#fff', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: '8px',
+            color: '#fff', fontSize: '18px', fontWeight: 700, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
             backdropFilter: 'blur(8px)', transition: 'background .2s',
           }}
+          onMouseEnter={e => Object.assign(e.currentTarget.style, { background: 'rgba(124,58,237,.35)' })}
+          onMouseLeave={e => Object.assign(e.currentTarget.style, { background: 'rgba(255,255,255,.1)' })}
         >
-          <span>📥</span>
-          <span>تحميل تطبيقات</span>
+          ?
         </button>
 
-        {appsOpen && (
-          <div style={{
-            position: 'absolute', top: '50px', left: 0,
-            width: '300px', background: '#1e1b3a',
+        <div ref={appsRef} style={{ position: 'relative' }}>
+          <button
+            onClick={() => setAppsOpen((v) => !v)}
+            title="تحميل تطبيقات الموبايل"
+            className="login-apps-btn"
+            style={{
+              height: '42px', padding: '0 16px', borderRadius: '12px',
+              background: appsOpen ? 'rgba(124,58,237,.45)' : 'rgba(124,58,237,.22)',
+              border: '1px solid rgba(167,139,250,.5)',
+              color: '#fff', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: '8px', whiteSpace: 'nowrap',
+              backdropFilter: 'blur(8px)', transition: 'background .2s',
+              boxShadow: '0 4px 14px rgba(124,58,237,.3)',
+            }}
+          >
+            <span>📥</span>
+            <span>تحميل تطبيقات</span>
+          </button>
+
+          {appsOpen && (
+            <div style={{
+              position: 'absolute', top: '50px', insetInlineStart: 0,
+              width: '300px', maxWidth: '85vw', background: '#1e1b3a',
             border: '1px solid rgba(255,255,255,.12)',
             borderRadius: '14px', padding: '10px',
             boxShadow: '0 16px 40px rgba(0,0,0,.5)',
@@ -366,72 +428,10 @@ export default function Login() {
         )}
       </div>
 
-      {/* ── GEAR BUTTON (top-left corner) ── */}
-      <div ref={gearRef} style={{ position: 'absolute', top: '20px', left: '20px', zIndex: 50 }}>
-        <button
-          onClick={() => setGearOpen((v) => !v)}
-          title="إعدادات النظام"
-          style={{
-            width: '42px', height: '42px', borderRadius: '12px',
-            background: gearOpen ? 'rgba(124,58,237,.35)' : 'rgba(255,255,255,.1)',
-            border: '1px solid rgba(255,255,255,.15)',
-            color: '#fff', fontSize: '20px', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            backdropFilter: 'blur(8px)', transition: 'background .2s',
-          }}
-        >
-          ⚙️
-        </button>
-
-        {gearOpen && (
-          <div style={{
-            position: 'absolute', top: '50px', left: 0,
-            width: '200px', background: '#1e1b3a',
-            border: '1px solid rgba(255,255,255,.12)',
-            borderRadius: '14px', padding: '8px',
-            boxShadow: '0 16px 40px rgba(0,0,0,.5)',
-            animation: 'fadeUp .15s ease both',
-          }}>
-            {/* ربط محلي */}
-            <button
-              onClick={() => { setGearOpen(false); setShowLan(true); }}
-              style={{
-                width: '100%', padding: '10px 14px', background: 'none',
-                border: 'none', borderRadius: '8px', color: '#f1f5f9',
-                fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px',
-                textAlign: 'right',
-              }}
-              onMouseEnter={(e) => Object.assign(e.currentTarget.style, { background: 'rgba(255,255,255,.08)' })}
-              onMouseLeave={(e) => Object.assign(e.currentTarget.style, { background: 'none' })}
-            >
-              <span>🌐</span>
-              <span style={{ flex: 1 }}>ربط محلي</span>
-              {lanState.serverIp && <span style={{ fontSize: '10px', color: '#38bdf8', background: 'rgba(14,165,233,.15)', padding: '2px 6px', borderRadius: '20px' }}>{lanState.serverIp}</span>}
-            </button>
-
-            {/* ربط سحابي — disabled */}
-            <div
-              title="هذه الميزة متاحة لاحقاً ضمن التفعيل السحابي"
-              style={{
-                width: '100%', padding: '10px 14px',
-                borderRadius: '8px', color: 'rgba(255,255,255,.3)',
-                fontSize: '13px', display: 'flex', alignItems: 'center', gap: '10px',
-                cursor: 'not-allowed',
-              }}
-            >
-              <span>☁️</span>
-              <span style={{ flex: 1 }}>ربط سحابي</span>
-              <span style={{ fontSize: '10px', color: 'rgba(255,255,255,.3)', background: 'rgba(255,255,255,.05)', padding: '2px 6px', borderRadius: '20px' }}>قريباً</span>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* ── CONNECTION STATUS BADGES (top-right) ── */}
-      <div style={{
-        position: 'absolute', top: '20px', right: '20px', zIndex: 50,
-        display: 'flex', alignItems: 'center', gap: '8px',
-      }}>
+      <div className="login-topbar-right">
         <div style={{
           display: 'flex', alignItems: 'center', gap: '7px',
           padding: '7px 14px', borderRadius: '20px',
@@ -844,6 +844,29 @@ export default function Login() {
           .login-root { flex-direction: column !important; overflow-y: auto !important; height: auto !important; }
           .login-left { display: none !important; }
           .login-right { width: 100% !important; padding: 24px 16px !important; }
+        }
+
+        /* عنقودا الأزرار العلويان (إعدادات/مساعدة/تحميل تطبيقات يساراً،
+           شارات الاتصال يميناً) — صفّان يلتفّان (wrap) كل بحدود عرضه
+           الخاص بدل البقاء بعرض ثابت متراكب فوق الآخر على الشاشات
+           الضيقة، وهو ما كان يُظهرهما متكدّسين فوق بعضهما على الموبايل. */
+        .login-topbar-left {
+          position: absolute; top: 14px; left: 14px; z-index: 55;
+          display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start;
+          max-width: calc(100% - 150px);
+        }
+        .login-topbar-right {
+          position: absolute; top: 14px; right: 14px; z-index: 50;
+          display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end;
+          max-width: 140px;
+        }
+        @media (max-width: 480px) {
+          .login-topbar-left { top: 10px; left: 10px; max-width: calc(100% - 56px); gap: 6px; }
+          .login-apps-btn span:last-child { display: none; }
+          .login-apps-btn { padding: 0 11px !important; width: 42px; justify-content: center; gap: 0 !important; }
+          .login-topbar-right { top: 10px; right: 10px; max-width: 48px; flex-direction: column; align-items: flex-end; }
+          .login-topbar-right > div { padding: 6px !important; border-radius: 50% !important; }
+          .login-topbar-right span { display: none; }
         }
       `}</style>
     </div>
