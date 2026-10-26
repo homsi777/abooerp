@@ -739,6 +739,7 @@ function SalaryPayPanel({
   const [openAdvances, setOpenAdvances] = useState<Advance[]>([]);
   const [loadingAdvances, setLoadingAdvances] = useState(true);
   const [selectedAdvanceIds, setSelectedAdvanceIds] = useState<Set<string>>(new Set());
+  const [editingAdvance, setEditingAdvance] = useState<Advance | null>(null);
   const [manualDeduction, setManualDeduction] = useState(String(currentRecord?.manual_deductions ?? currentRecord?.deductions ?? 0));
   const [cashboxId, setCashboxId] = useState('');
   const [saving, setSaving] = useState(false);
@@ -755,12 +756,18 @@ function SalaryPayPanel({
   const [payInUsd, setPayInUsd] = useState(false);
   const [usdRate, setUsdRate] = useState(''); // كم من عملة الموظف (مثلاً ل.س) يساوي 1 دولار
 
-  useEffect(() => {
+  const reloadAdvances = () => {
+    setLoadingAdvances(true);
     httpClient
       .get<Advance[]>(`/employee-advances?employeeId=${employee.id}`)
       .then((rows) => setOpenAdvances(rows.filter((a) => a.status === 'pending' || a.status === 'partially_repaid')))
       .catch(() => setOpenAdvances([]))
       .finally(() => setLoadingAdvances(false));
+  };
+
+  useEffect(() => {
+    reloadAdvances();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employee.id]);
 
   // تعبئة سعر صرف مبدئي من سعر اليوم المسجَّل في النظام — قابل للتعديل يدوياً
@@ -852,6 +859,7 @@ function SalaryPayPanel({
   );
 
   return (
+    <>
     <BreezeShell tag="تسليم راتب" title={employee.name} sub={`${employee.code}${employee.position ? ` · ${employee.position}` : ''}`} onClose={onClose} wide>
       <div className="breeze-col">
         <div className="breeze-tiles">
@@ -937,16 +945,17 @@ function SalaryPayPanel({
               {openAdvances.map((a) => {
                 const checked = selectedAdvanceIds.has(a.id);
                 return (
-                  <label key={a.id} className={`breeze-adv ${checked ? 'checked' : ''}`}>
-                    <span className="breeze-adv-label">
+                  <div key={a.id} className={`breeze-adv ${checked ? 'checked' : ''}`}>
+                    <label className="breeze-adv-label">
                       <input type="checkbox" checked={checked} onChange={() => toggleAdvance(a.id)} />
                       سلفة {a.advance_date?.split('T')[0]}
-                    </span>
+                    </label>
                     <span className="breeze-adv-amt">
                       {fmt(Number(a.amount) - Number(a.repaid_amount))} {a.currency}
                       <span className="breeze-adv-orig"> (أصل {fmt(a.amount)})</span>
                     </span>
-                  </label>
+                    <button type="button" className="breeze-adv-edit" title="تعديل بيانات السلفة" onClick={() => setEditingAdvance(a)}>✏️</button>
+                  </div>
                 );
               })}
               <div className="breeze-selsum">
@@ -958,6 +967,15 @@ function SalaryPayPanel({
         </div>
       </div>
     </BreezeShell>
+
+    {editingAdvance && (
+      <EditAdvanceModal
+        advance={editingAdvance}
+        onClose={() => setEditingAdvance(null)}
+        onSaved={() => { setEditingAdvance(null); reloadAdvances(); }}
+      />
+    )}
+    </>
   );
 }
 
@@ -983,6 +1001,7 @@ function WeeklySalaryPayModal({
   const [loadingRecords, setLoadingRecords] = useState(true);
   const [openAdvances, setOpenAdvances] = useState<Advance[]>([]);
   const [selectedAdvanceIds, setSelectedAdvanceIds] = useState<Set<string>>(new Set());
+  const [editingAdvance, setEditingAdvance] = useState<Advance | null>(null);
   const [manualDeduction, setManualDeduction] = useState('0');
   const [cashboxId, setCashboxId] = useState('');
   const [payingDate, setPayingDate] = useState<string | null>(null);
@@ -1014,12 +1033,16 @@ function WeeklySalaryPayModal({
     }
   };
 
-  useEffect(() => {
-    void loadRecords();
+  const reloadAdvances = () => {
     httpClient
       .get<Advance[]>(`/employee-advances?employeeId=${employee.id}`)
       .then((rows) => setOpenAdvances(rows.filter((a) => a.status === 'pending' || a.status === 'partially_repaid')))
       .catch(() => setOpenAdvances([]));
+  };
+
+  useEffect(() => {
+    void loadRecords();
+    reloadAdvances();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employee.id]);
 
@@ -1121,6 +1144,7 @@ function WeeklySalaryPayModal({
   };
 
   return (
+    <>
     <BreezeShell tag="تسليم راتب أسبوعي" title={employee.name} sub={`${employee.code}${employee.position ? ` · ${employee.position}` : ''}`} onClose={onClose} wide>
       <div className="breeze-col">
         <div className="breeze-tiles">
@@ -1193,16 +1217,17 @@ function WeeklySalaryPayModal({
             {openAdvances.map((a) => {
               const checked = selectedAdvanceIds.has(a.id);
               return (
-                <label key={a.id} className={`breeze-adv ${checked ? 'checked' : ''}`}>
-                  <span className="breeze-adv-label">
+                <div key={a.id} className={`breeze-adv ${checked ? 'checked' : ''}`}>
+                  <label className="breeze-adv-label">
                     <input type="checkbox" checked={checked} onChange={() => toggleAdvance(a.id)} />
                     سلفة {a.advance_date?.split('T')[0]}
-                  </span>
+                  </label>
                   <span className="breeze-adv-amt">
                     {fmt(Number(a.amount) - Number(a.repaid_amount))} {a.currency}
                     <span className="breeze-adv-orig"> (أصل {fmt(a.amount)})</span>
                   </span>
-                </label>
+                  <button type="button" className="breeze-adv-edit" title="تعديل بيانات السلفة" onClick={() => setEditingAdvance(a)}>✏️</button>
+                </div>
               );
             })}
             <div className="breeze-selsum">
@@ -1243,6 +1268,15 @@ function WeeklySalaryPayModal({
         </div>
       </div>
     </BreezeShell>
+
+    {editingAdvance && (
+      <EditAdvanceModal
+        advance={editingAdvance}
+        onClose={() => setEditingAdvance(null)}
+        onSaved={() => { setEditingAdvance(null); reloadAdvances(); }}
+      />
+    )}
+    </>
   );
 }
 
@@ -1315,6 +1349,86 @@ function AdvanceQuickModal({ employee, onClose, onSaved }: { employee: Employee;
           <button type="button" className="toolbar-btn" onClick={onClose}>إلغاء</button>
           <button type="button" className="toolbar-btn primary" onClick={() => void save()} disabled={saving}>
             {saving ? 'جارٍ الحفظ...' : 'حفظ السلفة'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── "تعديل سلفة" — من بطاقة تسليم الراتب مباشرةً ────────────────────────────
+// المبلغ والعملة قابلان للتعديل فقط لسلفة معلّقة لم يُخصَم منها شيء بعد (نفس
+// قيد الخادم) — خلاف ذلك يبقى الحقلان معطَّلين ويبقى الملاحظات/موعد السداد
+// قابلين للتعديل دائماً.
+
+function EditAdvanceModal({ advance, onClose, onSaved }: { advance: Advance; onClose: () => void; onSaved: () => void }) {
+  const { showToast } = useToast();
+  const canEditAmount = advance.status === 'pending' && Number(advance.repaid_amount) === 0;
+  const [amount, setAmount] = useState(advance.amount);
+  const [currency, setCurrency] = useState(advance.currency);
+  const [expectedRepay, setExpectedRepay] = useState(advance.expected_repay?.split('T')[0] ?? '');
+  const [notes, setNotes] = useState(advance.notes ?? '');
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (canEditAmount) {
+      const amt = Number(amount);
+      if (!amount.trim() || Number.isNaN(amt) || amt <= 0) {
+        showToast('أدخلي مبلغاً صحيحاً أكبر من صفر', 'error');
+        return;
+      }
+    }
+    setSaving(true);
+    try {
+      await httpClient.put(`/employee-advances/${advance.id}`, {
+        ...(canEditAmount ? { amount: Number(amount), currency } : {}),
+        expectedRepay: expectedRepay || null,
+        notes: notes || undefined,
+      });
+      showToast('تم تحديث بيانات السلفة', 'success');
+      onSaved();
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'تعذر تحديث السلفة', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title={`تعديل سلفة — ${advance.advance_date?.split('T')[0]}`} onClose={onClose}>
+      <div className="space-y-3">
+        {!canEditAmount && (
+          <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '10px 12px', fontSize: '12.5px', color: '#92400e' }}>
+            ⚠ تم خصم جزء من هذه السلفة بالفعل — المبلغ والعملة غير قابلين للتعديل بعد الآن، حفاظاً على تطابق الخصومات السابقة. يمكنك تعديل موعد السداد والملاحظات فقط.
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="form-group">
+            <label className="form-label">المبلغ</label>
+            <input
+              type="number" min="0.01" step="0.01" className="form-input w-full"
+              value={amount} onChange={(e) => setAmount(e.target.value)} disabled={!canEditAmount}
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">العملة</label>
+            <select className="form-input w-full" value={currency} onChange={(e) => setCurrency(e.target.value)} disabled={!canEditAmount}>
+              {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">موعد السداد المتوقع (اختياري)</label>
+          <input type="date" className="form-input w-full" value={expectedRepay} onChange={(e) => setExpectedRepay(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">ملاحظات</label>
+          <textarea className="form-input w-full" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </div>
+        <div className="flex gap-2 justify-end pt-2">
+          <button type="button" className="toolbar-btn" onClick={onClose}>إلغاء</button>
+          <button type="button" className="toolbar-btn primary" onClick={() => void save()} disabled={saving}>
+            {saving ? 'جارٍ الحفظ...' : 'حفظ التعديلات'}
           </button>
         </div>
       </div>
