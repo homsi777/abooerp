@@ -1364,11 +1364,13 @@ function AdvanceQuickModal({ employee, onClose, onSaved }: { employee: Employee;
 function EditAdvanceModal({ advance, onClose, onSaved }: { advance: Advance; onClose: () => void; onSaved: () => void }) {
   const { showToast } = useToast();
   const canEditAmount = advance.status === 'pending' && Number(advance.repaid_amount) === 0;
+  const hasRepayments = Number(advance.repaid_amount) > 0;
   const [amount, setAmount] = useState(advance.amount);
   const [currency, setCurrency] = useState(advance.currency);
   const [expectedRepay, setExpectedRepay] = useState(advance.expected_repay?.split('T')[0] ?? '');
   const [notes, setNotes] = useState(advance.notes ?? '');
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const save = async () => {
     if (canEditAmount) {
@@ -1394,12 +1396,29 @@ function EditAdvanceModal({ advance, onClose, onSaved }: { advance: Advance; onC
     }
   };
 
+  const remove = async () => {
+    const warning = hasRepayments
+      ? `تم خصم ${fmt(advance.repaid_amount)} ${advance.currency} من هذه السلفة سابقاً من راتب الموظف. حذفها سيُزيل السلفة نهائياً من سجلات الموظف — هل أنتِ متأكدة؟`
+      : `حذف سلفة ${fmt(advance.amount)} ${advance.currency} نهائياً؟`;
+    if (!window.confirm(warning)) return;
+    setDeleting(true);
+    try {
+      await httpClient.delete(`/employee-advances/${advance.id}`);
+      showToast('تم حذف السلفة', 'success');
+      onSaved();
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'تعذر حذف السلفة', 'error');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <Modal title={`تعديل سلفة — ${advance.advance_date?.split('T')[0]}`} onClose={onClose}>
       <div className="space-y-3">
         {!canEditAmount && (
           <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '10px 12px', fontSize: '12.5px', color: '#92400e' }}>
-            ⚠ تم خصم جزء من هذه السلفة بالفعل — المبلغ والعملة غير قابلين للتعديل بعد الآن، حفاظاً على تطابق الخصومات السابقة. يمكنك تعديل موعد السداد والملاحظات فقط.
+            ⚠ تم خصم جزء من هذه السلفة بالفعل — المبلغ والعملة غير قابلين للتعديل بعد الآن، حفاظاً على تطابق الخصومات السابقة. يمكنك تعديل موعد السداد والملاحظات، أو حذف السلفة بالكامل من الأسفل إن كانت مُدخَلة بشكل خاطئ.
           </div>
         )}
         <div className="grid grid-cols-2 gap-3">
@@ -1425,11 +1444,21 @@ function EditAdvanceModal({ advance, onClose, onSaved }: { advance: Advance; onC
           <label className="form-label">ملاحظات</label>
           <textarea className="form-input w-full" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </div>
-        <div className="flex gap-2 justify-end pt-2">
-          <button type="button" className="toolbar-btn" onClick={onClose}>إلغاء</button>
-          <button type="button" className="toolbar-btn primary" onClick={() => void save()} disabled={saving}>
-            {saving ? 'جارٍ الحفظ...' : 'حفظ التعديلات'}
+        <div className="flex items-center justify-between gap-2 pt-2">
+          <button
+            type="button"
+            onClick={() => void remove()}
+            disabled={saving || deleting}
+            style={{ background: 'none', border: '1px solid #fecaca', color: '#dc2626', borderRadius: '8px', padding: '9px 14px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}
+          >
+            {deleting ? 'جارٍ الحذف...' : 'حذف السلفة'}
           </button>
+          <div className="flex gap-2">
+            <button type="button" className="toolbar-btn" onClick={onClose} disabled={saving || deleting}>إلغاء</button>
+            <button type="button" className="toolbar-btn primary" onClick={() => void save()} disabled={saving || deleting}>
+              {saving ? 'جارٍ الحفظ...' : 'حفظ التعديلات'}
+            </button>
+          </div>
         </div>
       </div>
     </Modal>
