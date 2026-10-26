@@ -2,20 +2,36 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useToast } from '../../components/Toast';
 import { httpClient } from '../../lib/api/httpClient';
+import { useAuth } from '../../context/AuthProvider';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type AccountType = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
 
 interface AccountRow {
   id: string;
   account_code: string;
   account_name: string;
-  account_type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
+  account_type: AccountType;
   normal_balance: 'debit' | 'credit';
   parent_account_id: string | null;
   is_control_account: boolean;
   control_party_type: string | null;
+  is_postable: boolean;
+  is_active: boolean;
   notes: string | null;
+  children_count: number;
 }
 
-const ACCOUNT_TYPES: { value: AccountRow['account_type']; label: string; normalBalance: 'debit' | 'credit' }[] = [
+interface TreeNode extends AccountRow {
+  children: TreeNode[];
+}
+
+type PanelMode = 'view' | 'add-root' | 'add-child' | 'rename';
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const ACCOUNT_TYPES: { value: AccountType; label: string; normalBalance: 'debit' | 'credit' }[] = [
   { value: 'asset', label: 'أصول', normalBalance: 'debit' },
   { value: 'liability', label: 'خصوم', normalBalance: 'credit' },
   { value: 'equity', label: 'حقوق ملكية', normalBalance: 'credit' },
@@ -23,7 +39,7 @@ const ACCOUNT_TYPES: { value: AccountRow['account_type']; label: string; normalB
   { value: 'expense', label: 'مصاريف', normalBalance: 'debit' },
 ];
 
-const TYPE_LABELS: Record<AccountRow['account_type'], string> = {
+const TYPE_LABELS: Record<AccountType, string> = {
   asset: 'أصول',
   liability: 'خصوم',
   equity: 'حقوق ملكية',
@@ -31,21 +47,57 @@ const TYPE_LABELS: Record<AccountRow['account_type'], string> = {
   expense: 'مصاريف',
 };
 
-const inputStyle: React.CSSProperties = {
-  minHeight: '44px',
-  fontSize: '16px',
-  padding: '8px 14px',
-  borderRadius: '10px',
-  border: '1px solid #cbd5e1',
-  width: '100%',
-  boxSizing: 'border-box',
-  background: '#f8fafc',
-};
+const TYPE_FILTERS: { value: AccountType | 'all'; label: string }[] = [
+  { value: 'all', label: 'الكل' },
+  { value: 'asset', label: 'أصول' },
+  { value: 'liability', label: 'خصوم' },
+  { value: 'equity', label: 'حقوق ملكية' },
+  { value: 'revenue', label: 'إيرادات' },
+  { value: 'expense', label: 'مصاريف' },
+];
 
-const labelStyle: React.CSSProperties = { fontSize: '13.5px', fontWeight: 700, color: '#374151', marginBottom: '6px', display: 'block' };
+// ─── Icons (SVG — no emoji per spec) ───────────────────────────────────────────
 
-interface TreeNode extends AccountRow {
-  children: TreeNode[];
+function LockIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="4" y="11" width="16" height="10" rx="2" stroke="currentColor" strokeWidth="2.2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ChevronIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M8 5l8 7-8 7" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function codeCompare(a: string, b: string): number {
+  const na = Number(a);
+  const nb = Number(b);
+  if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+  return a.localeCompare(b, 'en');
 }
 
 function buildTree(rows: AccountRow[]): TreeNode[] {
@@ -60,33 +112,83 @@ function buildTree(rows: AccountRow[]): TreeNode[] {
     }
   });
   const sortRec = (nodes: TreeNode[]) => {
-    nodes.sort((a, b) => a.account_code.localeCompare(b.account_code, 'en'));
+    nodes.sort((a, b) => codeCompare(a.account_code, b.account_code));
     nodes.forEach((n) => sortRec(n.children));
   };
   sortRec(roots);
   return roots;
 }
 
+function ancestorChain(accounts: AccountRow[], accountId: string): AccountRow[] {
+  const byId = new Map(accounts.map((a) => [a.id, a]));
+  const chain: AccountRow[] = [];
+  let cur: AccountRow | undefined = byId.get(accountId);
+  while (cur) {
+    chain.unshift(cur);
+    cur = cur.parent_account_id ? byId.get(cur.parent_account_id) : undefined;
+  }
+  return chain;
+}
+
+function downloadCsv(rows: AccountRow[]) {
+  const header = ['الرمز', 'اسم الحساب', 'النوع', 'الطبيعة', 'التصنيف'];
+  const lines = [header.join(',')];
+  for (const r of rows) {
+    const cells = [
+      r.account_code,
+      `"${r.account_name.replace(/"/g, '""')}"`,
+      TYPE_LABELS[r.account_type],
+      r.normal_balance === 'debit' ? 'مدين' : 'دائن',
+      r.is_postable ? 'حركي' : 'تجميعي',
+    ];
+    lines.push(cells.join(','));
+  }
+  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'شجرة_الحسابات.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ─── Main component ─────────────────────────────────────────────────────────
+
 export default function ChartOfAccounts() {
   const { showToast } = useToast();
-  const [rows, setRows] = useState<AccountRow[]>([]);
+  const { hasPermission } = useAuth();
+  const canWrite = hasPermission('finance.write');
+
+  const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState<AccountType | 'all'>('all');
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [accountCode, setAccountCode] = useState('');
-  const [accountName, setAccountName] = useState('');
-  const [accountType, setAccountType] = useState<AccountRow['account_type']>('expense');
-  const [normalBalance, setNormalBalance] = useState<'debit' | 'credit'>('debit');
-  const [parentAccountId, setParentAccountId] = useState<string>('');
-  const [notes, setNotes] = useState('');
+  const [panelMode, setPanelMode] = useState<PanelMode>('view');
+  const [formParentId, setFormParentId] = useState<string | null>(null);
+  const [formCode, setFormCode] = useState('');
+  const [formName, setFormName] = useState('');
+  const [formNotes, setFormNotes] = useState('');
+  const [formIsPostable, setFormIsPostable] = useState(true);
+  const [formAccountType, setFormAccountType] = useState<AccountType>('asset');
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const [panelError, setPanelError] = useState('');
+  const [codeSuggesting, setCodeSuggesting] = useState(false);
 
-  const load = async () => {
+  const load = async (keepSelection = true) => {
     setLoading(true);
     try {
-      setRows(await httpClient.get<AccountRow[]>('/chart-of-accounts'));
+      const rows = await httpClient.get<AccountRow[]>('/chart-of-accounts');
+      setAccounts(rows);
+      setExpanded((prev) => {
+        if (prev.size > 0) return prev;
+        return new Set(rows.filter((r) => !r.is_postable).map((r) => r.id));
+      });
+      if (!keepSelection) setSelectedId(null);
     } catch {
       showToast('تعذر تحميل شجرة الحسابات', 'error');
     } finally {
@@ -99,344 +201,502 @@ export default function ChartOfAccounts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const tree = useMemo(() => buildTree(rows), [rows]);
+  const tree = useMemo(() => buildTree(accounts), [accounts]);
 
-  const resetForm = () => {
-    setEditingId(null);
-    setAccountCode('');
-    setAccountName('');
-    setAccountType('expense');
-    setNormalBalance('debit');
-    setParentAccountId('');
-    setNotes('');
-    setError('');
+  const visibleIds = useMemo<Set<string> | null>(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return null;
+    const matches = accounts.filter(
+      (a) => (typeFilter === 'all' || a.account_type === typeFilter)
+        && (a.account_name.toLowerCase().includes(q) || a.account_code.includes(q)),
+    );
+    const ids = new Set<string>();
+    for (const m of matches) {
+      for (const anc of ancestorChain(accounts, m.id)) ids.add(anc.id);
+    }
+    return ids;
+  }, [accounts, search, typeFilter]);
+
+  const typeCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: accounts.length };
+    for (const t of ACCOUNT_TYPES) counts[t.value] = accounts.filter((a) => a.account_type === t.value).length;
+    return counts;
+  }, [accounts]);
+
+  const totalAccounts = accounts.length;
+  const groupCount = accounts.filter((a) => !a.is_postable).length;
+  const postingCount = accounts.filter((a) => a.is_postable).length;
+
+  const selected = useMemo(() => accounts.find((a) => a.id === selectedId) ?? null, [accounts, selectedId]);
+  const selectedPath = useMemo(() => (selected ? ancestorChain(accounts, selected.id) : []), [accounts, selected]);
+
+  const toggleExpand = (id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
 
-  const startAddUnder = (parentId: string | '') => {
-    resetForm();
-    setParentAccountId(parentId);
+  const expandAll = () => setExpanded(new Set(accounts.filter((a) => !a.is_postable).map((a) => a.id)));
+  const collapseAll = () => setExpanded(new Set());
+
+  const openView = (id: string) => {
+    setSelectedId(id);
+    setPanelMode('view');
+    setPanelError('');
   };
 
-  const startEdit = (row: AccountRow) => {
-    setEditingId(row.id);
-    setAccountCode(row.account_code);
-    setAccountName(row.account_name);
-    setAccountType(row.account_type);
-    setNormalBalance(row.normal_balance);
-    setParentAccountId(row.parent_account_id ?? '');
-    setNotes(row.notes ?? '');
-    setError('');
+  const openAddRoot = () => {
+    setSelectedId(null);
+    setPanelMode('add-root');
+    setFormParentId(null);
+    setFormCode('');
+    setFormName('');
+    setFormNotes('');
+    setFormIsPostable(true);
+    setFormAccountType('asset');
+    setPanelError('');
   };
 
-  const onTypeChange = (value: AccountRow['account_type']) => {
-    setAccountType(value);
-    const def = ACCOUNT_TYPES.find((t) => t.value === value);
-    if (def) setNormalBalance(def.normalBalance);
+  const openAddChild = async (parent: AccountRow) => {
+    setSelectedId(parent.id);
+    setPanelMode('add-child');
+    setFormParentId(parent.id);
+    setFormName('');
+    setFormNotes('');
+    setFormIsPostable(true);
+    setPanelError('');
+    setFormCode('');
+    setCodeSuggesting(true);
+    try {
+      const res = await httpClient.get<{ code: string }>(`/chart-of-accounts/${parent.id}/next-code`);
+      setFormCode(res.code);
+    } catch {
+      // الاقتراح تحسيني فقط — يبقى الحقل قابلاً للتعبئة اليدوية لو فشل.
+    } finally {
+      setCodeSuggesting(false);
+    }
   };
 
-  const save = async () => {
-    setError('');
-    if (!editingId && !accountCode.trim()) {
-      setError('اكتب رمز الحساب.');
+  const openRename = (account: AccountRow) => {
+    setSelectedId(account.id);
+    setPanelMode('rename');
+    setFormName(account.account_name);
+    setFormNotes(account.notes ?? '');
+    setPanelError('');
+  };
+
+  const saveCreate = async () => {
+    setPanelError('');
+    if (!formCode.trim() || !/^\d{3,10}$/.test(formCode.trim())) {
+      setPanelError('رمز الحساب يجب أن يكون أرقاماً فقط، بطول 3 إلى 10 خانات.');
       return;
     }
-    if (!accountName.trim()) {
-      setError('اكتب اسم الحساب.');
+    if (!formName.trim()) {
+      setPanelError('اكتب اسم الحساب.');
       return;
     }
+    const parent = formParentId ? accounts.find((a) => a.id === formParentId) : null;
+    const typeDef = ACCOUNT_TYPES.find((t) => t.value === formAccountType)!;
     setSaving(true);
     try {
-      if (editingId) {
-        const updated = await httpClient.put<AccountRow>(`/chart-of-accounts/${editingId}`, {
-          accountName: accountName.trim(),
-          parentAccountId: parentAccountId || null,
-          notes: notes.trim() || null,
-        });
-        setRows((prev) => prev.map((r) => (r.id === editingId ? { ...r, ...updated } : r)));
-        showToast('تم تحديث الحساب', 'success');
-      } else {
-        const created = await httpClient.post<AccountRow>('/chart-of-accounts', {
-          accountCode: accountCode.trim(),
-          accountName: accountName.trim(),
-          accountType,
-          normalBalance,
-          parentAccountId: parentAccountId || null,
-          notes: notes.trim() || null,
-        });
-        setRows((prev) => [...prev, created]);
-        showToast('تم إضافة الحساب', 'success');
-      }
-      resetForm();
+      const created = await httpClient.post<AccountRow>('/chart-of-accounts', {
+        accountCode: formCode.trim(),
+        accountName: formName.trim(),
+        accountType: parent?.account_type ?? typeDef.value,
+        normalBalance: parent?.normal_balance ?? typeDef.normalBalance,
+        parentAccountId: formParentId,
+        isPostable: formIsPostable,
+        notes: formNotes.trim() || null,
+      });
+      showToast('تم إضافة الحساب', 'success');
+      await load();
+      setSelectedId(created.id);
+      setPanelMode('view');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'تعذر الحفظ — تأكد أن رمز الحساب غير مستخدم.');
+      setPanelError(e instanceof Error ? e.message : 'تعذر حفظ الحساب.');
     } finally {
       setSaving(false);
     }
   };
 
-  const deactivate = async (row: AccountRow) => {
-    if (!window.confirm(`إلغاء تفعيل حساب "${row.account_name}"؟`)) return;
+  const saveRename = async () => {
+    if (!selected) return;
+    setPanelError('');
+    if (!formName.trim()) {
+      setPanelError('اكتب اسم الحساب.');
+      return;
+    }
+    setSaving(true);
     try {
-      await httpClient.delete(`/chart-of-accounts/${row.id}`);
-      setRows((prev) => prev.filter((r) => r.id !== row.id));
-      if (editingId === row.id) resetForm();
+      await httpClient.put<AccountRow>(`/chart-of-accounts/${selected.id}`, {
+        accountName: formName.trim(),
+        parentAccountId: selected.parent_account_id,
+        notes: formNotes.trim() || null,
+      });
+      showToast('تم تحديث الحساب', 'success');
+      await load();
+      setPanelMode('view');
+    } catch (e) {
+      setPanelError(e instanceof Error ? e.message : 'تعذر تحديث الحساب.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deactivate = async (account: AccountRow) => {
+    if (!window.confirm(`إلغاء تفعيل حساب "${account.account_name}"؟`)) return;
+    try {
+      await httpClient.delete(`/chart-of-accounts/${account.id}`);
       showToast('تم إلغاء تفعيل الحساب', 'success');
+      if (selectedId === account.id) setSelectedId(null);
+      await load();
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'تعذر إلغاء التفعيل', 'error');
     }
   };
 
-  const toggleCollapse = (id: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  // ─── Row rendering ──────────────────────────────────────────────────────
 
-  const renderNode = (node: TreeNode, depth: number) => {
+  const renderRow = (node: TreeNode, depth: number): React.ReactNode => {
+    if (visibleIds && !visibleIds.has(node.id)) return null;
+    const isGroup = !node.is_postable;
+    const isExpanded = visibleIds ? true : expanded.has(node.id);
     const hasChildren = node.children.length > 0;
-    const isCollapsed = collapsed.has(node.id);
+
     return (
-      <div key={node.id}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '8px 10px',
-            paddingInlineStart: `${10 + depth * 22}px`,
-            borderBottom: '1px solid #f1f5f9',
-            background: editingId === node.id ? '#eef2ff' : 'transparent',
-          }}
+      <>
+        <tr
+          key={node.id}
+          className={`coa-row ${isGroup ? 'group' : ''} ${selectedId === node.id ? 'selected' : ''}`}
+          onClick={() => openView(node.id)}
         >
-          <button
-            type="button"
-            onClick={() => hasChildren && toggleCollapse(node.id)}
-            style={{
-              width: '18px',
-              background: 'none',
-              border: 'none',
-              cursor: hasChildren ? 'pointer' : 'default',
-              color: '#9ca3af',
-              fontSize: '12px',
-            }}
-          >
-            {hasChildren ? (isCollapsed ? '▸' : '▾') : '·'}
-          </button>
-          <span style={{ fontFamily: 'monospace', color: '#6b7280', fontSize: '13px', minWidth: '58px' }}>{node.account_code}</span>
-          <span style={{ fontWeight: 700, color: '#111827', flex: 1 }}>{node.account_name}</span>
-          <span
-            style={{
-              fontSize: '11px',
-              fontWeight: 700,
-              color: '#4338ca',
-              background: '#eef2ff',
-              padding: '2px 8px',
-              borderRadius: '999px',
-            }}
-          >
-            {TYPE_LABELS[node.account_type]}
-          </span>
-          <span style={{ fontSize: '11px', color: '#9ca3af', minWidth: '36px', textAlign: 'center' }}>
-            {node.normal_balance === 'debit' ? 'مدين' : 'دائن'}
-          </span>
-          <button
-            type="button"
-            onClick={() => startAddUnder(node.id)}
-            title="إضافة حساب فرعي"
-            style={{ background: 'none', border: 'none', color: '#059669', cursor: 'pointer', fontSize: '14px' }}
-          >
-            ⊕
-          </button>
-          <button
-            type="button"
-            onClick={() => startEdit(node)}
-            title="تعديل"
-            style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', fontSize: '14px' }}
-          >
-            ✏️
-          </button>
-          {!node.is_control_account && (
-            <button
-              type="button"
-              onClick={() => void deactivate(node)}
-              title="إلغاء تفعيل"
-              style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '13px' }}
-            >
-              حذف
-            </button>
-          )}
-        </div>
-        {!isCollapsed && node.children.map((child) => renderNode(child, depth + 1))}
-      </div>
-    );
-  };
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', paddingBottom: '32px' }}>
-      <div>
-        <Link to="/finance" style={{ fontSize: '14px', color: '#4f46e5', textDecoration: 'none', fontWeight: 600 }}>
-          ← الذمم والمالية
-        </Link>
-        <h1 style={{ fontSize: '22px', fontWeight: 800, color: '#111827', margin: '8px 0 4px' }}>🌳 شجرة الحسابات</h1>
-        <p style={{ color: '#6b7280', fontSize: '13.5px', margin: 0 }}>
-          إضافة وتعديل بنود الحسابات (مثل مسحوبات الشركاء) — كما في برنامج المحاسبة القديم.
-        </p>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 400px) 1fr', gap: '18px', alignItems: 'start' }}>
-        {/* ───── Right: add/edit account ───── */}
-        <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '14px', padding: '20px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <h2 style={{ fontSize: '17px', fontWeight: 800, color: '#111827' }}>
-              {editingId ? '✏️ تعديل حساب' : 'إضافة حساب جديد'}
-            </h2>
-            <span style={{ fontSize: '20px' }}>{editingId ? '✏️' : '⊕'}</span>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div>
-              <label style={labelStyle}>الحساب الأب (اختياري)</label>
-              <select style={inputStyle} value={parentAccountId} onChange={(e) => setParentAccountId(e.target.value)}>
-                <option value="">— حساب رئيسي (بدون أب) —</option>
-                {rows
-                  .slice()
-                  .sort((a, b) => a.account_code.localeCompare(b.account_code, 'en'))
-                  .filter((r) => r.id !== editingId)
-                  .map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.account_code} — {r.account_name}
-                    </option>
-                  ))}
-              </select>
-            </div>
-
-            <div>
-              <label style={labelStyle}>رمز الحساب</label>
-              <input
-                style={{ ...inputStyle, ...(editingId ? { background: '#f1f5f9', color: '#9ca3af' } : {}) }}
-                value={accountCode}
-                onChange={(e) => setAccountCode(e.target.value)}
-                disabled={Boolean(editingId)}
-                placeholder="مثال: 3200"
-              />
-            </div>
-
-            <div>
-              <label style={labelStyle}>اسم الحساب</label>
-              <input style={inputStyle} value={accountName} onChange={(e) => setAccountName(e.target.value)} placeholder="مثال: مسحوبات الشركاء" />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-              <div>
-                <label style={labelStyle}>نوع الحساب</label>
-                <select
-                  style={{ ...inputStyle, ...(editingId ? { background: '#f1f5f9', color: '#9ca3af' } : {}) }}
-                  value={accountType}
-                  onChange={(e) => onTypeChange(e.target.value as AccountRow['account_type'])}
-                  disabled={Boolean(editingId)}
-                >
-                  {ACCOUNT_TYPES.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label style={labelStyle}>الطبيعة</label>
-                <select
-                  style={{ ...inputStyle, ...(editingId ? { background: '#f1f5f9', color: '#9ca3af' } : {}) }}
-                  value={normalBalance}
-                  onChange={(e) => setNormalBalance(e.target.value as 'debit' | 'credit')}
-                  disabled={Boolean(editingId)}
-                >
-                  <option value="debit">مدين</option>
-                  <option value="credit">دائن</option>
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label style={labelStyle}>ملاحظات (اختياري)</label>
-              <input style={inputStyle} value={notes} onChange={(e) => setNotes(e.target.value)} />
-            </div>
-
-            {error && <p style={{ color: '#dc2626', fontSize: '14px', margin: 0 }}>{error}</p>}
-
-            <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
-              <button
-                type="button"
-                onClick={() => void save()}
-                disabled={saving}
-                style={{
-                  flex: 1,
-                  minHeight: '46px',
-                  background: '#4f46e5',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '10px',
-                  fontSize: '15px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                }}
-              >
-                {saving ? 'جارٍ الحفظ...' : editingId ? 'تحديث' : 'حفظ'}
-              </button>
-              {editingId && (
+          <td>
+            <span className="coa-row-code">{node.account_code}</span>
+          </td>
+          <td>
+            <div className="coa-row-name" style={{ paddingInlineStart: `${depth * 28}px` }}>
+              {hasChildren ? (
                 <button
                   type="button"
-                  onClick={resetForm}
-                  disabled={saving}
-                  style={{
-                    flex: 1,
-                    minHeight: '46px',
-                    background: '#fff',
-                    color: '#374151',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '10px',
-                    fontSize: '15px',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
+                  className={`coa-chevron ${isExpanded ? '' : 'rotated'}`}
+                  onClick={(e) => { e.stopPropagation(); toggleExpand(node.id); }}
+                  aria-label={isExpanded ? 'طي' : 'توسيع'}
                 >
-                  إلغاء
+                  <ChevronIcon />
+                </button>
+              ) : (
+                <span className="coa-dot" aria-hidden="true" />
+              )}
+              <span className="coa-row-name-text">{node.account_name}</span>
+              {node.is_control_account && (
+                <span className="coa-control-badge"><LockIcon /> تحكّم</span>
+              )}
+            </div>
+          </td>
+          <td><span className={`coa-type-badge ${node.account_type}`}>{TYPE_LABELS[node.account_type]}</span></td>
+          <td style={{ fontSize: '12px', color: 'var(--coa-muted)' }}>{node.normal_balance === 'debit' ? 'مدين' : 'دائن'}</td>
+          <td><span className="coa-class-badge">{isGroup ? 'تجميعي' : 'حركي'}</span></td>
+          <td>
+            <div className="coa-row-actions">
+              {canWrite && (
+                <button
+                  type="button"
+                  className="coa-icon-btn"
+                  aria-label="إضافة حساب فرعي"
+                  title="إضافة حساب فرعي"
+                  disabled={node.is_control_account}
+                  onClick={(e) => { e.stopPropagation(); void openAddChild(node); }}
+                >
+                  <PlusIcon />
+                </button>
+              )}
+              {canWrite && (
+                <button
+                  type="button"
+                  className="coa-icon-btn"
+                  aria-label="تعديل الاسم"
+                  title="تعديل الاسم"
+                  onClick={(e) => { e.stopPropagation(); openRename(node); }}
+                >
+                  <EditIcon />
                 </button>
               )}
             </div>
-          </div>
-        </div>
+          </td>
+        </tr>
+        {(isExpanded || visibleIds) && node.children.map((child) => renderRow(child, depth + 1))}
+      </>
+    );
+  };
 
-        {/* ───── Left: tree ───── */}
-        <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '14px', padding: '20px', overflowX: 'auto' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <h2 style={{ fontSize: '17px', fontWeight: 800, color: '#111827' }}>الحسابات</h2>
-            <button
-              type="button"
-              onClick={() => startAddUnder('')}
-              style={{
-                background: '#ecfdf5',
-                color: '#059669',
-                border: '1px solid #a7f3d0',
-                borderRadius: '8px',
-                padding: '6px 12px',
-                fontWeight: 700,
-                fontSize: '13px',
-                cursor: 'pointer',
-              }}
-            >
-              + حساب رئيسي
-            </button>
+  // ─── Render ───────────────────────────────────────────────────────────
+
+  return (
+    <div className="coa">
+      <Link to="/finance" className="coa-breadcrumb">← المالية</Link>
+
+      <div className="coa-header">
+        <div>
+          <h1 className="coa-title">شجرة الحسابات</h1>
+          <p className="coa-subtitle">إضافة وتعديل بنود الحسابات بتصنيف تجميعي/حركي ودعم فروع غير محدودة العمق.</p>
+        </div>
+        <div className="coa-header-actions">
+          <button type="button" className="coa-btn" onClick={() => downloadCsv(accounts)}>تصدير</button>
+          {canWrite && (
+            <button type="button" className="coa-btn primary" onClick={openAddRoot}>حساب رئيسي جديد</button>
+          )}
+        </div>
+      </div>
+
+      <div className="coa-tiles">
+        <div className="coa-tile">
+          <div className="coa-tile-label">إجمالي الحسابات</div>
+          <div className="coa-tile-value">{totalAccounts}</div>
+        </div>
+        <div className="coa-tile">
+          <div className="coa-tile-label">حسابات رئيسية (تجميعية)</div>
+          <div className="coa-tile-value">{groupCount}</div>
+        </div>
+        <div className="coa-tile">
+          <div className="coa-tile-label">حسابات فرعية (حركية)</div>
+          <div className="coa-tile-value">{postingCount}</div>
+        </div>
+      </div>
+
+      <div className="coa-layout">
+        <div className="coa-card">
+          <div className="coa-toolbar">
+            <input
+              className="coa-search"
+              placeholder="ابحثي بالاسم أو الرمز..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="بحث"
+            />
+            <button type="button" className="coa-btn" onClick={expandAll}>توسيع الكل</button>
+            <button type="button" className="coa-btn" onClick={collapseAll}>طي الكل</button>
+          </div>
+          <div className="coa-chip-row">
+            {TYPE_FILTERS.map((t) => (
+              <button
+                key={t.value}
+                type="button"
+                className={`coa-chip ${typeFilter === t.value ? 'active' : ''}`}
+                onClick={() => setTypeFilter(t.value)}
+              >
+                {t.label} <span className="count">({typeCounts[t.value] ?? 0})</span>
+              </button>
+            ))}
           </div>
 
           {loading ? (
-            <p style={{ color: '#6b7280', textAlign: 'center', padding: '30px' }}>جاري التحميل...</p>
+            <p className="coa-empty">جاري التحميل...</p>
           ) : tree.length === 0 ? (
-            <p style={{ color: '#9ca3af', textAlign: 'center', padding: '30px' }}>لا توجد حسابات بعد.</p>
+            <p className="coa-empty">لا توجد حسابات بعد.</p>
           ) : (
-            <div>{tree.map((node) => renderNode(node, 0))}</div>
+            <div className="coa-table-wrap">
+              <table className="coa-table">
+                <thead>
+                  <tr>
+                    <th>الرمز</th>
+                    <th>اسم الحساب</th>
+                    <th>النوع</th>
+                    <th>الطبيعة</th>
+                    <th>التصنيف</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tree
+                    .filter((n) => typeFilter === 'all' || n.account_type === typeFilter)
+                    .map((n) => renderRow(n, 0))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* ─── Side panel ─── */}
+        <div className="coa-card">
+          {panelMode === 'view' && selected && (
+            <>
+              <div className="coa-panel-head">
+                <span className="coa-panel-code">{selected.account_code}</span>
+                <div className="coa-panel-name">{selected.account_name}</div>
+                <span className={`coa-type-badge ${selected.account_type}`}>{TYPE_LABELS[selected.account_type]}</span>
+                {selectedPath.length > 1 && (
+                  <div className="coa-panel-path" style={{ marginTop: '8px' }}>
+                    {selectedPath.map((a) => a.account_name).join(' ‹ ')}
+                  </div>
+                )}
+              </div>
+              <div className="coa-panel-body">
+                <div className="coa-panel-grid">
+                  <div className="coa-panel-stat">
+                    <div className="coa-panel-stat-label">الطبيعة</div>
+                    <div className="coa-panel-stat-value">{selected.normal_balance === 'debit' ? 'مدين' : 'دائن'}</div>
+                  </div>
+                  <div className="coa-panel-stat">
+                    <div className="coa-panel-stat-label">التصنيف</div>
+                    <div className="coa-panel-stat-value">{selected.is_postable ? 'حركي' : 'تجميعي'}</div>
+                  </div>
+                  <div className="coa-panel-stat">
+                    <div className="coa-panel-stat-label">الفروع المباشرة</div>
+                    <div className="coa-panel-stat-value">{selected.children_count}</div>
+                  </div>
+                  <div className="coa-panel-stat">
+                    <div className="coa-panel-stat-label">الحالة</div>
+                    <div className="coa-panel-stat-value">{selected.is_active ? 'نشط' : 'غير نشط'}</div>
+                  </div>
+                </div>
+
+                {selected.notes && (
+                  <div className="coa-field">
+                    <label>ملاحظات</label>
+                    <div style={{ fontSize: '13px', color: 'var(--coa-muted)' }}>{selected.notes}</div>
+                  </div>
+                )}
+
+                {selected.is_control_account && (
+                  <div className="coa-panel-note">
+                    <LockIcon /> حساب تحكّم مرتبط بأطراف خارجية ({selected.control_party_type}) — لا يمكن إضافة فروع تحته أو تغيير تصنيفه.
+                  </div>
+                )}
+
+                {canWrite && (
+                  <div className="coa-panel-actions" style={{ marginTop: '6px' }}>
+                    {!selected.is_control_account && (
+                      <button type="button" className="coa-btn primary" onClick={() => void openAddChild(selected)}>إضافة حساب فرعي</button>
+                    )}
+                    <button type="button" className="coa-btn" onClick={() => openRename(selected)}>تعديل الاسم</button>
+                    <button type="button" className="coa-btn danger" onClick={() => void deactivate(selected)}>إلغاء التفعيل</button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {panelMode === 'view' && !selected && (
+            <p className="coa-empty">اختاري حساباً من الشجرة لعرض تفاصيله.</p>
+          )}
+
+          {(panelMode === 'add-root' || panelMode === 'add-child') && (
+            <div className="coa-panel-body">
+              <h2 style={{ fontSize: '15px', fontWeight: 800, margin: 0 }}>
+                {panelMode === 'add-child' && formParentId
+                  ? `تحت: ${accounts.find((a) => a.id === formParentId)?.account_name ?? ''}`
+                  : 'حساب رئيسي جديد'}
+              </h2>
+
+              <div className="coa-field">
+                <label>رمز الحساب</label>
+                <input
+                  className="coa-input code"
+                  value={formCode}
+                  onChange={(e) => setFormCode(e.target.value)}
+                  placeholder={codeSuggesting ? '...' : 'مثال: 3200'}
+                />
+              </div>
+
+              <div className="coa-field">
+                <label>اسم الحساب</label>
+                <input className="coa-input" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="مثال: مسحوبات الشركاء" />
+              </div>
+
+              {panelMode === 'add-child' && formParentId && (
+                <div className="coa-locked-field">
+                  <div className="coa-locked-label">
+                    <span>نوع الحساب وطبيعته</span>
+                    <span className="coa-locked-tag">موروث</span>
+                  </div>
+                  <div className="coa-locked-value">
+                    {TYPE_LABELS[accounts.find((a) => a.id === formParentId)?.account_type ?? 'asset']}
+                    {' · '}
+                    {(accounts.find((a) => a.id === formParentId)?.normal_balance ?? 'debit') === 'debit' ? 'مدين' : 'دائن'}
+                  </div>
+                </div>
+              )}
+
+              {panelMode === 'add-root' && (
+                <div className="coa-field">
+                  <label>نوع الحساب وطبيعته</label>
+                  <select
+                    className="coa-select"
+                    value={formAccountType}
+                    onChange={(e) => setFormAccountType(e.target.value as AccountType)}
+                  >
+                    {ACCOUNT_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label} · {t.normalBalance === 'debit' ? 'مدين' : 'دائن'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="coa-field">
+                <label>التصنيف</label>
+                <div className="coa-radio-row">
+                  <label className={`coa-radio-opt ${formIsPostable ? 'active' : ''}`}>
+                    <input type="radio" checked={formIsPostable} onChange={() => setFormIsPostable(true)} style={{ display: 'none' }} />
+                    حركي
+                  </label>
+                  <label className={`coa-radio-opt ${!formIsPostable ? 'active' : ''}`}>
+                    <input type="radio" checked={!formIsPostable} onChange={() => setFormIsPostable(false)} style={{ display: 'none' }} />
+                    تجميعي
+                  </label>
+                </div>
+              </div>
+
+              <div className="coa-field">
+                <label>ملاحظات (اختياري)</label>
+                <textarea className="coa-textarea" value={formNotes} onChange={(e) => setFormNotes(e.target.value)} />
+              </div>
+
+              {panelError && (
+                <div className="coa-panel-alert">
+                  <span>{panelError}</span>
+                  <button type="button" onClick={() => setPanelError('')} aria-label="إغلاق التنبيه">✕</button>
+                </div>
+              )}
+
+              <div className="coa-panel-actions">
+                <button type="button" className="coa-btn primary" onClick={() => void saveCreate()} disabled={saving}>
+                  {saving ? 'جارٍ الحفظ...' : 'حفظ الحساب'}
+                </button>
+                <button type="button" className="coa-btn" onClick={() => setPanelMode('view')} disabled={saving}>إلغاء</button>
+              </div>
+            </div>
+          )}
+
+          {panelMode === 'rename' && selected && (
+            <div className="coa-panel-body">
+              <h2 style={{ fontSize: '15px', fontWeight: 800, margin: 0 }}>تعديل: {selected.account_code}</h2>
+              <div className="coa-field">
+                <label>اسم الحساب</label>
+                <input className="coa-input" value={formName} onChange={(e) => setFormName(e.target.value)} />
+              </div>
+              <div className="coa-field">
+                <label>ملاحظات (اختياري)</label>
+                <textarea className="coa-textarea" value={formNotes} onChange={(e) => setFormNotes(e.target.value)} />
+              </div>
+
+              {panelError && (
+                <div className="coa-panel-alert">
+                  <span>{panelError}</span>
+                  <button type="button" onClick={() => setPanelError('')} aria-label="إغلاق التنبيه">✕</button>
+                </div>
+              )}
+
+              <div className="coa-panel-actions">
+                <button type="button" className="coa-btn primary" onClick={() => void saveRename()} disabled={saving}>
+                  {saving ? 'جارٍ الحفظ...' : 'حفظ التعديلات'}
+                </button>
+                <button type="button" className="coa-btn" onClick={() => setPanelMode('view')} disabled={saving}>إلغاء</button>
+              </div>
+            </div>
           )}
         </div>
       </div>

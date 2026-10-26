@@ -3,6 +3,7 @@ import { pool } from '../db/pool.js';
 import { HttpError } from '../utils/errors.js';
 import type { DataScope } from '../utils/scope.js';
 import { buildShipmentBreakdownMetadata, type ShipmentFinancialBreakdown } from '../utils/shipmentFinancialBreakdown.js';
+import { computeNextAccountCode } from '../utils/chartOfAccountsNextCode.js';
 
 export type VoucherStatus = 'draft' | 'confirmed' | 'cancelled';
 export type CurrencyCode = string;
@@ -2612,17 +2613,78 @@ export class FinanceRepository {
 
   // ── Accounting foundation: chart of accounts + manual journal entries ──
 
+  private static readonly CHART_OF_ACCOUNT_COLUMNS =
+    'id, account_code, account_name, account_type, normal_balance, parent_account_id, is_control_account, control_party_type, is_postable, is_active, notes';
+
   async listChartOfAccounts(scope?: DataScope) {
     const result = await pool.query(
-      `select id, account_code, account_name, account_type, normal_balance,
-              parent_account_id, is_control_account, control_party_type, notes
-       from chart_of_accounts
-       where is_active = true
-         and ($1::uuid is null or company_id = $1)
-       order by account_code`,
+      `
+      select coa.id, coa.account_code, coa.account_name, coa.account_type, coa.normal_balance,
+             coa.parent_account_id, coa.is_control_account, coa.control_party_type, coa.is_postable,
+             coa.is_active, coa.notes,
+             count(child.id)::int as children_count
+      from chart_of_accounts coa
+      left join chart_of_accounts child on child.parent_account_id = coa.id and child.is_active = true
+      where coa.is_active = true
+        and ($1::uuid is null or coa.company_id = $1)
+      group by coa.id
+      order by coa.account_code
+      `,
       [scope?.companyId ?? null],
     );
     return result.rows;
+  }
+
+  /** عمق الحساب في الشجرة — 1 لحساب رئيسي (بلا أب)، وإلا عمق الأب + 1. يُستخدَم
+   *  للتحقق من الحد الأقصى (6 مستويات) قبل إنشاء حساب فرعي جديد. */
+  private async getAccountDepth(client: PoolClient, accountId: string, companyId: string): Promise<number> {
+    const result = await client.query(
+      `
+      with recursive up as (
+        select id, parent_account_id from chart_of_accounts where id = $1::uuid and company_id = $2::uuid
+        union all
+        select p.id, p.parent_account_id
+        from chart_of_accounts p
+        join up on p.id = up.parent_account_id
+        where p.company_id = $2::uuid
+      )
+      select count(*)::int as depth from up
+      `,
+      [accountId, companyId],
+    );
+    return Number(result.rows[0]?.depth ?? 0);
+  }
+
+  /** true لو كان newParentId أحد فروع accountId (أو نفسه) — يمنع تحويل حساب ليصبح تابعاً لأحد أبنائه. */
+  private async wouldCreateCycle(client: PoolClient, accountId: string, newParentId: string, companyId: string): Promise<boolean> {
+    if (accountId === newParentId) return true;
+    const result = await client.query(
+      `
+      with recursive descendants as (
+        select id from chart_of_accounts where id = $1::uuid and company_id = $2::uuid
+        union all
+        select c.id from chart_of_accounts c
+        join descendants d on c.parent_account_id = d.id
+        where c.company_id = $2::uuid
+      )
+      select 1 from descendants where id = $3::uuid
+      `,
+      [accountId, companyId, newParentId],
+    );
+    return Boolean(result.rows[0]);
+  }
+
+  private async hasJournalLines(client: PoolClient, accountId: string): Promise<boolean> {
+    const result = await client.query(`select 1 from journal_entry_lines where account_id = $1::uuid limit 1`, [accountId]);
+    return Boolean(result.rows[0]);
+  }
+
+  private async hasActiveChildren(client: PoolClient, accountId: string): Promise<boolean> {
+    const result = await client.query(
+      `select 1 from chart_of_accounts where parent_account_id = $1::uuid and is_active = true limit 1`,
+      [accountId],
+    );
+    return Boolean(result.rows[0]);
   }
 
   async createChartOfAccount(
@@ -2632,47 +2694,160 @@ export class FinanceRepository {
       accountType: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
       normalBalance: 'debit' | 'credit';
       parentAccountId: string | null;
+      isPostable: boolean;
       notes: string | null;
     },
     scope?: DataScope,
   ) {
-    const result = await pool.query(
-      `
-      insert into chart_of_accounts (
-        company_id, account_code, account_name, account_type, normal_balance, parent_account_id, notes
-      ) values (
-        coalesce($1::uuid, (select id from companies where is_active = true order by created_at asc limit 1)),
-        $2, $3, $4, $5, $6, $7
-      )
-      returning id, account_code, account_name, account_type, normal_balance, parent_account_id, is_control_account, control_party_type, notes
-      `,
-      [
-        scope?.companyId ?? null,
-        input.accountCode.trim(),
-        input.accountName.trim(),
-        input.accountType,
-        input.normalBalance,
-        input.parentAccountId,
-        input.notes,
-      ],
-    );
-    return result.rows[0];
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      const companyResult = scope?.companyId
+        ? { rows: [{ id: scope.companyId }] }
+        : await client.query(`select id from companies where is_active = true order by created_at asc limit 1`);
+      const companyId = companyResult.rows[0]?.id;
+      if (!companyId) throw new HttpError(400, 'تعذّر تحديد الشركة.');
+
+      let accountType = input.accountType;
+      let normalBalance = input.normalBalance;
+
+      if (input.parentAccountId) {
+        const parentResult = await client.query(
+          `select id, account_type, normal_balance, is_active, is_control_account, is_postable
+           from chart_of_accounts where id = $1::uuid and company_id = $2::uuid for update`,
+          [input.parentAccountId, companyId],
+        );
+        const parent = parentResult.rows[0];
+        if (!parent) throw new HttpError(404, 'الحساب الأب غير موجود.');
+        if (!parent.is_active) throw new HttpError(400, 'الحساب الأب غير نشط.');
+        if (parent.is_control_account) throw new HttpError(409, 'لا يمكن إضافة حساب فرعي تحت حساب تحكّم.');
+
+        // الحساب الفرعي يرث نوع الحساب وطبيعته من الأب دائماً — تُتجاهَل أي قيمة
+        // مختلفة يرسلها العميل بدل رفضها، لأن حقلي النوع/الطبيعة في الواجهة
+        // معطَّلان (موروثان) أساساً عند اختيار أب، فلا قيمة فعلية "مختلفة" تُرسَل
+        // في التدفّق الطبيعي.
+        accountType = parent.account_type;
+        normalBalance = parent.normal_balance;
+
+        const depth = await this.getAccountDepth(client, parent.id, companyId);
+        if (depth >= 6) throw new HttpError(400, 'الحد الأقصى لعمق شجرة الحسابات هو 6 مستويات.');
+
+        if (parent.is_postable) {
+          if (await this.hasJournalLines(client, parent.id)) {
+            throw new HttpError(409, 'لا يمكن إضافة حساب فرعي تحت حساب عليه قيود.');
+          }
+          await client.query(`update chart_of_accounts set is_postable = false, updated_at = now() where id = $1::uuid`, [parent.id]);
+        }
+      }
+
+      const result = await client.query(
+        `
+        insert into chart_of_accounts (
+          company_id, account_code, account_name, account_type, normal_balance, parent_account_id, is_postable, notes
+        ) values ($1::uuid, $2, $3, $4, $5, $6::uuid, $7, $8)
+        returning ${FinanceRepository.CHART_OF_ACCOUNT_COLUMNS}
+        `,
+        [
+          companyId,
+          input.accountCode.trim(),
+          input.accountName.trim(),
+          accountType,
+          normalBalance,
+          input.parentAccountId,
+          input.isPostable,
+          input.notes,
+        ],
+      );
+      await client.query('commit');
+      return result.rows[0];
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async updateChartOfAccount(
     id: string,
-    input: { accountName: string; parentAccountId: string | null; notes: string | null },
+    companyId: string,
+    input: { accountName: string; parentAccountId: string | null; isPostable?: boolean; notes: string | null },
   ) {
-    const result = await pool.query(
-      `
-      update chart_of_accounts
-      set account_name = $2, parent_account_id = $3, notes = $4, updated_at = now()
-      where id = $1 and is_active = true
-      returning id, account_code, account_name, account_type, normal_balance, parent_account_id, is_control_account, control_party_type, notes
-      `,
-      [id, input.accountName.trim(), input.parentAccountId, input.notes],
-    );
-    return result.rows[0] ?? null;
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      const currentResult = await client.query(
+        `select id, account_type, parent_account_id, is_control_account, is_postable
+         from chart_of_accounts where id = $1::uuid and company_id = $2::uuid and is_active = true for update`,
+        [id, companyId],
+      );
+      const current = currentResult.rows[0];
+      if (!current) {
+        await client.query('rollback');
+        return null;
+      }
+
+      // isPostable غير مُرسَل = لا تغيير على التصنيف (تعديل اسم/ملاحظات فقط).
+      const nextIsPostable: boolean = input.isPostable ?? current.is_postable;
+
+      if (current.is_control_account && nextIsPostable !== current.is_postable) {
+        throw new HttpError(409, 'لا يمكن تغيير تصنيف حساب تحكّم.');
+      }
+
+      const parentChanged = (input.parentAccountId ?? null) !== (current.parent_account_id ?? null);
+      if (parentChanged && input.parentAccountId) {
+        const newParentResult = await client.query(
+          `select id, account_type, is_active, is_control_account, is_postable
+           from chart_of_accounts where id = $1::uuid and company_id = $2::uuid for update`,
+          [input.parentAccountId, companyId],
+        );
+        const newParent = newParentResult.rows[0];
+        if (!newParent) throw new HttpError(404, 'الحساب الأب غير موجود.');
+        if (!newParent.is_active) throw new HttpError(400, 'الحساب الأب غير نشط.');
+        if (newParent.is_control_account) throw new HttpError(409, 'لا يمكن جعل الحساب تابعاً لحساب تحكّم.');
+        if (newParent.account_type !== current.account_type) {
+          throw new HttpError(409, 'لا يمكن نقل الحساب تحت أب من نوع محاسبي مختلف.');
+        }
+        if (await this.wouldCreateCycle(client, id, input.parentAccountId, companyId)) {
+          throw new HttpError(409, 'لا يمكن جعل الحساب تابعاً لأحد فروعه.');
+        }
+        const depth = await this.getAccountDepth(client, newParent.id, companyId);
+        if (depth >= 6) throw new HttpError(400, 'الحد الأقصى لعمق شجرة الحسابات هو 6 مستويات.');
+
+        if (newParent.is_postable) {
+          if (await this.hasJournalLines(client, newParent.id)) {
+            throw new HttpError(409, 'لا يمكن إضافة حساب فرعي تحت حساب عليه قيود.');
+          }
+          await client.query(`update chart_of_accounts set is_postable = false, updated_at = now() where id = $1::uuid`, [newParent.id]);
+        }
+      }
+
+      if (nextIsPostable !== current.is_postable) {
+        if (!nextIsPostable && (await this.hasJournalLines(client, id))) {
+          throw new HttpError(409, 'لا يمكن تحويل حساب عليه قيود إلى حساب تجميعي.');
+        }
+        if (nextIsPostable && (await this.hasActiveChildren(client, id))) {
+          throw new HttpError(409, 'لا يمكن تحويل حساب له فروع نشطة إلى حساب حركي.');
+        }
+      }
+
+      const result = await client.query(
+        `
+        update chart_of_accounts
+        set account_name = $3, parent_account_id = $4::uuid, is_postable = $5, notes = $6, updated_at = now()
+        where id = $1::uuid and company_id = $2::uuid
+        returning ${FinanceRepository.CHART_OF_ACCOUNT_COLUMNS}
+        `,
+        [id, companyId, input.accountName.trim(), input.parentAccountId, nextIsPostable, input.notes],
+      );
+      await client.query('commit');
+      return result.rows[0] ?? null;
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   /** إلغاء تفعيل بدل حذف فعلي — يحافظ على أي قيود تاريخية مرحَّلة على الحساب. */
@@ -2689,6 +2864,34 @@ export class FinanceRepository {
       [id],
     );
     return Boolean(result.rows[0]);
+  }
+
+  /** اقتراح رمز الحساب الفرعي التالي تحت حساب أب محدَّد (معادلة القسم 4.4). */
+  async suggestNextAccountCode(parentId: string, companyId: string): Promise<string> {
+    const parentResult = await pool.query(
+      `select account_code from chart_of_accounts where id = $1::uuid and company_id = $2::uuid`,
+      [parentId, companyId],
+    );
+    const parentCode = parentResult.rows[0]?.account_code;
+    if (!parentCode || !/^\d+$/.test(parentCode)) {
+      throw new HttpError(404, 'الحساب الأب غير موجود.');
+    }
+    const childrenResult = await pool.query(
+      `select account_code from chart_of_accounts where parent_account_id = $1::uuid and company_id = $2::uuid`,
+      [parentId, companyId],
+    );
+    const childCodes = childrenResult.rows
+      .map((r: { account_code: string }) => r.account_code)
+      .filter((c: string) => /^\d+$/.test(c))
+      .map(Number);
+
+    const existingResult = await pool.query(
+      `select account_code from chart_of_accounts where company_id = $1::uuid`,
+      [companyId],
+    );
+    const existingCodes = new Set<string>(existingResult.rows.map((r: { account_code: string }) => r.account_code));
+
+    return computeNextAccountCode(Number(parentCode), childCodes, existingCodes);
   }
 
   async listJournalEntries(scope?: DataScope, filters?: { dateFrom?: string; dateTo?: string }) {
@@ -2783,10 +2986,20 @@ export class FinanceRepository {
       return entry;
     } catch (error) {
       await client.query('rollback');
-      throw error;
+      throw this.translateChartOfAccountsTriggerError(error);
     } finally {
       client.release();
     }
+  }
+
+  /** يحوّل استثناء trg_journal_entry_lines_postable (PL/pgSQL RAISE، code P0001)
+   *  إلى HttpError 409 برسالة عربية بدل تسريب خطأ Postgres الخام كـ 500. */
+  private translateChartOfAccountsTriggerError(error: unknown): unknown {
+    const pgError = error as { code?: string; message?: string } | undefined;
+    if (pgError?.code === 'P0001' && pgError.message?.includes('is a group account')) {
+      return new HttpError(409, 'لا يمكن ترحيل قيد على حساب تجميعي — اختاري حساباً حركياً.');
+    }
+    return error;
   }
 
   async reverseJournalEntry(entryId: string, companyId: string, createdByUserId?: string | null) {

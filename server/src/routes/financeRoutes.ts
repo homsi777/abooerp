@@ -2347,14 +2347,31 @@ export function createFinanceRouter(service: FinanceService) {
     }),
   );
 
-  const chartOfAccountCreateSchema = z.object({
-    accountCode: z.string().min(1),
-    accountName: z.string().min(1),
-    accountType: z.enum(['asset', 'liability', 'equity', 'revenue', 'expense']),
-    normalBalance: z.enum(['debit', 'credit']),
-    parentAccountId: z.string().uuid().nullable().optional(),
-    notes: z.string().nullable().optional(),
-  });
+  router.get(
+    '/chart-of-accounts/:id/next-code',
+    requireAnyPermissions(['finance.read', 'finance.view']),
+    asyncHandler(async (req, res) => {
+      const companyId = requireCompanyId(req);
+      const code = await service.suggestNextAccountCode(String(req.params.id), companyId);
+      res.json({ success: true, data: { code } });
+    }),
+  );
+
+  const accountCodeSchema = z.string().regex(/^\d{3,10}$/, 'رمز الحساب يجب أن يكون أرقاماً فقط، بطول 3 إلى 10 خانات.');
+
+  const chartOfAccountCreateSchema = z
+    .object({
+      accountCode: accountCodeSchema,
+      accountName: z.string().min(1),
+      accountType: z.enum(['asset', 'liability', 'equity', 'revenue', 'expense']).optional(),
+      normalBalance: z.enum(['debit', 'credit']).optional(),
+      parentAccountId: z.string().uuid().nullable().optional(),
+      isPostable: z.boolean().optional(),
+      notes: z.string().nullable().optional(),
+    })
+    .refine((v) => Boolean(v.parentAccountId) || (Boolean(v.accountType) && Boolean(v.normalBalance)), {
+      message: 'نوع الحساب وطبيعته مطلوبان للحساب الرئيسي (بلا أب).',
+    });
 
   router.post(
     '/chart-of-accounts',
@@ -2365,9 +2382,10 @@ export function createFinanceRouter(service: FinanceService) {
         {
           accountCode: body.accountCode,
           accountName: body.accountName,
-          accountType: body.accountType,
-          normalBalance: body.normalBalance,
+          accountType: body.accountType ?? 'asset',
+          normalBalance: body.normalBalance ?? 'debit',
           parentAccountId: body.parentAccountId ?? null,
+          isPostable: body.isPostable ?? true,
           notes: body.notes ?? null,
         },
         parseDataScope(req),
@@ -2386,6 +2404,7 @@ export function createFinanceRouter(service: FinanceService) {
   const chartOfAccountUpdateSchema = z.object({
     accountName: z.string().min(1),
     parentAccountId: z.string().uuid().nullable().optional(),
+    isPostable: z.boolean().optional(),
     notes: z.string().nullable().optional(),
   });
 
@@ -2393,10 +2412,12 @@ export function createFinanceRouter(service: FinanceService) {
     '/chart-of-accounts/:id',
     requireAnyPermissions(['finance.write']),
     asyncHandler(async (req, res) => {
+      const companyId = requireCompanyId(req);
       const body = chartOfAccountUpdateSchema.parse(req.body);
-      const account = await service.updateChartOfAccount(String(req.params.id), {
+      const account = await service.updateChartOfAccount(String(req.params.id), companyId, {
         accountName: body.accountName,
         parentAccountId: body.parentAccountId ?? null,
+        isPostable: body.isPostable,
         notes: body.notes ?? null,
       });
       if (!account) {

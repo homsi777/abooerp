@@ -1141,6 +1141,7 @@ export class FinanceService {
       accountType: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
       normalBalance: 'debit' | 'credit';
       parentAccountId: string | null;
+      isPostable: boolean;
       notes: string | null;
     },
     scope?: DataScope,
@@ -1150,13 +1151,18 @@ export class FinanceService {
 
   updateChartOfAccount(
     id: string,
-    input: { accountName: string; parentAccountId: string | null; notes: string | null },
+    companyId: string,
+    input: { accountName: string; parentAccountId: string | null; isPostable?: boolean; notes: string | null },
   ) {
-    return this.repository.updateChartOfAccount(id, input);
+    return this.repository.updateChartOfAccount(id, companyId, input);
   }
 
   deactivateChartOfAccount(id: string) {
     return this.repository.deactivateChartOfAccount(id);
+  }
+
+  suggestNextAccountCode(parentId: string, companyId: string) {
+    return this.repository.suggestNextAccountCode(parentId, companyId);
   }
 
   listJournalEntries(scope?: DataScope, filters?: { dateFrom?: string; dateTo?: string }) {
