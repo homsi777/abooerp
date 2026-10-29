@@ -11,6 +11,7 @@ import Vehicles from './pages/Vehicles';
 import Tariffs from './pages/Tariffs';
 import ShipmentEntry from './pages/ShipmentEntry';
 import ShipmentQuickLedger from './pages/ShipmentQuickLedger';
+import ParcelReceiveDeliver from './pages/ParcelReceiveDeliver';
 import ShipmentList from './pages/ShipmentList';
 import Manifest from './pages/Manifest';
 import Delivery from './pages/Delivery';
@@ -211,6 +212,14 @@ export default function App() {
                     element={
                       <RequirePermission permission="shipments.write">
                         <ShipmentQuickLedger />
+                      </RequirePermission>
+                    }
+                  />
+                  <Route
+                    path="/parcels/receive-deliver"
+                    element={
+                      <RequirePermission permission="shipments.read">
+                        <ParcelReceiveDeliver />
                       </RequirePermission>
                     }
                   />

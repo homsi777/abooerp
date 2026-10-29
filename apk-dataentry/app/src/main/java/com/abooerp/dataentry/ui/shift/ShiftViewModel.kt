@@ -13,14 +13,15 @@ import com.abooerp.dataentry.data.OpenCustodyShiftRequest
 import com.abooerp.dataentry.data.OpeningBalanceRequest
 import com.abooerp.dataentry.data.QueuedLedgerRow
 import com.abooerp.dataentry.data.QueuedRowStatus
+import com.abooerp.dataentry.data.ReceiptNumberStore
 import com.abooerp.dataentry.data.Shift
 import com.abooerp.dataentry.data.ShiftStatus
+import com.abooerp.dataentry.data.SypPayment
 import com.abooerp.dataentry.data.UpsertLedgerRowRequest
 import com.abooerp.dataentry.network.ApiService
 import com.abooerp.dataentry.printer.BluetoothPrinterManager
 import com.abooerp.dataentry.printer.LabelData
 import com.abooerp.dataentry.printer.LabelRenderer
-import com.abooerp.dataentry.printer.NetworkPrinterManager
 import com.abooerp.dataentry.printer.PrintResult
 import com.abooerp.dataentry.printer.ReceiptData
 import com.abooerp.dataentry.printer.ReceiptRenderer
@@ -71,8 +72,8 @@ class ShiftViewModel(
     private val authStorage: AuthStorage,
     private val queueStorage: LedgerQueueStorage,
     private val printerManager: BluetoothPrinterManager,
-    private val networkPrinterManager: NetworkPrinterManager,
     private val labelPrinter: TsplLabelPrinter,
+    private val receiptNumbers: ReceiptNumberStore,
 ) : ViewModel() {
     private val timeFormat = SimpleDateFormat("HH:mm", Locale("ar"))
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
@@ -82,6 +83,18 @@ class ShiftViewModel(
 
     private val _printError = MutableStateFlow<String?>(null)
     val printError: StateFlow<String?> = _printError.asStateFlow()
+
+    /** The number the next saved row will carry, shown in the entry form
+     *  before saving so the employee can read it out to the customer. */
+    private val _nextReceiptNo = MutableStateFlow<Long?>(null)
+    val nextReceiptNo: StateFlow<Long?> = _nextReceiptNo.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            receiptNumbers.refillIfLow()
+            _nextReceiptNo.value = receiptNumbers.peek()
+        }
+    }
 
     fun clearPrintError() {
         _printError.value = null
@@ -113,9 +126,9 @@ class ShiftViewModel(
             parcelCount = row.parcelCount,
             weightKg = row.weightKg,
             senderName = row.senderName,
-            senderPhone = "",
+            senderPhone = row.senderPhone,
             receiverName = row.receiverName,
-            receiverPhone = "",
+            receiverPhone = row.receiverPhone,
             notes = row.notes,
         )
         val result = labelPrinter.printLabel(host, authStorage.getLabelPrinterPort(), LabelRenderer.render(data))
@@ -125,11 +138,7 @@ class ShiftViewModel(
     private suspend fun printReceipt(row: LedgerRow) {
         // No printer configured yet is not an error — printing is opt-in
         // per device until every tablet has one, so we just skip silently.
-        val isNetwork = authStorage.getPrinterType() == AuthStorage.PRINTER_TYPE_NETWORK
-        val networkHost = if (isNetwork) authStorage.getNetworkPrinterHost() else null
-        val bluetoothAddress = if (!isNetwork) authStorage.getPrinterAddress() else null
-        if (isNetwork && networkHost == null) return
-        if (!isNetwork && bluetoothAddress == null) return
+        val bluetoothAddress = authStorage.getPrinterAddress() ?: return
         val data = ReceiptData(
             companyName = COMPANY_NAME,
             branchLabel = authStorage.getBranchLabel() ?: "-",
@@ -141,20 +150,19 @@ class ShiftViewModel(
             parcelCount = row.parcelCount,
             weightKg = row.weightKg,
             senderName = row.senderName,
+            senderPhone = row.senderPhone,
             receiverName = row.receiverName,
+            receiverPhone = row.receiverPhone,
             collectAmount = row.collectAmount,
             hawalaAmount = row.hawalaAmount,
             hawalaFee = row.hawalaFee,
             prepaidAmount = row.prepaidAmount,
             currencyCode = row.currencyCode,
             notes = row.notes,
+            sypPayment = row.sypPayment,
         )
         val bitmap = ReceiptRenderer.render(data)
-        val result = if (isNetwork) {
-            networkPrinterManager.printBitmap(networkHost!!, authStorage.getNetworkPrinterPort(), bitmap)
-        } else {
-            printerManager.printBitmap(bluetoothAddress!!, bitmap)
-        }
+        val result = printerManager.printBitmap(bluetoothAddress, bitmap)
         when (result) {
             is PrintResult.Failure -> _printError.value = result.message
             PrintResult.Success -> {}
@@ -401,11 +409,14 @@ class ShiftViewModel(
         hawalaFee: Double,
         prepaidAmount: Double,
         senderName: String,
+        senderPhone: String,
         receiverName: String,
+        receiverPhone: String,
         destination: String,
-        receiptNo: String,
         notes: String,
         currencyCode: String,
+        /** Syrian pounds per 1 USD, captured per shipment. Ignored for USD rows. */
+        exchangeRate: Double = 0.0,
     ) {
         val branch = branchId
         if (branch == null) {
@@ -413,17 +424,44 @@ class ShiftViewModel(
             return
         }
         viewModelScope.launch {
-            // The real ledger only has USD amount columns. A SYP row is
-            // still queued/saved (and still visible instantly once synced)
-            // but its amounts go into the notes as text instead of being
-            // silently mis-recorded as USD — needs a real conversion rule
-            // agreed with the manager before this becomes automatic.
+            // Allocated before anything else: without a unique number there
+            // is no QR to print, and the whole receive/deliver flow depends
+            // on that number being unrepeatable.
+            val tabletNumber = receiptNumbers.take()
+            if (tabletNumber == null) {
+                _saveState.value = SaveRowState.Error(
+                    "نفدت أرقام الإيصالات المحجوزة — اتصلي بالشبكة مرة واحدة لتحميل دفعة جديدة.",
+                )
+                return@launch
+            }
+
+            // The ledger is USD-only by design — shift totals, reports, the
+            // office system, all of it. Paying in Syrian pounds is a matter
+            // between the employee and the customer, so a SYP row is
+            // converted at the rate agreed for that shipment and recorded in
+            // USD like any other. (Previously such a row was recorded as
+            // ZERO USD with the amounts dropped into the notes as text,
+            // meaning cash the employee was actually holding never showed up
+            // in their custody at all.)
             val isUsd = currencyCode == "USD"
+            val syp = if (!isUsd && exchangeRate > 0) {
+                SypPayment(
+                    rate = exchangeRate,
+                    collectAmount = collectAmount,
+                    prepaidAmount = prepaidAmount,
+                    hawalaAmount = hawalaAmount,
+                    hawalaFee = hawalaFee,
+                )
+            } else {
+                null
+            }
+            fun usd(amount: Double) = if (syp == null) amount else amount / syp.rate
+
             val combinedNotes = buildString {
                 if (notes.isNotBlank()) append(notes)
-                if (!isUsd) {
+                if (syp != null) {
                     if (isNotEmpty()) append(" — ")
-                    append("مبلغ بالليرة السورية: تحصيل ${collectAmount.trimmed()} / حوالة ${hawalaAmount.trimmed()} / أجرة حوالة ${hawalaFee.trimmed()} / دفع مسبق ${prepaidAmount.trimmed()}")
+                    append("دُفع بالليرة السورية: تحصيل ${collectAmount.trimmed()} / حوالة ${hawalaAmount.trimmed()} / أجرة حوالة ${hawalaFee.trimmed()} / دفع مسبق ${prepaidAmount.trimmed()} — سعر الصرف: ${syp.rate.trimmed()} ل.س لكل 1$")
                 }
             }
 
@@ -433,24 +471,36 @@ class ShiftViewModel(
                 ledgerDate = todayIso(),
                 lineLabel = TABLET_INTAKE_LINE_LABEL,
                 rowNo = nextRowNo,
-                receiptNo = receiptNo.ifBlank { null },
+                // The tablet number IS the receipt number now — the
+                // employee no longer types one, so both carry it and the
+                // printed/QR value can never disagree.
+                receiptNo = tabletNumber.toString(),
+                tabletReceiptNo = tabletNumber,
                 destination = destination,
                 parcelType = parcelType,
                 parcelCount = parcelCount.takeIf { it > 0 },
                 weightKg = weightKg.takeIf { it > 0 },
                 senderName = senderName,
                 receiverName = receiverName,
-                collectAmountUsd = if (isUsd) collectAmount else 0.0,
-                prepaidAmountUsd = if (isUsd) prepaidAmount else 0.0,
-                hawalaAmountUsd = if (isUsd) hawalaAmount else 0.0,
-                transferServiceFeeUsd = if (isUsd) hawalaFee else 0.0,
+                collectAmountUsd = usd(collectAmount),
+                prepaidAmountUsd = usd(prepaidAmount),
+                hawalaAmountUsd = usd(hawalaAmount),
+                transferServiceFeeUsd = usd(hawalaFee),
                 notes = combinedNotes.ifBlank { null },
             )
 
             // Written to the local queue BEFORE any network call — this is
             // the whole point of offline-first: the row is never lost, even
             // if the app crashes right after this line, with no signal.
-            val queuedRow = QueuedLedgerRow(localId = UUID.randomUUID().toString(), request = request, status = QueuedRowStatus.PENDING)
+            val queuedRow = QueuedLedgerRow(
+                localId = UUID.randomUUID().toString(),
+                request = request,
+                status = QueuedRowStatus.PENDING,
+                senderPhone = senderPhone,
+                receiverPhone = receiverPhone,
+                sypPayment = syp,
+                userNotes = notes,
+            )
             queue = queue + queuedRow
             publishRows()
             persistQueue()
@@ -458,10 +508,13 @@ class ShiftViewModel(
             // The employee is physically holding this cash right now
             // regardless of whether the network call below succeeds —
             // provisional until real accounting sign-off on this rule.
-            val cashHandled = collectAmount + hawalaAmount + hawalaFee
+            // Custody is tracked in USD only, so a SYP row adds its
+            // converted value to the USD balance rather than a separate
+            // pounds balance.
+            val cashHandled = usd(collectAmount) + usd(hawalaAmount) + usd(hawalaFee)
             _shift.value = _shift.value?.let { current ->
                 val updatedBalances = current.balances.map {
-                    if (it.currencyCode == currencyCode) it.copy(amount = it.amount + cashHandled) else it
+                    if (it.currencyCode == "USD") it.copy(amount = it.amount + cashHandled) else it
                 }
                 current.copy(balances = updatedBalances, rowCount = queue.size)
             }
@@ -470,6 +523,9 @@ class ShiftViewModel(
             // physically standing there waiting for their receipt, so this
             // must not wait on network sync (which can lag or retry).
             viewModelScope.launch { printRow(queuedRow.toLedgerRow()) }
+
+            _nextReceiptNo.value = receiptNumbers.peek()
+            viewModelScope.launch { receiptNumbers.refillIfLow() }
 
             trySyncOne(queuedRow.localId)
         }
@@ -587,10 +643,15 @@ class ShiftViewModel(
         receiverName = request.receiverName ?: "",
         destination = request.destination ?: "",
         receiptNo = request.receiptNo ?: request.rowNo.toString(),
-        notes = request.notes ?: "",
+        // The employee's own words only — never the conversion trace that
+        // rides along in request.notes for the office.
+        notes = userNotes,
         currencyCode = "USD",
         createdAt = serverCreatedAt?.takeLast(8)?.take(5) ?: "",
         syncStatus = status,
+        senderPhone = senderPhone,
+        receiverPhone = receiverPhone,
+        sypPayment = sypPayment,
     )
 
     private fun LedgerRowRemote.toQueuedSynced(branch: String, today: String) = QueuedLedgerRow(
@@ -616,6 +677,9 @@ class ShiftViewModel(
             transferServiceFeeUsd = transferServiceFeeUsd?.toDoubleOrNull(),
             notes = notes,
         ),
+        // Rows that came back from the server have only the one notes
+        // field, so that is the best "what the employee wrote" we have.
+        userNotes = notes ?: "",
     )
 
     private fun Double.trimmed(): String {
@@ -629,12 +693,12 @@ class ShiftViewModel(
         private val authStorage: AuthStorage,
         private val queueStorage: LedgerQueueStorage,
         private val printerManager: BluetoothPrinterManager,
-        private val networkPrinterManager: NetworkPrinterManager,
         private val labelPrinter: TsplLabelPrinter,
+        private val receiptNumbers: ReceiptNumberStore,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            ShiftViewModel(employeeName, apiService, authStorage, queueStorage, printerManager, networkPrinterManager, labelPrinter) as T
+            ShiftViewModel(employeeName, apiService, authStorage, queueStorage, printerManager, labelPrinter, receiptNumbers) as T
     }
 
     companion object {

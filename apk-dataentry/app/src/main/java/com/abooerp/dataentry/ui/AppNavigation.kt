@@ -15,6 +15,8 @@ import com.abooerp.dataentry.ui.shift.ShiftDashboardScreen
 import com.abooerp.dataentry.ui.shift.ShiftViewModel
 import com.abooerp.dataentry.update.UpdateGate
 import com.abooerp.dataentry.printer.PrinterSettingsScreen
+import com.abooerp.dataentry.ui.parcels.ParcelScanScreen
+import com.abooerp.dataentry.ui.parcels.ParcelScanViewModel
 import kotlinx.serialization.Serializable
 
 @Serializable object LoginRoute
@@ -22,6 +24,7 @@ import kotlinx.serialization.Serializable
 @Serializable object LedgerRoute
 @Serializable object HistoryRoute
 @Serializable object PrinterSettingsRoute
+@Serializable object ParcelScanRoute
 
 @Composable
 fun AppNavigation() {
@@ -38,7 +41,7 @@ fun AppNavigation() {
     val shiftViewModel: ShiftViewModel = viewModel(
         factory = ShiftViewModel.Factory(
             employeeName, container.apiService, container.authStorage, container.ledgerQueueStorage,
-            container.printerManager, container.networkPrinterManager, container.labelPrinter,
+            container.printerManager, container.labelPrinter, container.receiptNumberStore,
         ),
     )
 
@@ -59,6 +62,7 @@ fun AppNavigation() {
                 viewModel = shiftViewModel,
                 onOpenLedger = { navController.navigate(LedgerRoute) },
                 onOpenHistory = { navController.navigate(HistoryRoute) },
+                onOpenParcelScan = { navController.navigate(ParcelScanRoute) },
                 onLogout = {
                     authViewModel.logout()
                     navController.navigate(LoginRoute) {
@@ -81,10 +85,16 @@ fun AppNavigation() {
                 onBack = { navController.popBackStack() },
             )
         }
+        composable<ParcelScanRoute> {
+            val parcelScanViewModel: ParcelScanViewModel = viewModel(factory = ParcelScanViewModel.Factory(container.apiService))
+            ParcelScanScreen(
+                viewModel = parcelScanViewModel,
+                onBack = { navController.popBackStack() },
+            )
+        }
         composable<PrinterSettingsRoute> {
             PrinterSettingsScreen(
                 printerManager = container.printerManager,
-                networkPrinterManager = container.networkPrinterManager,
                 labelPrinter = container.labelPrinter,
                 authStorage = container.authStorage,
                 onBack = { navController.popBackStack() },

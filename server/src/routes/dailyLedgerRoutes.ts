@@ -258,6 +258,9 @@ export function createDailyLedgerRouter(
     vehicleId: uuid.nullable().optional(),
     rowNo: z.coerce.number().int().min(1),
     receiptNo: z.string().nullable().optional(),
+    // Issued by /parcels/receipt-numbers/reserve and carried in the label's
+    // QR code — tablet rows only.
+    tabletReceiptNo: z.coerce.number().int().nullable().optional(),
     destination: z.string().optional(),
     parcelType: z.string().optional(),
     parcelCount: z.coerce.number().int().min(1).nullable().optional(),

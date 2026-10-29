@@ -28,6 +28,7 @@ const NAV_MODULES: NavModule[] = [
     id: 'shipping', label: 'الشحن', icon: '📦',
     children: [
       { label: 'دفتر إدخال سريع', path: '/shipment-quick-ledger', icon: '▦', permission: 'shipments.write' },
+      { label: 'استلام / تسليم', path: '/parcels/receive-deliver', icon: '📷', permission: 'shipments.read' },
       { label: 'التوثيق', path: '/daily-ledger/documentation', icon: '📋', permissionsAny: ['daily_ledger.documentation.read', 'shipments.read'] },
       { label: 'قائمة الشحنات', path: '/shipments', icon: '📋', permission: 'shipments.read' },
       { label: 'تحميل الشحنات', path: '/manifest', icon: '🚚', permission: 'manifests.read' },
@@ -155,6 +156,7 @@ const NAV_MODULES_AGENT: NavModule[] = [
     id: 'shipping', label: 'الشحن', icon: '📦',
     children: [
       { label: 'دفتر إدخال الشحن', path: '/shipment-quick-ledger', icon: '▦', permission: 'shipments.write' },
+      { label: 'استلام / تسليم', path: '/parcels/receive-deliver', icon: '📷', permission: 'shipments.read' },
       { label: 'قائمة الشحنات', path: '/shipments', icon: '📋', permission: 'shipments.read' },
     ],
   },

@@ -75,6 +75,9 @@ data class UpsertLedgerRowRequest(
     val lineLabel: String,
     val rowNo: Int,
     val receiptNo: String? = null,
+    /** Company-wide unique number from [ReceiptNumberStore]; this is what
+     *  the label's QR carries, so it must never repeat. */
+    val tabletReceiptNo: Long? = null,
     val destination: String? = null,
     val parcelType: String? = null,
     val parcelCount: Int? = null,
@@ -132,6 +135,11 @@ data class LedgerRow(
     val currencyCode: String,
     val createdAt: String,
     val syncStatus: QueuedRowStatus = QueuedRowStatus.SYNCED,
+    // Device-only, for the parcel label — see QueuedLedgerRow.
+    val senderPhone: String = "",
+    val receiverPhone: String = "",
+    /** Set only when the customer paid in Syrian pounds. */
+    val sypPayment: SypPayment? = null,
 )
 
 // Offline-first queue: every row is written here THE INSTANT it's entered
@@ -194,6 +202,52 @@ data class CustodyShiftRemote(
 )
 
 @JsonClass(generateAdapter = false)
+data class ReserveReceiptNumbersRequest(val count: Int)
+
+@JsonClass(generateAdapter = false)
+data class ReservedReceiptNumbers(val numbers: List<Long>)
+
+@JsonClass(generateAdapter = false)
+data class ParcelScanRequest(
+    val code: Long,
+    val deliveredToName: String? = null,
+    val notes: String? = null,
+)
+
+/** One parcel as the tracking endpoints return it. */
+@JsonClass(generateAdapter = false)
+data class ParcelRemote(
+    val id: String,
+    @com.squareup.moshi.Json(name = "tablet_receipt_no") val tabletReceiptNo: Long?,
+    @com.squareup.moshi.Json(name = "parcel_status") val parcelStatus: String,
+    val statusLabel: String?,
+    val destination: String?,
+    @com.squareup.moshi.Json(name = "parcel_type") val parcelType: String?,
+    @com.squareup.moshi.Json(name = "parcel_count") val parcelCount: Int?,
+    @com.squareup.moshi.Json(name = "sender_name") val senderName: String?,
+    @com.squareup.moshi.Json(name = "receiver_name") val receiverName: String?,
+    @com.squareup.moshi.Json(name = "delivered_to_name") val deliveredToName: String?,
+    @com.squareup.moshi.Json(name = "branch_name") val branchName: String?,
+)
+
+/**
+ * A row the customer actually paid in Syrian pounds. The ledger itself is
+ * USD-only — shift totals, reports, everything — so the converted USD is
+ * what gets recorded; this keeps what the customer really handed over, and
+ * the rate it was converted at, so the receipt can show both and the
+ * figure stays auditable months later. The rate is per shipment, not per
+ * day: it moves too fast in Syria to reuse yesterday's.
+ */
+@JsonClass(generateAdapter = false)
+data class SypPayment(
+    val rate: Double,
+    val collectAmount: Double,
+    val prepaidAmount: Double,
+    val hawalaAmount: Double,
+    val hawalaFee: Double,
+)
+
+@JsonClass(generateAdapter = false)
 data class QueuedLedgerRow(
     val localId: String,
     val request: UpsertLedgerRowRequest,
@@ -201,4 +255,17 @@ data class QueuedLedgerRow(
     val lastError: String? = null,
     val serverId: String? = null,
     val serverCreatedAt: String? = null,
+    // Phone numbers live only on the device: daily_ledger_rows has no
+    // columns for them, so they are kept here to print on the parcel label
+    // rather than being dropped. Defaulted so queue files written by older
+    // builds still parse.
+    val senderPhone: String = "",
+    val receiverPhone: String = "",
+    /** Set only when the customer paid in Syrian pounds. */
+    val sypPayment: SypPayment? = null,
+    /** Exactly what the employee typed in the notes box. [request] carries
+     *  the same text plus an audit trace of any pounds conversion, which
+     *  the office needs but has no business being printed on the customer's
+     *  receipt — the receipt shows the pounds figures in their own fields. */
+    val userNotes: String = "",
 )

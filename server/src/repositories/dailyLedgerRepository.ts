@@ -458,6 +458,10 @@ export interface DailyLedgerUpsertInput {
   vehicleId?: string | null;
   rowNo: number;
   receiptNo?: string | null;
+  /** Company-wide unique number issued to the Android tablet app and
+   *  encoded in the parcel label's QR. Null for anything typed in the
+   *  browser, where agents keep their own paper numbering. */
+  tabletReceiptNo?: number | null;
   destination?: string;
   parcelType?: string;
   parcelCount?: number | null;
@@ -1302,9 +1306,10 @@ export class DailyLedgerRepository {
           unit_price_usd,
           line_total_usd,
           price_source,
-          suggested_unit_price_usd
+          suggested_unit_price_usd,
+          tablet_receipt_no
         )
-        values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17,$27,$28,$29,$30,$31,$32,$33)
+        values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17,$27,$28,$29,$30,$31,$32,$33,$34)
         returning
           daily_ledger_rows.*,
           $18::uuid as branch_id,
@@ -1357,6 +1362,7 @@ export class DailyLedgerRepository {
           input.lineTotalUsd ?? null,
           input.priceSource ?? null,
           input.suggestedUnitPriceUsd ?? null,
+          input.tabletReceiptNo ?? null,
         ],
       );
 

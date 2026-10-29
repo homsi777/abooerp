@@ -9,6 +9,10 @@ import com.abooerp.dataentry.data.LedgerRowRemote
 import com.abooerp.dataentry.data.LoginRequest
 import com.abooerp.dataentry.data.LoginResponseData
 import com.abooerp.dataentry.data.OpenCustodyShiftRequest
+import com.abooerp.dataentry.data.ParcelRemote
+import com.abooerp.dataentry.data.ParcelScanRequest
+import com.abooerp.dataentry.data.ReservedReceiptNumbers
+import com.abooerp.dataentry.data.ReserveReceiptNumbersRequest
 import com.abooerp.dataentry.data.UpsertLedgerRowRequest
 import com.abooerp.dataentry.data.UserData
 import retrofit2.http.Body
@@ -42,6 +46,19 @@ interface ApiService {
 
     @POST("daily-ledger/rows/upsert")
     suspend fun upsertLedgerRow(@Body request: UpsertLedgerRowRequest): ApiResponse<LedgerRowRemote>
+
+    /** Reserves a block of company-wide-unique receipt numbers to spend
+     *  offline — see [com.abooerp.dataentry.data.ReceiptNumberStore]. */
+    @POST("parcels/receipt-numbers/reserve")
+    suspend fun reserveReceiptNumbers(@Body request: ReserveReceiptNumbersRequest): ApiResponse<ReservedReceiptNumbers>
+
+    /** Looks a scanned QR up without changing anything. */
+    @GET("parcels/lookup")
+    suspend fun lookupParcel(@Query("code") code: Long): ApiResponse<ParcelRemote>
+
+    /** Advances the parcel to its next status; the server decides which. */
+    @POST("parcels/scan")
+    suspend fun scanParcel(@Body request: ParcelScanRequest): ApiResponse<ParcelRemote>
 
     @GET("daily-ledger/rows")
     suspend fun getLedgerRows(

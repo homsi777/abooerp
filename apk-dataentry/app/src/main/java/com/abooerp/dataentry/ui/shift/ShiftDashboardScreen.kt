@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
@@ -42,6 +43,7 @@ fun ShiftDashboardScreen(
     viewModel: ShiftViewModel,
     onOpenLedger: () -> Unit,
     onOpenHistory: () -> Unit,
+    onOpenParcelScan: () -> Unit,
     onLogout: () -> Unit,
 ) {
     val shift by viewModel.shift.collectAsStateWithLifecycle()
@@ -137,6 +139,29 @@ fun ShiftDashboardScreen(
                     Column {
                         Text("سجلات شحنات", fontWeight = FontWeight.Bold)
                         Text("استعراض السطور المُدخلة حسب التاريخ", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                onClick = onOpenParcelScan,
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f), CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Default.QrCodeScanner, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column {
+                        Text("استلام / تسليم", fontWeight = FontWeight.Bold)
+                        Text("مسح رمز QR لتحديث حالة الطرد حتى التسليم", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }

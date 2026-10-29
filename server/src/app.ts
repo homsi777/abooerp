@@ -92,6 +92,7 @@ import { DailyLedgerShipmentPostingService } from './services/dailyLedgerShipmen
 import { DailyLedgerTransferService } from './services/dailyLedgerTransferService.js';
 import { createDailyLedgerRouter } from './routes/dailyLedgerRoutes.js';
 import { createGoodsPricingRouter } from './routes/goodsPricingRoutes.js';
+import { createParcelTrackingRouter } from './routes/parcelTrackingRoutes.js';
 import { createGoodsShippingPricesRouter } from './routes/goodsShippingPricesRoutes.js';
 import { createDriverAdvancesRouter } from './routes/driverAdvancesRoutes.js';
 import { createDriverMobileRouter } from './routes/driverMobileRoutes.js';
@@ -297,6 +298,7 @@ const goodsPricingRepository = new GoodsPricingRepository();
 const goodsPricingService = new GoodsPricingService(goodsPricingRepository);
 app.use('/api/v1/daily-ledger', createDailyLedgerRouter(dailyLedgerService, dailyLedgerTransferService, goodsPricingService));
 app.use('/api/v1/finance/goods-pricing', createGoodsPricingRouter(goodsPricingService));
+app.use('/api/v1/parcels', createParcelTrackingRouter());
 app.use('/api/v1/finance/goods-shipping-prices', createGoodsShippingPricesRouter());
 app.use('/api/v1/sync', createSyncRouter());
 app.use('/api/v1/agent-portal', createAgentPortalRouter(shipmentService, financeService, transfersService, new AgentRepository(), dailyLedgerService));
