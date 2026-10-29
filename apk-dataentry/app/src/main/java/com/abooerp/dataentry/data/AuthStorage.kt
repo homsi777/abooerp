@@ -74,6 +74,26 @@ class AuthStorage(context: Context) {
      *  if both a Bluetooth and a network printer were saved at some point. */
     fun getPrinterType(): String = sharedPreferences.getString("printer_type", PRINTER_TYPE_BLUETOOTH) ?: PRINTER_TYPE_BLUETOOTH
 
+    /** The parcel-label printer is a SEPARATE device from the receipt
+     *  printer above, not an alternative to it: saving a row prints the
+     *  sender's receipt on one and the parcel label on the other, so this
+     *  deliberately has its own settings and never touches "printer_type". */
+    fun saveLabelPrinter(host: String, port: Int) {
+        sharedPreferences.edit()
+            .putString("label_printer_host", host)
+            .putInt("label_printer_port", port)
+            .apply()
+    }
+    fun getLabelPrinterHost(): String? = sharedPreferences.getString("label_printer_host", null)
+    fun getLabelPrinterPort(): Int = sharedPreferences.getInt("label_printer_port", 9100)
+
+    fun clearLabelPrinter() {
+        sharedPreferences.edit()
+            .remove("label_printer_host")
+            .remove("label_printer_port")
+            .apply()
+    }
+
     companion object {
         const val PRINTER_TYPE_BLUETOOTH = "bluetooth"
         const val PRINTER_TYPE_NETWORK = "network"

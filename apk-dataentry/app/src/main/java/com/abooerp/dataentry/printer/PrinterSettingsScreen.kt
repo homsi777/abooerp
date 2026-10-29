@@ -43,6 +43,7 @@ import kotlinx.coroutines.launch
 fun PrinterSettingsScreen(
     printerManager: BluetoothPrinterManager,
     networkPrinterManager: NetworkPrinterManager,
+    labelPrinter: TsplLabelPrinter,
     authStorage: AuthStorage,
     onBack: () -> Unit,
 ) {
@@ -141,6 +142,10 @@ fun PrinterSettingsScreen(
                 isActive = !isBluetoothActive,
                 onSetDefault = { printerType = AuthStorage.PRINTER_TYPE_NETWORK },
             )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
+            LabelPrinterSection(labelPrinter = labelPrinter, authStorage = authStorage)
         }
     }
 
@@ -258,6 +263,142 @@ private fun buildSampleReceipt(authStorage: AuthStorage, timeFormat: SimpleDateF
     currencyCode = "USD",
     notes = "بضاعة قابلة للكسر — يرجى الحذر",
 )
+
+private fun buildSampleLabel(authStorage: AuthStorage, timeFormat: SimpleDateFormat): LabelData = LabelData(
+    companyName = "شركة عبو المحمود لنقل والخدمات اللوجستية",
+    sourceLabel = "المصدر: ${authStorage.getBranchLabel() ?: "الفرع الرئيسي"}",
+    dateTime = timeFormat.format(Date()),
+    receiptNo = "TEST-0001",
+    destination = "القامشلي",
+    parcelType = "أجهزة كهربائية",
+    parcelCount = 3,
+    weightKg = 12.5,
+    senderName = "أحمد الحلبي",
+    senderPhone = "",
+    receiverName = "محمد العلي",
+    receiverPhone = "",
+    notes = "بضاعة قابلة للكسر - يرجى الحذر",
+)
+
+/**
+ * Parcel-label printer card. This is an ADDITIONAL printer, not an
+ * alternative to the two above: the receipt goes to the Bluetooth/IP
+ * receipt printer and the label goes here, both automatically on save.
+ */
+@Composable
+private fun LabelPrinterSection(
+    labelPrinter: TsplLabelPrinter,
+    authStorage: AuthStorage,
+) {
+    val scope = rememberCoroutineScope()
+    var host by remember { mutableStateOf(authStorage.getLabelPrinterHost() ?: "") }
+    var portText by remember { mutableStateOf(authStorage.getLabelPrinterPort().toString()) }
+    var saved by remember { mutableStateOf(authStorage.getLabelPrinterHost() != null) }
+    var testing by remember { mutableStateOf(false) }
+    var testResult by remember { mutableStateOf<PrintResult?>(null) }
+    val timeFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US) }
+    val port = portText.toIntOrNull() ?: DEFAULT_LABEL_PRINTER_PORT
+
+    Text("طابعة اللصاقات (IP)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+    Text(
+        "طابعة لصاقات الطرود بقياس 70×120 مم على نفس شبكة الواي فاي — تُطبع تلقائياً مع كل شحنة بالإضافة إلى إيصال المرسل",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(12.dp))
+
+    ElevatedCard(shape = RoundedCornerShape(16.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier.size(44.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Default.Wifi, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    OutlinedTextField(
+                        value = host,
+                        onValueChange = { host = it; saved = false },
+                        label = { Text("عنوان IP") },
+                        placeholder = { Text("مثال: 192.168.1.250") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = portText,
+                        onValueChange = { portText = it; saved = false },
+                        label = { Text("المنفذ (Port)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                if (saved) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(4.dp))
+                        Text("مفعّلة", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            when (val result = testResult) {
+                is PrintResult.Success -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("تم الطباعة بنجاح", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                }
+                is PrintResult.Failure -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(result.message, color = MaterialTheme.colorScheme.error)
+                }
+                null -> {}
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                    onClick = {
+                        testing = true
+                        testResult = null
+                        scope.launch {
+                            val bitmap = LabelRenderer.render(buildSampleLabel(authStorage, timeFormat))
+                            testResult = labelPrinter.printLabel(host, port, bitmap)
+                            testing = false
+                        }
+                    },
+                    enabled = !testing && host.isNotBlank(),
+                ) {
+                    if (testing) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (testing) "جارٍ الاختبار..." else "اختبار طباعة لصاقة")
+                }
+                if (!saved) {
+                    TextButton(
+                        onClick = {
+                            authStorage.saveLabelPrinter(host, port)
+                            saved = true
+                        },
+                        enabled = host.isNotBlank(),
+                    ) { Text("حفظ وتفعيل") }
+                } else {
+                    TextButton(
+                        onClick = {
+                            authStorage.clearLabelPrinter()
+                            host = ""
+                            saved = false
+                        },
+                    ) { Text("إيقاف") }
+                }
+            }
+        }
+    }
+}
 
 /**
  * Network (IP) thermal printer card — one target, so no device-picker list

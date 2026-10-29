@@ -18,10 +18,13 @@ import com.abooerp.dataentry.data.ShiftStatus
 import com.abooerp.dataentry.data.UpsertLedgerRowRequest
 import com.abooerp.dataentry.network.ApiService
 import com.abooerp.dataentry.printer.BluetoothPrinterManager
+import com.abooerp.dataentry.printer.LabelData
+import com.abooerp.dataentry.printer.LabelRenderer
 import com.abooerp.dataentry.printer.NetworkPrinterManager
 import com.abooerp.dataentry.printer.PrintResult
 import com.abooerp.dataentry.printer.ReceiptData
 import com.abooerp.dataentry.printer.ReceiptRenderer
+import com.abooerp.dataentry.printer.TsplLabelPrinter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -69,6 +72,7 @@ class ShiftViewModel(
     private val queueStorage: LedgerQueueStorage,
     private val printerManager: BluetoothPrinterManager,
     private val networkPrinterManager: NetworkPrinterManager,
+    private val labelPrinter: TsplLabelPrinter,
 ) : ViewModel() {
     private val timeFormat = SimpleDateFormat("HH:mm", Locale("ar"))
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
@@ -90,6 +94,35 @@ class ShiftViewModel(
     }
 
     private suspend fun printRow(row: LedgerRow) {
+        printReceipt(row)
+        printLabel(row)
+    }
+
+    /** The parcel label goes to its own label printer, independently of the
+     *  receipt: one row produces two documents on two devices, and a
+     *  failure on either must not stop the other. */
+    private suspend fun printLabel(row: LedgerRow) {
+        val host = authStorage.getLabelPrinterHost() ?: return
+        val data = LabelData(
+            companyName = COMPANY_NAME,
+            sourceLabel = "المصدر: ${authStorage.getBranchLabel() ?: "-"}",
+            dateTime = printTimeFormat.format(Date()),
+            receiptNo = row.receiptNo,
+            destination = row.destination,
+            parcelType = row.parcelType,
+            parcelCount = row.parcelCount,
+            weightKg = row.weightKg,
+            senderName = row.senderName,
+            senderPhone = "",
+            receiverName = row.receiverName,
+            receiverPhone = "",
+            notes = row.notes,
+        )
+        val result = labelPrinter.printLabel(host, authStorage.getLabelPrinterPort(), LabelRenderer.render(data))
+        if (result is PrintResult.Failure) _printError.value = result.message
+    }
+
+    private suspend fun printReceipt(row: LedgerRow) {
         // No printer configured yet is not an error — printing is opt-in
         // per device until every tablet has one, so we just skip silently.
         val isNetwork = authStorage.getPrinterType() == AuthStorage.PRINTER_TYPE_NETWORK
@@ -98,7 +131,7 @@ class ShiftViewModel(
         if (isNetwork && networkHost == null) return
         if (!isNetwork && bluetoothAddress == null) return
         val data = ReceiptData(
-            companyName = "شركة عبو المحمود لنقل والخدمات اللوجستية",
+            companyName = COMPANY_NAME,
             branchLabel = authStorage.getBranchLabel() ?: "-",
             employeeName = employeeName,
             dateTime = printTimeFormat.format(Date()),
@@ -597,9 +630,14 @@ class ShiftViewModel(
         private val queueStorage: LedgerQueueStorage,
         private val printerManager: BluetoothPrinterManager,
         private val networkPrinterManager: NetworkPrinterManager,
+        private val labelPrinter: TsplLabelPrinter,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            ShiftViewModel(employeeName, apiService, authStorage, queueStorage, printerManager, networkPrinterManager) as T
+            ShiftViewModel(employeeName, apiService, authStorage, queueStorage, printerManager, networkPrinterManager, labelPrinter) as T
+    }
+
+    companion object {
+        const val COMPANY_NAME = "شركة عبو المحمود لنقل والخدمات اللوجستية"
     }
 }

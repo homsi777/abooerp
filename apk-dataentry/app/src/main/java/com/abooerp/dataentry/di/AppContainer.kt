@@ -7,6 +7,7 @@ import com.abooerp.dataentry.network.ApiService
 import com.abooerp.dataentry.network.NetworkModule
 import com.abooerp.dataentry.printer.BluetoothPrinterManager
 import com.abooerp.dataentry.printer.NetworkPrinterManager
+import com.abooerp.dataentry.printer.TsplLabelPrinter
 
 class AppContainer(context: Context) {
     val authStorage: AuthStorage by lazy { AuthStorage(context) }
@@ -14,4 +15,5 @@ class AppContainer(context: Context) {
     val ledgerQueueStorage: LedgerQueueStorage by lazy { LedgerQueueStorage(context) }
     val printerManager: BluetoothPrinterManager by lazy { BluetoothPrinterManager(context) }
     val networkPrinterManager: NetworkPrinterManager by lazy { NetworkPrinterManager() }
+    val labelPrinter: TsplLabelPrinter by lazy { TsplLabelPrinter() }
 }

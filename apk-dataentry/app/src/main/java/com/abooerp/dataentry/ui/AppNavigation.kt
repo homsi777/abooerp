@@ -38,7 +38,7 @@ fun AppNavigation() {
     val shiftViewModel: ShiftViewModel = viewModel(
         factory = ShiftViewModel.Factory(
             employeeName, container.apiService, container.authStorage, container.ledgerQueueStorage,
-            container.printerManager, container.networkPrinterManager,
+            container.printerManager, container.networkPrinterManager, container.labelPrinter,
         ),
     )
 
@@ -85,6 +85,7 @@ fun AppNavigation() {
             PrinterSettingsScreen(
                 printerManager = container.printerManager,
                 networkPrinterManager = container.networkPrinterManager,
+                labelPrinter = container.labelPrinter,
                 authStorage = container.authStorage,
                 onBack = { navController.popBackStack() },
             )

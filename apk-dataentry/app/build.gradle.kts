@@ -13,8 +13,8 @@ android {
     applicationId = "com.abooerp.dataentry"
     minSdk = 24
     targetSdk = 36
-    versionCode = 32
-    versionName = "1.9.4"
+    versionCode = 33
+    versionName = "1.9.5"
     multiDexEnabled = true
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
