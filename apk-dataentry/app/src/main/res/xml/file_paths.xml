@@ -2,4 +2,6 @@
 <paths>
     <!-- Matches context.getExternalFilesDir(null) used in UpdateChecker.kt -->
     <external-files-path name="updates" path="." />
+    <!-- Receipt PDFs shared to WhatsApp — see ReceiptSharer.kt -->
+    <external-files-path name="receipts" path="receipts/" />
 </paths>

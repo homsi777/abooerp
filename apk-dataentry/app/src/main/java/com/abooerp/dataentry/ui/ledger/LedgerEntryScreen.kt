@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -31,6 +32,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -40,6 +42,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.abooerp.dataentry.data.LedgerRow
 import com.abooerp.dataentry.data.QueuedRowStatus
 import com.abooerp.dataentry.data.toWesternDigits
+import com.abooerp.dataentry.printer.ReceiptSharer
 import com.abooerp.dataentry.ui.shift.SaveRowState
 import com.abooerp.dataentry.ui.shift.ShiftViewModel
 
@@ -75,11 +78,24 @@ fun LedgerEntryScreen(
     var lastRateText by remember { mutableStateOf("") }
     var askingRate by remember { mutableStateOf(false) }
     var showRecords by remember { mutableStateOf(false) }
+    var shareError by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+
+    LaunchedEffect(shareError) {
+        shareError?.let {
+            snackbarHostState.showSnackbar(it)
+            shareError = null
+        }
+    }
 
     if (showRecords) {
         TodayRecordsSheet(
             rows = rows,
             onReprint = { viewModel.reprintRow(it) },
+            onShare = { row ->
+                val result = ReceiptSharer.shareAsPdf(context, viewModel.receiptDataFor(row))
+                if (result is ReceiptSharer.ShareResult.Failure) shareError = result.message
+            },
             onDismiss = { showRecords = false },
         )
     }
@@ -386,6 +402,7 @@ private fun NextField(
 private fun TodayRecordsSheet(
     rows: List<LedgerRow>,
     onReprint: (LedgerRow) -> Unit,
+    onShare: (LedgerRow) -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -408,7 +425,7 @@ private fun TodayRecordsSheet(
             } else {
                 LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
                     items(rows, key = { it.id }) { row ->
-                        CompactRowLine(row, onReprint = { onReprint(row) })
+                        CompactRowLine(row, onReprint = { onReprint(row) }, onShare = { onShare(row) })
                     }
                 }
             }
@@ -544,7 +561,7 @@ private fun CurrencyToggle(label: String, selected: Boolean, onClick: () -> Unit
 }
 
 @Composable
-private fun CompactRowLine(row: LedgerRow, onReprint: () -> Unit) {
+private fun CompactRowLine(row: LedgerRow, onReprint: () -> Unit, onShare: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -567,6 +584,9 @@ private fun CompactRowLine(row: LedgerRow, onReprint: () -> Unit) {
                     SyncStatusIcon(row.syncStatus)
                 }
                 Text(row.createdAt, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = onShare, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Default.Share, contentDescription = "مشاركة الإيصال عبر واتساب", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
             }
             IconButton(onClick = onReprint, modifier = Modifier.size(36.dp)) {
                 Icon(Icons.Default.Print, contentDescription = "إعادة طباعة الإيصال", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)

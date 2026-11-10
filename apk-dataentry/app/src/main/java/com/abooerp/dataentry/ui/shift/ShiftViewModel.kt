@@ -135,11 +135,24 @@ class ShiftViewModel(
         if (result is PrintResult.Failure) _printError.value = result.message
     }
 
+    /** The same receipt the printer gets — shared with the PDF sent to the
+     *  customer so the two can never drift apart. */
+    fun receiptDataFor(row: LedgerRow): ReceiptData = buildReceiptData(row)
+
     private suspend fun printReceipt(row: LedgerRow) {
         // No printer configured yet is not an error — printing is opt-in
         // per device until every tablet has one, so we just skip silently.
         val bluetoothAddress = authStorage.getPrinterAddress() ?: return
-        val data = ReceiptData(
+        val bitmap = ReceiptRenderer.render(buildReceiptData(row))
+        val result = printerManager.printBitmap(bluetoothAddress, bitmap)
+        when (result) {
+            is PrintResult.Failure -> _printError.value = result.message
+            PrintResult.Success -> {}
+        }
+    }
+
+    private fun buildReceiptData(row: LedgerRow): ReceiptData {
+        return ReceiptData(
             companyName = COMPANY_NAME,
             branchLabel = authStorage.getBranchLabel() ?: "-",
             employeeName = employeeName,
@@ -161,12 +174,6 @@ class ShiftViewModel(
             notes = row.notes,
             sypPayment = row.sypPayment,
         )
-        val bitmap = ReceiptRenderer.render(data)
-        val result = printerManager.printBitmap(bluetoothAddress, bitmap)
-        when (result) {
-            is PrintResult.Failure -> _printError.value = result.message
-            PrintResult.Success -> {}
-        }
     }
 
     private val _shiftError = MutableStateFlow<String?>(null)
