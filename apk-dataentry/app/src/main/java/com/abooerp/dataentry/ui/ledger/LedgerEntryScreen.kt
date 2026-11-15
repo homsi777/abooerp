@@ -91,6 +91,7 @@ fun LedgerEntryScreen(
     if (showRecords) {
         TodayRecordsSheet(
             rows = rows,
+            onRetryFailed = { viewModel.retryFailedRows() },
             onReprint = { viewModel.reprintRow(it) },
             onShare = { row ->
                 val result = ReceiptSharer.shareAsPdf(context, viewModel.receiptDataFor(row))
@@ -401,10 +402,12 @@ private fun NextField(
 @Composable
 private fun TodayRecordsSheet(
     rows: List<LedgerRow>,
+    onRetryFailed: () -> Unit,
     onReprint: (LedgerRow) -> Unit,
     onShare: (LedgerRow) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val failedCount = rows.count { it.syncStatus == QueuedRowStatus.FAILED }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
             Text(
@@ -413,6 +416,16 @@ private fun TodayRecordsSheet(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
+            if (failedCount > 0) {
+                Button(
+                    onClick = onRetryFailed,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                ) {
+                    Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("إعادة إرسال $failedCount سطر لم يصل للخادم", fontWeight = FontWeight.Bold)
+                }
+            }
             if (rows.isEmpty()) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(24.dp),

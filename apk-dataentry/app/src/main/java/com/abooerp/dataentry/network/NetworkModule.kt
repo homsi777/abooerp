@@ -30,6 +30,10 @@ object NetworkModule {
             .writeTimeout(20, TimeUnit.SECONDS)
             .addInterceptor(AuthInterceptor(authStorage))
             .addInterceptor(logging)
+            // Renews the session on a 401 and replays the request, instead
+            // of surfacing an error for every call once the access token
+            // ages out — see TokenAuthenticator.
+            .authenticator(TokenAuthenticator(authStorage, BASE_URL))
             .build()
         val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
         return Retrofit.Builder()

@@ -362,6 +362,33 @@ class ShiftViewModel(
         for (id in pendingIds) trySyncOne(id)
     }
 
+    /** 401/403: the session expired — the row is fine, the token was not.
+     *  408/429/5xx: the server could not answer right now. None of these
+     *  are the row's fault, so it stays queued and is retried. */
+    private fun isRetryable(code: Int): Boolean =
+        code == 401 || code == 403 || code == 408 || code == 429 || code >= 500
+
+    /**
+     * Pushes rows that an earlier build gave up on back into the queue.
+     *
+     * Rows stranded by the expired-session bug are real shipments the
+     * office never received; nothing is wrong with their data, so once the
+     * session works again they must get another chance rather than living
+     * only on this device.
+     */
+    fun retryFailedRows() {
+        viewModelScope.launch {
+            val failedIds = queue.filter { it.status == QueuedRowStatus.FAILED }.map { it.localId }
+            if (failedIds.isEmpty()) return@launch
+            queue = queue.map {
+                if (it.status == QueuedRowStatus.FAILED) it.copy(status = QueuedRowStatus.PENDING, lastError = null) else it
+            }
+            publishRows()
+            persistQueue()
+            for (id in failedIds) trySyncOne(id)
+        }
+    }
+
     fun openShift(openingUsd: Double, openingSyp: Double) {
         val branch = branchId
         val holder = userId
@@ -550,10 +577,18 @@ class ShiftViewModel(
                 markFailed(localId, response.error ?: "رفض الخادم حفظ السطر")
             }
         } catch (e: retrofit2.HttpException) {
-            // A real rejection (bad data, duplicate, etc.) — retrying won't
-            // help, so this needs the employee's attention, not the queue.
-            val body = e.response()?.errorBody()?.string()
-            markFailed(localId, "خطأ من الخادم (${e.code()}): ${body ?: "بدون تفاصيل"}")
+            // Only a genuine rejection of the DATA is permanent. An expired
+            // session, a rate limit or a server fault says nothing about
+            // the row and will succeed on a later attempt — marking those
+            // FAILED stranded real shipments on the device forever, which
+            // is exactly what happened when the session silently expired
+            // and every save came back 401.
+            if (isRetryable(e.code())) {
+                _saveState.value = SaveRowState.Idle
+            } else {
+                val body = e.response()?.errorBody()?.string()
+                markFailed(localId, "خطأ من الخادم (${e.code()}): ${body ?: "بدون تفاصيل"}")
+            }
         } catch (e: Exception) {
             // No signal / timeout — leave it PENDING, the loop will retry.
             // Not shown as an error: this is expected and not the

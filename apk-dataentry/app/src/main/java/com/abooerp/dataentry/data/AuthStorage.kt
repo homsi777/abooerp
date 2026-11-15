@@ -27,6 +27,16 @@ class AuthStorage(context: Context) {
     fun getAccessToken(): String? = sharedPreferences.getString("access_token", null)
     fun getRefreshToken(): String? = sharedPreferences.getString("refresh_token", null)
 
+    /** Drops the session only — printer settings, the reserved receipt
+     *  numbers and the offline row queue must survive, since the employee
+     *  simply logs in again and keeps working. */
+    fun clearTokens() {
+        sharedPreferences.edit()
+            .remove("access_token")
+            .remove("refresh_token")
+            .apply()
+    }
+
     fun saveEmployeeName(name: String) {
         sharedPreferences.edit().putString("employee_name", name).apply()
     }
