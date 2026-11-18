@@ -61,6 +61,12 @@ object ReceiptRenderer {
     private const val LAND_HEIGHT = EscPosRaster.PRINTER_DOTS_WIDTH
     private const val LAND_WIDTH = 1000
 
+    /** Company contact line, printed on every receipt right under the
+     *  company name so the customer always has a number to call. One
+     *  horizontal line to keep the header compact on a fixed-width head. */
+    private const val CONTACT_NUMBERS =
+        "أبو محمود 0944299280   -   أبو محمد عزوز 0956779493   -   عارف عبو 0935616129"
+
     private const val MARGIN = 14
     private const val BOX_PAD = 10
     private const val BOX_GAP = 10
@@ -71,8 +77,28 @@ object ReceiptRenderer {
         val companyPaint = textPaint(38f, bold = true)
         val metaPaint = textPaint(25f, bold = true)
         val codePaint = textPaint(30f, bold = true)
-        val linePaint = textPaint(25f, bold = true)
-        val finePaint = textPaint(18f, bold = false)
+        // One modest step up (+20%) on the approved sizes, not a free hand:
+        // the print head is a fixed ~72mm, so every point added to these
+        // lines is taken from the space the layout has left. Applied as a
+        // single ratio so the receipt keeps the proportions that were
+        // signed off rather than drifting into ad-hoc numbers.
+        //
+        // Covers what the customer actually reads — destination, goods,
+        // count, names, phones, money — and the long disclaimer. The QR
+        // keeps its approved size: it scans reliably as-is and enlarging it
+        // would eat exactly the room these lines now need.
+        val textScale = 1.2f
+        val linePaint = textPaint(25f * textScale, bold = true)
+        val finePaint = textPaint(18f * textScale, bold = false)
+        // The money box sits in the left column under the QR and was the
+        // one thing pushing the legal strip off the bottom of a fixed-width
+        // receipt, so it stays at the approved size while the rest grew —
+        // and then 10% under it, to stop the legal strip being crowded.
+        val moneyPaint = textPaint(25f * 0.9f, bold = true)
+        // Receiver block and the phone lines: 10% under the enlarged body
+        // text. Both phones use it, not just the receiver's, so the two
+        // address blocks still read as a matched pair.
+        val smallLinePaint = textPaint(25f * textScale * 0.9f, bold = true)
 
         val syp = data.sypPayment
         // When the customer paid in pounds, what they handed over leads and
@@ -97,6 +123,7 @@ object ReceiptRenderer {
         // ---- header ----
         var headerY = 6
         headerY = drawCentered(canvas, data.companyName, companyPaint, 0, LAND_WIDTH, headerY, 2)
+        headerY = drawCentered(canvas, CONTACT_NUMBERS, metaPaint, 0, LAND_WIDTH, headerY, 2)
         headerY = drawCentered(
             canvas,
             "إيصال استلام بضاعة  -  ${data.branchLabel}  -  ${data.dateTime}",
@@ -126,9 +153,10 @@ object ReceiptRenderer {
                 "المرسل: ${data.senderName}",
                 data.senderPhone.takeIf { it.isNotBlank() }?.let { "الهاتف: $it" },
             ),
+            secondaryPaint = smallLinePaint,
         )
         rightY = drawBox(
-            canvas, border, linePaint, rightX, RIGHT_COL_WIDTH, rightY,
+            canvas, border, smallLinePaint, rightX, RIGHT_COL_WIDTH, rightY,
             listOfNotNull(
                 "المستلم: ${data.receiverName}",
                 data.receiverPhone.takeIf { it.isNotBlank() }?.let { "الهاتف: $it" },
@@ -158,27 +186,34 @@ object ReceiptRenderer {
         leftY += qrPixels + 8
 
         leftY = drawBox(
-            canvas, border, linePaint, leftX, leftWidth, leftY,
+            canvas, border, moneyPaint, leftX, leftWidth, leftY,
+            // Paired two to a line rather than one each: four separate
+            // lines made the box tall enough to crowd the legal strip
+            // pinned below it. A pounds payment prints a longer value and
+            // simply wraps, which costs a line only on those receipts.
             listOfNotNull(
-                "تحصيل: ${money(data.collectAmount, syp?.collectAmount)}",
-                "دفع مسبق: ${money(data.prepaidAmount, syp?.prepaidAmount)}",
-                "حوالة: ${money(data.hawalaAmount, syp?.hawalaAmount)}",
-                "أجرة الحوالة: ${money(data.hawalaFee, syp?.hawalaFee)}",
+                "تحصيل: ${money(data.collectAmount, syp?.collectAmount)}    دفع مسبق: ${money(data.prepaidAmount, syp?.prepaidAmount)}",
+                "حوالة: ${money(data.hawalaAmount, syp?.hawalaAmount)}    أجرة الحوالة: ${money(data.hawalaFee, syp?.hawalaFee)}",
                 syp?.let { "سعر الصرف: ${trimmed(it.rate)} ل.س لكل 1 USD" },
             ),
         )
 
+        // Employee line only. The row's notes are deliberately NOT printed
+        // here: stacked above the fixed legal strip they left the bottom of
+        // the receipt cramped, and the note already travels where it is
+        // actually needed — on the parcel label stuck to the goods.
         leftY = drawCentered(canvas, "الموظف: ${data.employeeName}", finePaint, leftX, leftWidth, leftY, 2)
-        if (data.notes.isNotBlank()) {
-            leftY = drawCentered(canvas, "ملاحظات: ${data.notes}", finePaint, leftX, leftWidth, leftY, 2)
-        }
 
         // ---- fixed legal disclaimer, full width along the bottom ----
         val disclaimer =
             "الشحن غير مسؤول عن فقدان البضاعة بالقوة القاهرة وقوة السلاح والحريق وعن الكسر والزربان" +
                 "  -  لسنا مسؤولين عن فقدان بضاعة داخل الطرد"
         val disclaimerLayout = layoutOf(disclaimer, finePaint, LAND_WIDTH - 2 * MARGIN)
-        val disclaimerY = (LAND_HEIGHT - disclaimerLayout.height - 4).coerceAtLeast(maxOf(rightY, leftY))
+        // Pinned to the bottom band, never pushed past it. Letting content
+        // shove it down meant that once the columns grew, the legal strip
+        // was drawn off the edge of a fixed-height canvas and simply never
+        // printed — and this text is the one line that must always appear.
+        val disclaimerY = (LAND_HEIGHT - disclaimerLayout.height - 4).coerceAtLeast(0)
         canvas.save()
         canvas.translate(MARGIN.toFloat(), disclaimerY.toFloat())
         disclaimerLayout.draw(canvas)
@@ -222,10 +257,14 @@ object ReceiptRenderer {
         width: Int,
         y: Int,
         lines: List<String>,
+        /** Applied to every line after the first — lets a block show its
+         *  name at full size with the phone under it a step smaller. */
+        secondaryPaint: TextPaint? = null,
     ): Int {
         var innerY = y + BOX_PAD
-        for (line in lines) {
-            innerY = drawCentered(canvas, line, linePaint, x, width, innerY, 2)
+        for ((index, line) in lines.withIndex()) {
+            val paint = if (index == 0) linePaint else (secondaryPaint ?: linePaint)
+            innerY = drawCentered(canvas, line, paint, x, width, innerY, 2)
         }
         val boxEnd = innerY + BOX_PAD
         canvas.drawRect(x.toFloat(), y.toFloat(), (x + width).toFloat(), boxEnd.toFloat(), border)

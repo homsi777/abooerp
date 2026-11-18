@@ -6,8 +6,15 @@ const DAILY_LEDGER_MANAGER_VIEW_ROLES = new Set([
   'shipment_auditor',
 ]);
 
-/** مدخل البيانات فقط: يرى إدخالاته ويُقفل فرعه */
-export const DAILY_LEDGER_SCOPED_OPERATOR_ROLES = new Set(['data_entry']);
+/**
+ * مدخل البيانات فقط: يرى إدخالاته ويُقفل فرعه.
+ *
+ * 'data_entry_mobile' (دور تطبيق التابلت) كان ناقصاً هنا، فكان كل موظف
+ * تابلت يرى سطور زملائه كلهم — بما فيها مبالغ التحصيل والحوالات. الحصر
+ * بالمالك يسري على أسطر الدفتر فقط؛ شاشة الاستلام/التسليم تبقى خارج هذا
+ * الحصر عمداً لأن وكيل الوجهة لا بد أن يمسح طرداً أدخله موظف آخر.
+ */
+export const DAILY_LEDGER_SCOPED_OPERATOR_ROLES = new Set(['data_entry', 'data_entry_mobile']);
 
 export const DAILY_LEDGER_VIEW_ALL_PERMISSION = 'daily_ledger.view_all_entries';
 export const DAILY_LEDGER_EXPORT_PDF_PERMISSION = 'daily_ledger.export_pdf';

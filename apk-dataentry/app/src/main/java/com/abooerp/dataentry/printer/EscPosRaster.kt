@@ -81,7 +81,11 @@ object EscPosRaster {
             chunks += PrintChunk(header + band, chunkHeight)
             y += chunkHeight
         }
-        chunks += PrintChunk(byteArrayOf(0x1B, 0x64, 0x01), 1) // minimal feed so the receipt clears the cutter
+        // Feed enough that the last printed line clears the tear bar. One
+        // line was not enough on the real unit: printing stopped with the
+        // bottom of the receipt still inside the printer, so it could not
+        // be torn off without losing the last rows.
+        chunks += PrintChunk(byteArrayOf(0x1B, 0x64, 0x05), 5)
         return chunks
     }
 }
