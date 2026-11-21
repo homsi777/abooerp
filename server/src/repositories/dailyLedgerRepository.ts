@@ -583,6 +583,8 @@ export class DailyLedgerRepository {
             or coalesce(r.sender_name,'') ilike ${qp}
             or coalesce(r.receiver_name,'') ilike ${qp}
             or coalesce(r.notes,'') ilike ${qp}
+            or coalesce(cu.full_name,'') ilike ${qp}
+            or coalesce(cu.username,'') ilike ${qp}
           )`,
         );
       } else {
@@ -598,6 +600,8 @@ export class DailyLedgerRepository {
               or coalesce(r.sender_name,'') ilike ${qp}
               or coalesce(r.receiver_name,'') ilike ${qp}
               or coalesce(r.notes,'') ilike ${qp}
+              or coalesce(cu.full_name,'') ilike ${qp}
+              or coalesce(cu.username,'') ilike ${qp}
             )`,
           );
         }
