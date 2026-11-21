@@ -67,6 +67,8 @@ interface ApiService {
         @Query("dateTo") dateTo: String,
         @Query("lineLabel") lineLabel: String? = null,
         @Query("limit") limit: Int = 500,
+        /** "incoming" = rows headed to this branch's city (read-only). */
+        @Query("direction") direction: String? = null,
     ): ApiResponse<List<LedgerRowRemote>>
 
     // Real, existing endpoint (same one the desktop accountant screen

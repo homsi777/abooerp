@@ -198,10 +198,6 @@ object ReceiptRenderer {
             ),
         )
 
-        // Employee line only. The row's notes are deliberately NOT printed
-        // here: stacked above the fixed legal strip they left the bottom of
-        // the receipt cramped, and the note already travels where it is
-        // actually needed — on the parcel label stuck to the goods.
         leftY = drawCentered(canvas, "الموظف: ${data.employeeName}", finePaint, leftX, leftWidth, leftY, 2)
 
         // ---- fixed legal disclaimer, full width along the bottom ----
@@ -209,11 +205,35 @@ object ReceiptRenderer {
             "الشحن غير مسؤول عن فقدان البضاعة بالقوة القاهرة وقوة السلاح والحريق وعن الكسر والزربان" +
                 "  -  لسنا مسؤولين عن فقدان بضاعة داخل الطرد"
         val disclaimerLayout = layoutOf(disclaimer, finePaint, LAND_WIDTH - 2 * MARGIN)
+        val disclaimerY = (LAND_HEIGHT - disclaimerLayout.height - 4).coerceAtLeast(0)
+
+        // The employee's notes, printed under the employee line. They get
+        // only the room left above the legal strip (cut with "…" if they
+        // run longer) so a long note can never push the disclaimer off the
+        // edge — that text must always print.
+        if (data.notes.isNotBlank()) {
+            val notesText = "ملاحظات: ${data.notes.trim()}"
+            val lineHeight = layoutOf("ملاحظات", finePaint, leftWidth).height.coerceAtLeast(1)
+            val fitLines = ((disclaimerY - 4 - leftY) / lineHeight).coerceAtLeast(1)
+            val notesLayout = StaticLayout.Builder.obtain(notesText, 0, notesText.length, finePaint, leftWidth)
+                .setAlignment(Layout.Alignment.ALIGN_CENTER)
+                .setTextDirection(TextDirectionHeuristics.RTL)
+                .setLineSpacing(0f, 1f)
+                .setIncludePad(false)
+                .setMaxLines(fitLines)
+                .setEllipsize(android.text.TextUtils.TruncateAt.END)
+                .build()
+            canvas.save()
+            canvas.translate(leftX.toFloat(), leftY.toFloat())
+            notesLayout.draw(canvas)
+            canvas.restore()
+            leftY += notesLayout.height + 2
+        }
+
         // Pinned to the bottom band, never pushed past it. Letting content
         // shove it down meant that once the columns grew, the legal strip
         // was drawn off the edge of a fixed-height canvas and simply never
         // printed — and this text is the one line that must always appear.
-        val disclaimerY = (LAND_HEIGHT - disclaimerLayout.height - 4).coerceAtLeast(0)
         canvas.save()
         canvas.translate(MARGIN.toFloat(), disclaimerY.toFloat())
         disclaimerLayout.draw(canvas)

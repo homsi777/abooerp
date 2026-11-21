@@ -89,6 +89,16 @@ class ParcelScanViewModel(private val apiService: ApiService) : ViewModel() {
      *  showing a raw network error. */
     private fun friendly(e: Exception): String {
         val message = e.message ?: ""
+        // The server explains a refusal in Arabic (e.g. the parcel belongs to
+        // other branches) — show that instead of "HTTP 403".
+        if (e is retrofit2.HttpException) {
+            val serverText = try {
+                org.json.JSONObject(e.response()?.errorBody()?.string() ?: "").optString("error")
+            } catch (_: Exception) {
+                ""
+            }
+            if (serverText.isNotBlank()) return serverText
+        }
         return when {
             message.contains("Unable to resolve host", true) ||
                 message.contains("timeout", true) ||

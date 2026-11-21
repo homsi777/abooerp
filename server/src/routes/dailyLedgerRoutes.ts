@@ -15,6 +15,7 @@ import {
   isDailyLedgerScopedOperator,
 } from '../utils/dailyLedgerAccess.js';
 import { parseDataScope } from '../utils/scope.js';
+import { resolveBranchVisibility } from '../utils/branchVisibility.js';
 import { DailyLedgerService } from '../services/dailyLedgerService.js';
 import type { DailyLedgerTransferService } from '../services/dailyLedgerTransferService.js';
 import { appendQuickLedgerClientLogs } from '../services/quickLedgerLogService.js';
@@ -104,6 +105,8 @@ export function createDailyLedgerRouter(
         includeLoaded: z.coerce.boolean().optional(),
         onlyWithData: z.coerce.boolean().optional(),
         allBranches: z.coerce.boolean().optional(),
+        /** outgoing (الافتراضي): ما أدخله فرعي — incoming: وارد إلى مدينة فرعي، للقراءة فقط */
+        direction: z.enum(['outgoing', 'incoming']).optional(),
         q: z.string().optional(),
         receiptNo: z.string().optional(),
         parcelType: z.string().optional(),
@@ -116,6 +119,32 @@ export function createDailyLedgerRouter(
       const permissions = getRequestPermissions(req);
       const viewAllEntries = canViewAllDailyLedgerEntries(roleCode, userType, permissions);
       const wantsAllBranches = q.allBranches === true;
+
+      if (q.direction === 'incoming') {
+        const visibility = await resolveBranchVisibility(req);
+        // مدير الشركة العام يرى كل شيء في العرض العادي — لا معنى للوارد عنده.
+        const incomingRows = visibility.companyWide
+          ? []
+          : await service.listRows(scope, {
+              incomingVisibility: visibility,
+              ledgerDate: q.ledgerDate,
+              dateFrom: q.dateFrom,
+              dateTo: q.dateTo,
+              lineLabel: q.lineLabel,
+              includeLoaded: true,
+              onlyWithData: q.onlyWithData,
+              q: q.q,
+              receiptNo: q.receiptNo,
+              parcelType: q.parcelType,
+              senderName: q.senderName,
+              receiverName: q.receiverName,
+              limit: q.limit ?? 250,
+              offset: q.offset ?? 0,
+            });
+        res.setHeader('X-Daily-Ledger-View-Scope', 'incoming');
+        res.json({ success: true, data: incomingRows });
+        return;
+      }
 
       if (wantsAllBranches && !viewAllEntries) {
         res.status(403).json({

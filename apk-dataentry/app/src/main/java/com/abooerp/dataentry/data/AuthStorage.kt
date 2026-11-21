@@ -34,8 +34,15 @@ class AuthStorage(context: Context) {
         sharedPreferences.edit()
             .remove("access_token")
             .remove("refresh_token")
+            .remove("role")
             .apply()
     }
+
+    fun saveRole(role: String?) {
+        sharedPreferences.edit().putString("role", role).apply()
+    }
+    /** True for the read-only "مدير — تطبيق أندرويد" account. */
+    fun isManager(): Boolean = sharedPreferences.getString("role", null) == "manager_mobile"
 
     fun saveEmployeeName(name: String) {
         sharedPreferences.edit().putString("employee_name", name).apply()

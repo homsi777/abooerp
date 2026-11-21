@@ -117,6 +117,7 @@ import QuickLedgerDispatchSaveLogPanel from '../components/shipping/QuickLedgerD
 import QuickLedgerPostSavePrintPrompt from '../components/shipping/QuickLedgerPostSavePrintPrompt';
 import QuickLedgerGlobalSearchModal from '../components/shipping/QuickLedgerGlobalSearchModal';
 import QuickLedgerDuplicateRowsModal from '../components/shipping/QuickLedgerDuplicateRowsModal';
+import QuickLedgerIncomingModal from '../components/shipping/QuickLedgerIncomingModal';
 import ShippingSyncIndicator from '../components/shipping/ShippingSyncIndicator';
 import {
   mergeLedgerRowWithAutoTariff,
@@ -152,6 +153,8 @@ type LedgerRow = {
   collectManual?: boolean;
   agentId?: number;
   agentName?: string;
+  /** المستخدم الذي أدخل السطر — للعرض فقط، يأتي من الخادم */
+  createdByName?: string;
   notes: string;
   branchBackendId?: string;
   branchLabel?: string;
@@ -960,6 +963,7 @@ export default function ShipmentQuickLedger() {
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [globalSearchSeed, setGlobalSearchSeed] = useState('');
   const [duplicatesOpen, setDuplicatesOpen] = useState(false);
+  const [incomingOpen, setIncomingOpen] = useState(false);
   const [destinationSort, setDestinationSort] = useState<'none' | 'asc' | 'desc'>('none');
   const [pageSearchQuery, setPageSearchQuery] = useState('');
 
@@ -1047,7 +1051,7 @@ export default function ShipmentQuickLedger() {
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
   /** حد أعلى آمن لعدد الأعمدة — يُستخدم فقط لـ colSpan على أسطر الحشو غير المرئية (لا حدود/بلا محتوى) */
-  const columnCount = 16;
+  const columnCount = 17;
 
   const deletableVisibleRows = useMemo(
     () => visibleRows.filter(isRowDeletable),
@@ -1431,6 +1435,7 @@ export default function ShipmentQuickLedger() {
       parseUsd(String(remote.collect_amount_usd ?? '')) > 0 || parseUsd(String(remote.fees_amount_usd ?? '')) > 0,
     agentId: undefined,
     agentName: '',
+    createdByName: remote.created_by_name ?? '',
     notes: remote.notes ?? '',
     branchBackendId: remote.branch_id,
     branchLabel: resolveBranchLabelFromList(branches, remote.branch_id),
@@ -1448,7 +1453,13 @@ export default function ShipmentQuickLedger() {
   /** Keep the top stats bar and print hub in sync immediately after a successful upsert. */
   const mergeSavedRemoteRow = (saved: RemoteDailyLedgerRow) => {
     setRemoteRowsRaw((prev) => {
-      const next = [...prev.filter((row) => row.id !== saved.id), saved];
+      // The upsert response carries no joined user name; the saver is the
+      // current user, so keep the name of an already-known row or use theirs.
+      const known = prev.find((row) => row.id === saved.id);
+      const withName: RemoteDailyLedgerRow = saved.created_by_name
+        ? saved
+        : { ...saved, created_by_name: known?.created_by_name ?? userRef.current?.username ?? null };
+      const next = [...prev.filter((row) => row.id !== saved.id), withName];
       const printableCount = filterPrintableDailyLedgerRows(next).length;
       queueMicrotask(() => setRemoteSyncedCount(printableCount));
       return next;
@@ -4433,6 +4444,14 @@ export default function ShipmentQuickLedger() {
             ) : null}
             <button
               type="button"
+              onClick={() => setIncomingOpen(true)}
+              title="شحنات أدخلتها فروع أخرى ووجهتها مدينة فرعك — للقراءة فقط"
+            >
+              <FileText size={16} />
+              واردة إلى فرعي
+            </button>
+            <button
+              type="button"
               onClick={() => setDuplicatesOpen(true)}
               title="فحص إيصالات مكررة — نفس اليوم أو عبر التواريخ"
             >
@@ -4822,6 +4841,7 @@ export default function ShipmentQuickLedger() {
                 </th>
               )}
               <th className="col-receipt">رقم الإيصال</th>
+              <th className="col-created-by" title="المستخدم الذي أدخل هذا السطر (مثلاً موظف إدخال البيانات على الأندرويد)">المستخدم</th>
               <th className="notes col-notes">ملاحظات</th>
               <th className="col-goods-price" title="يُحسب تلقائياً من تسعير البضائع (المالية ← تسعير البضائع)؛ يمكن تعديله يدوياً">سعر الوحدة</th>
               <th className="col-goods-total">الإجمالي</th>
@@ -5077,6 +5097,9 @@ export default function ShipmentQuickLedger() {
                       title={rowIssue ?? (duplicateReceiptRowIds.has(row.id) ? 'رقم الإيصال مكرر' : undefined)}
                     />
                   </td>
+                  <td className="col-created-by" title={row.createdByName || undefined}>
+                    {row.createdByName || ''}
+                  </td>
                   <td className="col-notes">
                     <input
                       data-ledger-field="true"
@@ -5177,6 +5200,7 @@ export default function ShipmentQuickLedger() {
         branches={branches}
         onSelectRow={(row) => void handleGlobalSearchSelect(row)}
       />
+      <QuickLedgerIncomingModal open={incomingOpen} onClose={() => setIncomingOpen(false)} />
       <QuickLedgerDuplicateRowsModal
         open={duplicatesOpen}
         onClose={() => setDuplicatesOpen(false)}

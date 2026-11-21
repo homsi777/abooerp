@@ -4,6 +4,7 @@ import { resolveDriverIdByLabel } from '../utils/dailyLedgerDriverMatch.js';
 import { HttpError } from '../utils/errors.js';
 import type { DataScope } from '../utils/scope.js';
 import { appendAgentPrintDocumentScope } from '../utils/agentDocumentationScope.js';
+import { incomingRowCondition, type BranchVisibility } from '../utils/branchVisibility.js';
 import { resolveFleetFromDispatchDefinition } from './dailyLedgerDispatchRepository.js';
 
 function normalizeLedgerReceiptNo(value: string | null | undefined): string {
@@ -318,6 +319,10 @@ export type DailyLedgerRow = {
 };
 
 export type DailyLedgerRowWithSession = DailyLedgerRow & {
+  /** اسم المستخدم الذي أدخل السطر (join على users.created_by) */
+  created_by_name?: string | null;
+  /** اسم فرع المصدر (جلسة الدفتر) — يفيد في تبويب الواردة */
+  source_branch_name?: string | null;
   session_id: string;
   branch_id: string;
   ledger_date: string;
@@ -346,6 +351,11 @@ export interface DailyLedgerRowListFilters {
   onlyWithData?: boolean;
   /** عند مدخل البيانات: يُقيّد العرض بأسطر هذا المستخدم فقط */
   createdByUserId?: string;
+  /**
+   * عرض الأسطر **الواردة** إلى هذا المستخدم (وجهتها مدينة فرعه ومصدرها فرع
+   * آخر) — للقراءة فقط. عند تفعيله يُهمل branchId وcreatedByUserId.
+   */
+  incomingVisibility?: BranchVisibility;
   q?: string;
   receiptNo?: string;
   parcelType?: string;
@@ -500,7 +510,9 @@ export class DailyLedgerRepository {
       values.push(scope.companyId);
       conditions.push(`s.company_id = $${values.length}`);
     }
-    if (filters.branchId) {
+    if (filters.incomingVisibility) {
+      conditions.push(incomingRowCondition(filters.incomingVisibility, values));
+    } else if (filters.branchId) {
       values.push(filters.branchId);
       conditions.push(`s.branch_id = $${values.length}`);
     }
@@ -528,7 +540,7 @@ export class DailyLedgerRepository {
       values.push(filters.vehicleId);
       conditions.push(`s.vehicle_id = $${values.length}::uuid`);
     }
-    if (filters.createdByUserId) {
+    if (filters.createdByUserId && !filters.incomingVisibility) {
       values.push(filters.createdByUserId);
       conditions.push(`r.created_by = $${values.length}::uuid`);
     }
@@ -643,10 +655,12 @@ export class DailyLedgerRepository {
         r.line_total_usd,
         r.price_source,
         r.created_by,
+        coalesce(nullif(btrim(cu.full_name), ''), cu.username) as created_by_name,
         r.updated_by,
         r.created_at,
         r.updated_at,
         s.branch_id,
+        (select bb.name from branches bb where bb.id = s.branch_id) as source_branch_name,
         s.ledger_date,
         s.line_label,
         s.origin_label,
@@ -661,6 +675,7 @@ export class DailyLedgerRepository {
         d.dispatch_no
       from daily_ledger_rows r
       join daily_ledger_sessions s on s.id = r.session_id
+      left join users cu on cu.id = r.created_by
       left join daily_ledger_dispatch_definitions d
         on d.id = r.dispatch_id and d.deleted_at is null
       where ${conditions.join(' and ')}

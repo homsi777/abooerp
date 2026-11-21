@@ -15,6 +15,10 @@ export type RemoteDailyLedgerRow = {
   fees_amount_usd: string;
   transfer_service_fee_usd: string;
   notes: string | null;
+  /** اسم من أدخل السطر (المستخدم) */
+  created_by_name?: string | null;
+  /** اسم فرع المصدر — يُرجعه السيرفر في قائمة الأسطر */
+  source_branch_name?: string | null;
   posted_shipment_id: string | null;
   posted_at: string | null;
   loaded_manifest_id: string | null;

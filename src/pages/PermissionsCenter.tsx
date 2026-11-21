@@ -64,7 +64,7 @@ const simplifiedUserTypeChoices: Array<{ value: UserType; label: string }> = [
   { value: 'viewer', label: 'مشاهدة فقط' },
 ];
 
-const mainRoleCodes = new Set(['admin', 'agent_user', 'accountant', 'data_entry', 'data_entry_mobile', 'shipment_auditor', 'viewer']);
+const mainRoleCodes = new Set(['admin', 'agent_user', 'accountant', 'data_entry', 'data_entry_mobile', 'manager_mobile', 'shipment_auditor', 'viewer']);
 const legacyRoleCodes = new Set(['general_manager', 'branch_manager', 'field_accountant']);
 
 const categoryOrder = [

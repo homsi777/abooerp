@@ -4433,6 +4433,18 @@ body {
   min-width: 140px;
 }
 
+.quick-ledger-table th.col-created-by,
+.quick-ledger-table td.col-created-by {
+  width: 110px;
+  min-width: 90px;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 12px;
+}
+
 .quick-ledger-table td.col-notes input {
   text-align: right;
 }

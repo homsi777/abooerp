@@ -43,6 +43,7 @@ const val TABLET_INTAKE_LINE_LABEL = "استلام تابلت"
 
 /** How often the background loop retries anything still stuck PENDING. */
 private const val AUTO_SYNC_INTERVAL_MS = 20_000L
+private const val DUPLICATE_SAVE_WINDOW_MS = 3_000L
 
 sealed class SaveRowState {
     object Idle : SaveRowState()
@@ -457,6 +458,20 @@ class ShiftViewModel(
             _saveState.value = SaveRowState.Error("تعذر تحديد الفرع — سجّلي الدخول من جديد.")
             return
         }
+        // Double-tap / repeated-event guard. addRow runs on the main thread,
+        // so this check-and-set is atomic: an identical save arriving within
+        // a few seconds of the last one is the same tap delivered twice, not
+        // a second shipment — it would otherwise burn a receipt number, store
+        // a duplicate row and print it again.
+        val signature = listOf(
+            destination, parcelType, parcelCount, weightKg, collectAmount, hawalaAmount, hawalaFee,
+            prepaidAmount, senderName, senderPhone, receiverName, receiverPhone, notes, currencyCode,
+        ).joinToString("|")
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (signature == lastSaveSignature && now - lastSaveAt < DUPLICATE_SAVE_WINDOW_MS) return
+        lastSaveSignature = signature
+        lastSaveAt = now
+
         viewModelScope.launch {
             // Allocated before anything else: without a unique number there
             // is no QR to print, and the whole receive/deliver flow depends
@@ -564,6 +579,9 @@ class ShiftViewModel(
             trySyncOne(queuedRow.localId)
         }
     }
+
+    private var lastSaveSignature: String? = null
+    private var lastSaveAt = 0L
 
     private suspend fun trySyncOne(localId: String) {
         val row = queue.find { it.localId == localId && it.status == QueuedRowStatus.PENDING } ?: return

@@ -342,8 +342,10 @@ private fun QuickEntryStrip(
                     onValueChange = { notes = it },
                     label = { Text("ملاحظات (اختياري)") },
                     modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { if (valid) save() }),
+                    // Enter inserts a new line; saving is only via the Save button.
+                    minLines = 2,
+                    maxLines = 5,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                 )
 
                 Button(
@@ -589,6 +591,13 @@ private fun CompactRowLine(row: LedgerRow, onReprint: () -> Unit, onShare: () ->
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (row.senderPhone.isNotBlank() || row.receiverPhone.isNotBlank()) {
+                Text(
+                    "${row.senderPhone.ifBlank { "-" }} → ${row.receiverPhone.ifBlank { "-" }}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(horizontalAlignment = Alignment.End) {

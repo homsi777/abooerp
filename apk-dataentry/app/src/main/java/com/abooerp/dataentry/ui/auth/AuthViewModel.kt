@@ -40,6 +40,7 @@ class AuthViewModel(
                     authStorage.saveTokens(response.data.session.accessToken, response.data.session.refreshToken)
                     authStorage.saveEmployeeName(response.data.user.fullName ?: response.data.user.username)
                     authStorage.saveUserId(response.data.user.id)
+                    authStorage.saveRole(response.data.user.role)
                     val branchId = response.data.user.branchId
                     if (branchId != null) {
                         val branchLabel = try {

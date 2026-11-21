@@ -13,6 +13,8 @@ import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
@@ -32,6 +34,13 @@ sealed class PrintResult {
  */
 class BluetoothPrinterManager(private val context: Context) {
 
+    // One job on the wire at a time. Two saves in quick succession (or a
+    // save plus a reprint) used to open two sockets at once and interleave
+    // their bytes: the printer lost its place in the raster stream and
+    // printed the remainder as text — the "Chinese characters" and the
+    // cut-off / repeated receipts.
+    private val printLock = Mutex()
+
     fun hasBluetoothPermission(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
         return ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
@@ -48,11 +57,15 @@ class BluetoothPrinterManager(private val context: Context) {
     }
 
     suspend fun printBitmap(macAddress: String, bitmap: Bitmap): PrintResult = withContext(Dispatchers.IO) {
-        if (!hasBluetoothPermission()) return@withContext PrintResult.Failure("صلاحية البلوتوث غير مفعّلة")
+        printLock.withLock { printBitmapLocked(macAddress, bitmap) }
+    }
+
+    private suspend fun printBitmapLocked(macAddress: String, bitmap: Bitmap): PrintResult {
+        if (!hasBluetoothPermission()) return PrintResult.Failure("صلاحية البلوتوث غير مفعّلة")
         val adapter = BluetoothAdapter.getDefaultAdapter()
-            ?: return@withContext PrintResult.Failure("لا يوجد بلوتوث على هذا الجهاز")
+            ?: return PrintResult.Failure("لا يوجد بلوتوث على هذا الجهاز")
         var socket: BluetoothSocket? = null
-        try {
+        return try {
             val device = adapter.getRemoteDevice(macAddress)
             socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
             // No cancelDiscovery() call — we never scan for devices (only
@@ -72,6 +85,11 @@ class BluetoothPrinterManager(private val context: Context) {
                 val waitMs = if (chunk.rows > 0) (chunk.rows * 4L).coerceAtLeast(40L) else 30L
                 delay(waitMs)
             }
+            // Closing the socket right after the last write cut the tail
+            // off: the data was still sitting in the printer's buffer. Let
+            // it drain before disconnecting, and leave a gap before the
+            // next job can connect.
+            delay(1200)
             PrintResult.Success
         } catch (e: IOException) {
             PrintResult.Failure("تعذر الاتصال بالطابعة: ${e.message ?: "تأكدي أنها مُشغّلة وقريبة"}")

@@ -157,6 +157,10 @@ export function createAuthRouter(service: AuthService) {
       if (data.user.role === 'data_entry_mobile' && !isAllowedMobileClient(req)) {
         throw new HttpError(403, 'هذا الحساب مخصص لتطبيق إدخال البيانات على الأندرويد فقط.');
       }
+      // "مدير — تطبيق أندرويد": نفس الحصر — حساب مخصص للتطبيق فقط.
+      if (data.user.role === 'manager_mobile' && !isAllowedMobileClient(req)) {
+        throw new HttpError(403, 'هذا الحساب مخصص لتطبيق الأندرويد فقط.');
+      }
       // "سائق — تطبيق أندرويد" نفس المنطق تماماً: حساب ضيّق الصلاحيات مخصص
       // لتطبيق السائق فقط، يُرفض إن استُخدم من المتصفح/سطح المكتب.
       if (data.user.role === 'driver_mobile' && !isAllowedMobileClient(req)) {

@@ -28,6 +28,8 @@ data class UserData(
     val fullName: String?,
     val userType: String,
     val branchId: String? = null,
+    /** Role code from the server, e.g. "manager_mobile" or "data_entry_mobile". */
+    val role: String? = null,
 )
 
 @JsonClass(generateAdapter = false)
@@ -110,6 +112,9 @@ data class LedgerRowRemote(
     @com.squareup.moshi.Json(name = "transfer_service_fee_usd") val transferServiceFeeUsd: String?,
     val notes: String?,
     @com.squareup.moshi.Json(name = "created_at") val createdAt: String?,
+    @com.squareup.moshi.Json(name = "created_by") val createdBy: String? = null,
+    @com.squareup.moshi.Json(name = "created_by_name") val createdByName: String? = null,
+    @com.squareup.moshi.Json(name = "source_branch_name") val sourceBranchName: String? = null,
 )
 
 // Field order mirrors the real desktop ledger table exactly (server of

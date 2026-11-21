@@ -32,7 +32,11 @@ fun AppNavigation() {
     val container = (context.applicationContext as DataEntryApplication).container
     val authViewModel: AuthViewModel = viewModel(factory = AuthViewModel.Factory(container.apiService, container.authStorage))
 
-    val startDestination = if (container.authStorage.getAccessToken() != null) ShiftDashboardRoute else LoginRoute
+    // The manager account has no shift/ledger entry: it lands straight on the
+    // records screen, which is where it can browse and export every
+    // employee's rows.
+    val homeRoute: Any = if (container.authStorage.isManager()) HistoryRoute else ShiftDashboardRoute
+    val startDestination: Any = if (container.authStorage.getAccessToken() != null) homeRoute else LoginRoute
     val navController = rememberNavController()
 
     UpdateGate(container.apiService)
@@ -50,7 +54,8 @@ fun AppNavigation() {
             LoginScreen(
                 viewModel = authViewModel,
                 onLoginSuccess = {
-                    navController.navigate(ShiftDashboardRoute) {
+                    val target: Any = if (container.authStorage.isManager()) HistoryRoute else ShiftDashboardRoute
+                    navController.navigate(target) {
                         popUpTo(LoginRoute) { inclusive = true }
                     }
                 },
@@ -82,7 +87,14 @@ fun AppNavigation() {
             ShipmentHistoryScreen(
                 apiService = container.apiService,
                 authStorage = container.authStorage,
+                queueStorage = container.ledgerQueueStorage,
                 onBack = { navController.popBackStack() },
+                onLogout = {
+                    authViewModel.logout()
+                    navController.navigate(LoginRoute) {
+                        popUpTo(navController.graph.id) { inclusive = true }
+                    }
+                },
             )
         }
         composable<ParcelScanRoute> {

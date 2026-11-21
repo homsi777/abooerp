@@ -4,6 +4,7 @@ import { asyncHandler } from '../utils/http.js';
 import { requirePermissions } from '../middleware/authorization.js';
 import { HttpError } from '../utils/errors.js';
 import { pool } from '../db/pool.js';
+import { resolveBranchVisibility, visibleRowCondition } from '../utils/branchVisibility.js';
 
 /**
  * Parcel tracking driven by the QR code on the tablet label.
@@ -107,12 +108,23 @@ export function createParcelTrackingRouter() {
     requirePermissions(READ_PERMISSIONS),
     asyncHandler(async (req, res) => {
       const code = z.coerce.number().int().parse(req.query.code);
+      // A branch only reaches parcels it sent or that are headed to its city.
+      const visibility = await resolveBranchVisibility(req);
+      const lookupValues: unknown[] = [code];
+      const visible = visibleRowCondition(visibility, lookupValues);
       const found = await pool.query(
-        `${ROW_SELECT} where r.tablet_receipt_no = $1 and r.deleted_at is null limit 1`,
-        [code],
+        `${ROW_SELECT} where r.tablet_receipt_no = $1 and r.deleted_at is null${visible ? ` and ${visible}` : ''} limit 1`,
+        lookupValues,
       );
       const row = found.rows[0];
-      if (!row) throw new HttpError(404, 'لا توجد شحنة بهذا الرمز.');
+      if (!row) {
+        const exists = await pool.query(
+          `select 1 from daily_ledger_rows where tablet_receipt_no = $1 and deleted_at is null limit 1`,
+          [code],
+        );
+        if (exists.rows.length) throw new HttpError(403, 'هذه الشحنة لا تخص فرعك: ليس مصدرها ولا وجهتها.');
+        throw new HttpError(404, 'لا توجد شحنة بهذا الرمز.');
+      }
       const history = await pool.query(
         `select e.from_status, e.to_status, e.delivered_to_name, e.created_at,
                 u.full_name as scanned_by_name, b.name as branch_name
@@ -155,15 +167,26 @@ export function createParcelTrackingRouter() {
         await client.query('begin');
         // Locked for the duration: two agents scanning the same parcel at
         // the same moment must not both be told they delivered it.
+        const visibility = await resolveBranchVisibility(req);
+        const scanValues: unknown[] = [body.code];
+        const visible = visibleRowCondition(visibility, scanValues);
         const current = await client.query<{ id: string; parcel_status: string; receiver_name: string }>(
           `select r.id, r.parcel_status, r.receiver_name
            from daily_ledger_rows r
-           where r.tablet_receipt_no = $1 and r.deleted_at is null
-           for update`,
-          [body.code],
+           join daily_ledger_sessions s on s.id = r.session_id
+           where r.tablet_receipt_no = $1 and r.deleted_at is null${visible ? ` and ${visible}` : ''}
+           for update of r`,
+          scanValues,
         );
         const row = current.rows[0];
-        if (!row) throw new HttpError(404, 'لا توجد شحنة بهذا الرمز.');
+        if (!row) {
+          const exists = await client.query(
+            `select 1 from daily_ledger_rows where tablet_receipt_no = $1 and deleted_at is null limit 1`,
+            [body.code],
+          );
+          if (exists.rows.length) throw new HttpError(403, 'هذه الشحنة لا تخص فرعك: ليس مصدرها ولا وجهتها.');
+          throw new HttpError(404, 'لا توجد شحنة بهذا الرمز.');
+        }
 
         const nextStatus = NEXT_STATUS[row.parcel_status] ?? null;
         if (!nextStatus) {
@@ -252,6 +275,8 @@ export function createParcelTrackingRouter() {
             or r.destination ilike ${like})`,
         );
       }
+      const listVisible = visibleRowCondition(await resolveBranchVisibility(req), params);
+      if (listVisible) conditions.push(listVisible);
       params.push(query.limit);
 
       const result = await pool.query(

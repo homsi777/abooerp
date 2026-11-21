@@ -4,4 +4,6 @@
     <external-files-path name="updates" path="." />
     <!-- Receipt PDFs shared to WhatsApp — see ReceiptSharer.kt -->
     <external-files-path name="receipts" path="receipts/" />
+    <!-- Manager ledger reports shared as PDF — see ManagerReportPdf.kt -->
+    <external-files-path name="reports" path="reports/" />
 </paths>
